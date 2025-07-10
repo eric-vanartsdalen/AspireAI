@@ -20,10 +20,6 @@ dotnet --version
 ```
 - **Aspire Tooling**: [Setup instructions](https://learn.microsoft.com/en-us/dotnet/aspire/fundamentals/setup-tooling?tabs=windows&pivots=vscode) Install tools from commandline
 
-```
-dotnet workload install aspire
-```
-
 Once prerequisites are installed, you can perform an initial build:
 ```
 dotnet build
