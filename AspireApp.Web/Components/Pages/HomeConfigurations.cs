@@ -2,25 +2,41 @@
 
 public static class HomeConfigurations
 {
-	public static string AspireOllamaUri = "uninitialized";
-	public static string AspireOllamaModel = "uninitialized";
-	public static string EnvAIEndpoint = "uninitialized";
-	public static string EnvAIModel = "uninitialized";
+	public static string ActiveModelController = "uninitialized";
+	public static string ActiveModelURL = "uninitialized";
+	public static string ActiveModel = "uninitialized";
 
 	public static void PullConfigure()
 	{
 		// These are aspire connection and environment...
 		// How is it best done to get the values across projects?
-		AspireOllamaUri = ServiceDiscoveryUtilities.GetServiceConnectionString("ConnectionStrings__ollama");
-		AspireOllamaModel = ServiceDiscoveryUtilities.GetServiceConnectionString("ConnectionStrings__chat");
-		EnvAIEndpoint = Environment.GetEnvironmentVariable("AI_Endpoint");
-		EnvAIModel = Environment.GetEnvironmentVariable("AI_Model");
+		ActiveModelController = Environment.GetEnvironmentVariable("AI-Controller-Type")
+			?? "ollama";
+		ActiveModelURL = ServiceDiscoveryUtilities.GetServiceConnectionString("ConnectionStrings__ollama")
+			?? Environment.GetEnvironmentVariable("AI-Endpoint")
+			?? "http://localhost:11434";
+		ActiveModel = ServiceDiscoveryUtilities.GetServiceConnectionString("ConnectionStrings__chat")
+			?? Environment.GetEnvironmentVariable("AI-Model")
+			?? "phi4-mini:latest";
+
+		// Aspire connection strings may have extra information
+		if (ActiveModel.StartsWith(ActiveModelURL))
+		{
+			ActiveModel = ActiveModel.Replace(ActiveModelURL,"").Trim(';');
+		}
+		if (ActiveModel.StartsWith("Model="))
+		{
+			ActiveModel = ActiveModel.Replace("Model=", "");
+		}
+		if (ActiveModelURL.StartsWith("Endpoint="))
+		{
+			ActiveModelURL = ActiveModelURL.Replace("Endpoint=", "").Trim(';');
+		}
 
 		ServiceDiscoveryUtilities.ListAllServices();
 		Console.WriteLine();
-		Console.WriteLine("AspireOllamaUri set to: " + AspireOllamaUri);
-		Console.WriteLine("AspireOllamaModel set to: " + AspireOllamaModel); // Fixed typo here
-		Console.WriteLine("EnvAIEndpoint set to: " + EnvAIEndpoint);
-		Console.WriteLine("EnvAIModel set to: " + EnvAIModel);
+		Console.WriteLine("Active AI Type set to: " + ActiveModelController);
+		Console.WriteLine("Active AI Endpoint set to: " + ActiveModelURL);
+		Console.WriteLine("ACtive AI Model set to: " + ActiveModel);
 	}
 }

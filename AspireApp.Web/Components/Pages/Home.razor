@@ -1,5 +1,6 @@
 ﻿@page "/"
 @rendermode InteractiveServer
+@inject IConfiguration Configuration
 
 <PageTitle>Home</PageTitle>
 
@@ -10,21 +11,11 @@ Welcome to your new app.
 <hr />
 <h3>Configuration Values</h3>
 
-<button class="btn btn-primary mb-3" @onclick="RefreshValues">Refresh Configuration Values</button>
-
 <ul>
-    <li><b>AspireOllamaUri:</b> @HomeConfigurations.AspireOllamaUri</li>
-    <li><b>AspireOllamaModel:</b> @HomeConfigurations.AspireOllamaModel</li>
-    <li><b>EnvAIEndpoint:</b> @HomeConfigurations.EnvAIEndpoint</li>
-    <li><b>EnvAIModel:</b> @HomeConfigurations.EnvAIModel</li>
+    <li><b>Type:</b> @HomeConfigurations.ActiveModelController</li>
+    <li><b>Endpoint:</b> @HomeConfigurations.ActiveModelURL</li>
+    <li><b>Model:</b> @HomeConfigurations.ActiveModel</li>
 </ul>
 
-@code {
-    private void RefreshValues()
-    {
-        HomeConfigurations.PullConfigure();
-        StateHasChanged();
-    }
-}
 
 

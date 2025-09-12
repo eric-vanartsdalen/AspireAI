@@ -9,6 +9,7 @@ var builder = DistributedApplication.CreateBuilder(args);
 var aiModel = builder.AddParameterFromConfiguration("AI-Model", "AI-Model");
 var aiEndpoint = builder.AddParameterFromConfiguration("AI-Endpoint", "AI-Endpoint");
 
+
 // API Service
 var apiService = builder.AddProject<Projects.AspireApp_ApiService>("apiservice")
 	.WithHttpHealthCheck("/health");
@@ -29,8 +30,8 @@ builder.AddProject<Projects.AspireApp_Web>("webfrontend")
 	.WithReference(apiService)
 	.WithReference(ollama)
 	.WithReference(appmodel)
-	.WithEnvironment("AI_Endpoint", aiEndpoint)
-	.WithEnvironment("AI_Model", aiModel)
+	.WithEnvironment("AI-Endpoint", aiEndpoint)
+	.WithEnvironment("AI-Model", aiModel)
 	.WaitFor(ollama)
 	.WaitFor(appmodel)
 	.WaitFor(apiService);
