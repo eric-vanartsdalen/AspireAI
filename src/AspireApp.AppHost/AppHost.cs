@@ -1,3 +1,4 @@
+using Aspire.Hosting;
 using Microsoft.Extensions.Configuration;
 using Newtonsoft.Json.Schema;
 using System;
