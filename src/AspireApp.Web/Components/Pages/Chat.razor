@@ -40,42 +40,49 @@
 		border: 1px solid rgba(255, 255, 255, 0.2);
 		border-radius: 0.375rem;
 		margin-bottom: 1rem;
+		background-color: var(--main-bg-color);
 	}
 
 	.table {
 		color: var(--main-text-color);
-		background-color: rgba(255, 255, 255, 0.05);
+		background-color: 1px solid rgba(255, 255, 255, 0.05);
 		border: 1px solid rgba(255, 255, 255, 0.2);
 		margin-bottom: 0;
 	}
 
 	.table th {
-		background-color: var(--main-bg-color);
+		background-color: #1a0a30;
 		color: var(--main-text-color);
-		border-color: rgba(255, 255, 255, 0.2);
+		border-color: #4a4a4a;
+		border-width: 2px;
 		font-weight: 600;
 		position: sticky;
 		top: 0;
 		z-index: 1;
-		border-bottom: 2px solid rgba(255, 255, 255, 0.3);
+			border-bottom: 2px solid rgba(255, 255, 255, 0.3);
 	}
 
 	.table td {
 		background-color: rgba(255, 255, 255, 0.03);
 		color: var(--main-text-color);
 		border-color: rgba(255, 255, 255, 0.1);
+		border-width: 1px;
 		vertical-align: top;
 		padding: 12px;
 	}
 
 	.table tbody tr:hover {
-		background-color: rgba(255, 255, 255, 0.08);
+		background-color: #3a1550;
+	}
+
+	.table tbody tr:hover td {
+		background-color: #3a1550;
 	}
 
 	.user-column {
-		width: 80px;
-		min-width: 80px;
-		max-width: 80px;
+		width: 100px;
+		min-width: 100px;
+		max-width: 100px;
 		font-weight: 600;
 	}
 
@@ -93,16 +100,17 @@
 	}
 
 	#ai-request td {
-		background-color: rgba(255, 255, 255, 0.03);
+			background-color: rgba(255, 255, 255, 0.03);
 		color: var(--main-text-color);
 		border-color: rgba(255, 255, 255, 0.1);
+		border-width: 1px;
 		padding: 8px 12px;
 	}
 
 	.form-control {
-		background-color: rgba(255, 255, 255, 0.1);
+		background-color: #3a1550;
 		color: var(--main-text-color);
-		border: 1px solid rgba(255, 255, 255, 0.2);
+		border: 2px solid #4a4a4a;
 	}
 
 		.form-control::placeholder {
@@ -110,15 +118,16 @@
 		}
 
 		.form-control:focus {
-			background-color: rgba(255, 255, 255, 0.15);
+			background-color: #4a1560;
 			color: var(--main-text-color);
+			border-color: #6a6a6a;
 		}
 
 		/* Style for disabled input */
 		.form-control:disabled {
-			background-color: rgba(30, 30, 30, 0.3);
+			background-color: #1a0a30;
 			color: rgba(245, 245, 240, 0.7);
-			border-color: rgba(255, 255, 255, 0.1);
+			border-color: #4a4a4a;
 			cursor: not-allowed;
 		}
 
@@ -128,17 +137,17 @@
 	}
 
 	.chat-container::-webkit-scrollbar-track {
-		background: rgba(255, 255, 255, 0.1);
+		background: #4a4a4a;
 		border-radius: 4px;
 	}
 
 	.chat-container::-webkit-scrollbar-thumb {
-		background: rgba(255, 255, 255, 0.3);
+		background: #6a6a6a;
 		border-radius: 4px;
 	}
 
 	.chat-container::-webkit-scrollbar-thumb:hover {
-		background: rgba(255, 255, 255, 0.5);
+		background: #8a8a8a;
 	}
 </style>
 
