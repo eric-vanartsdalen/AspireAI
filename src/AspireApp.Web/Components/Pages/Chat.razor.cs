@@ -104,9 +104,11 @@ namespace AspireApp.Web.Components.Pages
                 _chatHistory.AddUserMessage(Status);
                 StateHasChanged();
 
+                // Scroll to bottom after adding user message with a small delay
                 try
                 {
-                    await JSRuntime.InvokeVoidAsync("scrollToBottom");
+                    await Task.Delay(50); // Small delay to ensure DOM update
+                    await JSRuntime.InvokeVoidAsync("scrollChatToBottom");
                 }
                 catch (Exception ex)
                 {
@@ -175,6 +177,20 @@ namespace AspireApp.Web.Components.Pages
             {
                 await FocusQuestionInput();
             }
+
+            // Auto-scroll to bottom after each render when AI is responding
+            if (IsAIResponsing)
+            {
+                try
+                {
+                    await Task.Delay(10); // Small delay to ensure DOM update
+                    await JSRuntime.InvokeVoidAsync("scrollChatToBottom");
+                }
+                catch (Exception ex)
+                {
+                    Console.WriteLine($"Error scrolling during render: {ex.Message}");
+                }
+            }
         }
 
         private async Task FocusQuestionInput()
@@ -215,7 +231,7 @@ namespace AspireApp.Web.Components.Pages
                 // Buffer updates to reduce UI thrashing
                 var updateBuffer = new System.Text.StringBuilder();
                 var lastUpdateTime = DateTime.UtcNow;
-                const int updateIntervalMs = 50; // Update UI every 50ms max
+                const int updateIntervalMs = 100; // Update UI every 100ms max
 
                 await foreach (var message in stream)
                 {
@@ -229,13 +245,16 @@ namespace AspireApp.Web.Components.Pages
                         StateHasChanged();
                         lastUpdateTime = now;
                         
+                        // Auto-scroll during AI response
                         try
                         {
-                            await JSRuntime.InvokeVoidAsync("scrollToBottom");
+                            // Small delay to ensure the DOM updates before scrolling
+                            await Task.Delay(10);
+                            await JSRuntime.InvokeVoidAsync("scrollChatToBottom");
                         }
                         catch (Exception ex)
                         {
-                            Console.WriteLine($"Error scrolling: {ex.Message}");
+                            Console.WriteLine($"Error scrolling during stream: {ex.Message}");
                         }
                     }
                 }
@@ -272,6 +291,18 @@ namespace AspireApp.Web.Components.Pages
             IsAIResponsing = false;
             ElapsedTimeMessage = $"Response time: {stopwatch.Elapsed.TotalMilliseconds} milliseconds";
             StateHasChanged();
+
+            // Final scroll to bottom after AI response is complete
+            try
+            {
+                await Task.Delay(50); // Delay to ensure DOM update
+                await JSRuntime.InvokeVoidAsync("scrollChatToBottom");
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"Error scrolling after AI response: {ex.Message}");
+            }
+
             await FocusQuestionInput();
         }
 

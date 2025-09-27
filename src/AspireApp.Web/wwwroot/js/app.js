@@ -22,9 +22,39 @@ window.focusElement = function (element) {
     }
 };
 
-// Scroll to bottom of page
-window.scrollToBottom = function () {
+// Scroll to bottom of page or specific chat container
+window.scrollToBottom = function (containerId = null) {
+    if (containerId) {
+        const container = document.getElementById(containerId);
+        if (container) {
+            container.scrollTo({ top: container.scrollHeight, behavior: 'smooth' });
+            return;
+        }
+    }
+    
+    // Fallback: scroll the entire window
     window.scrollTo({ top: document.documentElement.scrollHeight, behavior: 'smooth' });
+};
+
+// Scroll chat messages container to bottom
+window.scrollChatToBottom = function () {
+    const chatContainer = document.getElementById('chat-messages-container');
+    if (chatContainer) {
+        chatContainer.scrollTo({ top: chatContainer.scrollHeight, behavior: 'smooth' });
+    } else {
+        // Fallback to scrolling the entire window
+        window.scrollTo({ top: document.documentElement.scrollHeight, behavior: 'smooth' });
+    }
+};
+
+// Check if user has scrolled up in chat container
+window.isUserScrolledUpInChat = function () {
+    const chatContainer = document.getElementById('chat-messages-container');
+    if (chatContainer) {
+        const threshold = 100; // pixels from bottom
+        return (chatContainer.scrollHeight - chatContainer.scrollTop - chatContainer.clientHeight) > threshold;
+    }
+    return false;
 };
 
 // Cleanup

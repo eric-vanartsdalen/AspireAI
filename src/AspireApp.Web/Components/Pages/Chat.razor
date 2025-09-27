@@ -34,10 +34,19 @@
 		margin-left: 8px;
 	}
 
+	.chat-container {
+		max-height: 60vh;
+		overflow-y: auto;
+		border: 1px solid rgba(255, 255, 255, 0.2);
+		border-radius: 0.375rem;
+		margin-bottom: 1rem;
+	}
+
 	.table {
 		color: var(--main-text-color);
 		background-color: rgba(255, 255, 255, 0.05);
 		border: 1px solid rgba(255, 255, 255, 0.2);
+		margin-bottom: 0;
 	}
 
 	.table th {
@@ -45,16 +54,33 @@
 		color: var(--main-text-color);
 		border-color: rgba(255, 255, 255, 0.2);
 		font-weight: 600;
+		position: sticky;
+		top: 0;
+		z-index: 1;
 	}
 
 	.table td {
 		background-color: rgba(255, 255, 255, 0.03);
 		color: var(--main-text-color);
 		border-color: rgba(255, 255, 255, 0.1);
+		vertical-align: top;
+		padding: 12px;
 	}
 
 	.table tbody tr:hover {
 		background-color: rgba(255, 255, 255, 0.08);
+	}
+
+	.user-column {
+		width: 80px;
+		min-width: 80px;
+		max-width: 80px;
+		font-weight: 600;
+	}
+
+	.message-column {
+		word-wrap: break-word;
+		word-break: break-word;
 	}
 
 	#ai-request {
@@ -62,6 +88,7 @@
 		background-color: rgba(255, 255, 255, 0.05);
 		border: 1px solid rgba(255, 255, 255, 0.2);
 		width: 100%;
+		margin-bottom: 1rem;
 	}
 
 	#ai-request td {
@@ -93,36 +120,57 @@
 			border-color: rgba(255, 255, 255, 0.1);
 			cursor: not-allowed;
 		}
+
+	/* Scroll bar styling for webkit browsers */
+	.chat-container::-webkit-scrollbar {
+		width: 8px;
+	}
+
+	.chat-container::-webkit-scrollbar-track {
+		background: rgba(255, 255, 255, 0.1);
+		border-radius: 4px;
+	}
+
+	.chat-container::-webkit-scrollbar-thumb {
+		background: rgba(255, 255, 255, 0.3);
+		border-radius: 4px;
+	}
+
+	.chat-container::-webkit-scrollbar-thumb:hover {
+		background: rgba(255, 255, 255, 0.5);
+	}
 </style>
 
 <h1>AI Chatbot</h1>
 
 @if (IsNotFirstTimeLoading && AiInfoState.EndPointAvailable)
 {
-	<table id="chathistory" class="table">
-		<thead>
-			<tr>
-				<th>User</th>
-				<th>Messages</th>
-			</tr>
-		</thead>
-		<tbody>
-			@foreach (var message in ChatHistoryService.GetFormattedMessages(_chatHistory))
-			{
+	<div id="chat-messages-container" class="chat-container">
+		<table id="chathistory" class="table">
+			<thead>
 				<tr>
-					<td><span>@message.User</span></td>
-					<td><span>@ConvertToMarkup(message.Message)</span></td>
+					<th class="user-column">User</th>
+					<th class="message-column">Messages</th>
 				</tr>
-			}
-		</tbody>
-	</table>
-	<br />
+			</thead>
+			<tbody>
+				@foreach (var message in ChatHistoryService.GetFormattedMessages(_chatHistory))
+				{
+					<tr>
+						<td class="user-column"><span>@message.User</span></td>
+						<td class="message-column"><span>@ConvertToMarkup(message.Message)</span></td>
+					</tr>
+				}
+			</tbody>
+		</table>
+	</div>
+
 	@if (IsAIResponsing == true)
 	{
 		<table id="ai-request">
 			<tr>
-				<td>AI in Action&nbsp;&nbsp;</td>
-				<td>
+				<td class="user-column">AI in Action&nbsp;&nbsp;</td>
+				<td class="message-column">
 					@if (string.IsNullOrEmpty(AIResponse))
 					{
 						<div class="loading-container">
@@ -141,7 +189,6 @@
 		</table>
 	}
 
-	<br />
 	<input @bind="Question"
 		   @bind:event="oninput"
 		   @onkeydown="@(async (e) => { if (e.Key == "Enter" && !IsAIResponsing) { await QueryAIChat(); } })"
