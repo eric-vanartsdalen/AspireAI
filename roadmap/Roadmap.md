@@ -1,7 +1,9 @@
 ﻿# AspireAI Roadmap
 
 ## Vision
-AspireAI is a configurable, modular Blazor-based chat assistant platform that supports conversation with local or hosted LLMs, document ingestion and RAG, and flexible plug-in architecture — all designed for reuse, extension, and future upgrades (e.g. GraphRAG, multi-agent workflows).
+AspireAI is a configurable, modular Blazor-based chat assistant platform that supports conversation with local or hosted LLMs, document ingestion and RAG. Ideally, this will use flexible plug-in architecture — all designed for reuse, extension, and future upgrades (e.g. GraphRAG, multi-agent workflows).
+
+Note: Updates to Aspire and .Net framework SDK will be likely and affected as separate branch updates. Expect these changes to occur outside of this roadmap.
 
 ---
 
@@ -9,11 +11,13 @@ AspireAI is a configurable, modular Blazor-based chat assistant platform that su
 
 **Objective**: Clean up existing repository, add scaffolding and core structure.  
 **Outcomes**:
-- Define solution/project layout (`frontend/`, `backend/`, `extensions/`, `roadmap/`, `data/`)  
-- Add `ExtensionInterfaces.cs` and plugin scaffolds  
-- Set up configuration (`appsettings.json`, DI) and feature flags  
+- Define solution/project layout
+- Add and plugin scaffolds  
+- Set up configuration and feature flags  
 - Add basic README and contributor guidelines  
-- Establish branch structure for feature development (e.g. `feature/`, `plugin/`, `rag/graph`, `speech/`)  
+- Establish branch structure for feature development 
+
+**Branch suggestion**: `feature/setup`
 
 ---
 
@@ -22,7 +26,7 @@ AspireAI is a configurable, modular Blazor-based chat assistant platform that su
 **Objective**: Create a simple chat interface that can send and receive text-based messages from a backend LLM.  
 **Outcomes**:
 - Blazor chat page (conversation view, input box, “Send” button)  
-- Backend stub `/chat` endpoint that echoes or forwards messages  
+- Backend stub endpoint that echoes or forwards messages  
 - Wiring of chat frontend → backend → response display  
 - Clean UI with user and assistant bubbles, timestamping, scroll behavior  
 
@@ -48,9 +52,9 @@ AspireAI is a configurable, modular Blazor-based chat assistant platform that su
 **Objective**: Allow users to upload documents (PDF, DOCX, etc.), which are chunked, embedded, and stored for later retrieval.  
 **Outcomes**:
 - Blazor file upload component (drag-and-drop or file picker)  
-- Backend ingestion service:  
+- Backend ingestion service: This might be best accomplished via a Python microservice using Docling, or a .NET wrapper around Docling.
   1. Convert uploaded files to DoclingDocument via Python or .NET bridge  
-  2. Chunk documents using Docling (or alternative chunker) into **DocumentChunk** objects :contentReference[oaicite:2]{index=2}  
+  2. Chunk documents using Docling (or alternative chunker) into **DocumentChunk** objects
   3. Optionally embed or serialize chunk metadata  
   4. Store chunk metadata and embeddings in a vector store or similar index  
 - Metadata retention for chunk location, page, source, etc. to support footnotes and references  

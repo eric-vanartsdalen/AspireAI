@@ -2,7 +2,7 @@
 
 AspireAI is a collaborative learning project designed to help developers explore and experiment with:
 
-Disclaimer: This is a hacked together example, so there may be bad practices and places to improve. Use at yer own risk!
+Disclaimer: This is a hacked together example, so there may be bad practices and places to improve. Use at your own risk!
 
 - **Blazor**: Building interactive web UIs using C# and .NET.
 - **AI Integrations**: Experimenting with AI features and services in .NET applications.
