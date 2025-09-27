@@ -1,0 +1,21 @@
+﻿@page "/"
+@rendermode InteractiveServer
+@inject IConfiguration Configuration
+
+<PageTitle>Home</PageTitle>
+
+<h1>Hello, world!</h1>
+
+Welcome to your new app.
+
+<hr />
+<h3>Configuration Values</h3>
+
+<ul>
+    <li><b>Type:</b> @HomeConfigurations.ActiveModelController</li>
+    <li><b>Endpoint:</b> @HomeConfigurations.ActiveModelURL</li>
+    <li><b>Model:</b> @HomeConfigurations.ActiveModel</li>
+</ul>
+
+
+

@@ -1,3 +1,4 @@
+using Aspire.Hosting;
 using Microsoft.Extensions.Configuration;
 using Newtonsoft.Json.Schema;
 using System;
@@ -8,6 +9,7 @@ var builder = DistributedApplication.CreateBuilder(args);
 // FRITZ: Config with .NET Aspire
 var aiModel = builder.AddParameterFromConfiguration("AI-Model", "AI-Model");
 var aiEndpoint = builder.AddParameterFromConfiguration("AI-Endpoint", "AI-Endpoint");
+
 
 // API Service
 var apiService = builder.AddProject<Projects.AspireApp_ApiService>("apiservice")
@@ -29,8 +31,8 @@ builder.AddProject<Projects.AspireApp_Web>("webfrontend")
 	.WithReference(apiService)
 	.WithReference(ollama)
 	.WithReference(appmodel)
-	.WithEnvironment("AI_Endpoint", aiEndpoint)
-	.WithEnvironment("AI_Model", aiModel)
+	.WithEnvironment("AI-Endpoint", aiEndpoint)
+	.WithEnvironment("AI-Model", aiModel)
 	.WaitFor(ollama)
 	.WaitFor(appmodel)
 	.WaitFor(apiService);
