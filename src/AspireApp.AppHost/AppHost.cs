@@ -14,25 +14,25 @@ var aiEndpoint = builder.AddParameterFromConfiguration("AI-Endpoint", "AI-Endpoi
 var apiService = builder.AddProject<Projects.AspireApp_ApiService>("apiservice")
 	.WithHttpHealthCheck("/health");
 
-//// SETUP OLLAMA & MODEL CONTAINERS
-//var modelName = builder.Configuration["AI-Model"] ?? "phi4-mini:latest";
-//var ollama = builder.AddOllama("ollama")
-//	.WithAnnotation(new ContainerImageAnnotation { Image = "ollama/ollama", Tag = "latest" })
-//	.WithDataVolume()
-//	.WithContainerRuntimeArgs("--gpus", "all");
-//var appmodel = ollama.AddModel("chat", modelName);
+// SETUP OLLAMA & MODEL CONTAINERS
+var modelName = builder.Configuration["AI-Model"] ?? "phi4-mini:latest";
+var ollama = builder.AddOllama("ollama")
+    .WithAnnotation(new ContainerImageAnnotation { Image = "ollama/ollama", Tag = "latest" })
+    .WithDataVolume()
+    .WithContainerRuntimeArgs("--gpus", "all");
+var appmodel = ollama.AddModel("chat", modelName);
 
 // See Blazor Home page... and the variables I pull...
 builder.AddProject<Projects.AspireApp_Web>("webfrontend")
 	.WithExternalHttpEndpoints()
 	.WithHttpHealthCheck("/health")
 	.WithReference(apiService)
-	//.WithReference(ollama)
-	//.WithReference(appmodel)
+	.WithReference(ollama)
+    .WithReference(appmodel)
 	.WithEnvironment("AI-Endpoint", aiEndpoint)
 	.WithEnvironment("AI-Model", aiModel)
-	//.WaitFor(ollama)
-	//.WaitFor(appmodel)
+	.WaitFor(ollama)
+    .WaitFor(appmodel)
 	.WaitFor(apiService);
 
 await builder.Build().RunAsync();
