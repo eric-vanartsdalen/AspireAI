@@ -15,15 +15,14 @@ var aiEndpoint = builder.AddParameterFromConfiguration("AI-Endpoint", "AI-Endpoi
 var apiService = builder.AddProject<Projects.AspireApp_ApiService>("apiservice")
 	.WithHttpHealthCheck("/health");
 
-// TODO add AI Ollama & AI Model from configs
 // SETUP OLLAMA & MODEL CONTAINERS
+var modelName = builder.Configuration["AI-Model"] ?? "phi4-mini:latest";
 var ollama = builder.AddOllama("ollama")
-	.WithAnnotation(new ContainerImageAnnotation { Image = "ollama/ollama", Tag = "0.11.4" })
+	.WithAnnotation(new ContainerImageAnnotation { Image = "ollama/ollama", Tag = "latest" })
 	.WithDataVolume()
 	.WithContainerRuntimeArgs("--gpus", "all");
-var appmodel = ollama.AddModel("chat", aiModel.Resource.Value);
+var appmodel = ollama.AddModel("chat", modelName);
 
-// BLAZOR app (TODO add references and Chat function later)
 // See Blazor Home page... and the variables I pull...
 builder.AddProject<Projects.AspireApp_Web>("webfrontend")
 	.WithExternalHttpEndpoints()
