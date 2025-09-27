@@ -229,7 +229,7 @@ namespace AspireApp.Web.Components.Pages
             InvokeAsync(() =>
             {
                 IsListening = false;
-                SpeechStatusText = $"Speech recognition error: {error}";
+                SpeechStatusText = $"Speech recognition stopped";
                 StateHasChanged();
             });
         }
@@ -261,6 +261,7 @@ namespace AspireApp.Web.Components.Pages
             {
                 IsSpeaking = false;
                 CurrentlySpeakingMessage = null;
+                SpeechStatusText = $"Text-to-speech stopped";
                 StateHasChanged();
             });
         }
@@ -271,7 +272,7 @@ namespace AspireApp.Web.Components.Pages
             {
                 IsSpeaking = false;
                 CurrentlySpeakingMessage = null;
-                SpeechStatusText = $"Text-to-speech error: {error}";
+                SpeechStatusText = $"Text-to-speech stopped";
                 StateHasChanged();
             });
         }
