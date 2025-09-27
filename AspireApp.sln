@@ -48,5 +48,6 @@ Global
 	EndGlobalSection
 	GlobalSection(ExtensibilityGlobals) = postSolution
 		SolutionGuid = {CBD3E3C3-D6AB-4EE7-A317-B47493A7C9F2}
+		StartupProject = AspireApp.AppHost
 	EndGlobalSection
 EndGlobal
