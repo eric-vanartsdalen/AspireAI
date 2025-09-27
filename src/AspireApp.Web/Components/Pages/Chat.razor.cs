@@ -50,6 +50,7 @@ namespace AspireApp.Web.Components.Pages
         private string InterimTranscript { get; set; } = string.Empty;
         private string SpeechStatusText { get; set; } = string.Empty;
         private string SpeechStatusMessage { get; set; } = string.Empty;
+        private string? CurrentlySpeakingMessage { get; set; } = null; // Track which message is being spoken
 
         [Inject]
         public AiInfoStateService AiInfoState { get; set; } = default!;
@@ -259,6 +260,7 @@ namespace AspireApp.Web.Components.Pages
             InvokeAsync(() =>
             {
                 IsSpeaking = false;
+                CurrentlySpeakingMessage = null;
                 StateHasChanged();
             });
         }
@@ -268,6 +270,7 @@ namespace AspireApp.Web.Components.Pages
             InvokeAsync(() =>
             {
                 IsSpeaking = false;
+                CurrentlySpeakingMessage = null;
                 SpeechStatusText = $"Text-to-speech error: {error}";
                 StateHasChanged();
             });
@@ -293,6 +296,12 @@ namespace AspireApp.Web.Components.Pages
                 var success = await SpeechService.StartListeningAsync();
                 if (success)
                 {
+                    // Stop any ongoing TTS when starting speech recognition
+                    if (IsSpeaking)
+                    {
+                        await StopSpeaking();
+                    }
+                    
                     IsListening = true;
                     SpeechStatusText = "Listening... Speak now";
                 }
@@ -341,6 +350,7 @@ namespace AspireApp.Web.Components.Pages
         {
             if (!string.IsNullOrEmpty(AIResponse))
             {
+                CurrentlySpeakingMessage = AIResponse;
                 await SpeakMessage(AIResponse);
             }
         }
@@ -349,6 +359,21 @@ namespace AspireApp.Web.Components.Pages
         {
             try
             {
+                // Stop any ongoing speech or listening
+                if (IsSpeaking)
+                {
+                    await StopSpeaking();
+                    return; // If we're already speaking this message, just stop
+                }
+                
+                if (IsListening)
+                {
+                    await StopListening();
+                }
+
+                // Set the currently speaking message
+                CurrentlySpeakingMessage = message;
+                
                 // Convert markdown to plain text for better speech
                 var plainText = ConvertMarkdownToPlainText(message);
                 await SpeechService.SpeakAsync(plainText);
@@ -357,6 +382,7 @@ namespace AspireApp.Web.Components.Pages
             {
                 Console.WriteLine($"Error speaking message: {ex.Message}");
                 SpeechStatusText = "Error speaking message";
+                CurrentlySpeakingMessage = null;
                 StateHasChanged();
             }
         }
@@ -367,12 +393,19 @@ namespace AspireApp.Web.Components.Pages
             {
                 await SpeechService.StopSpeakingAsync();
                 IsSpeaking = false;
+                CurrentlySpeakingMessage = null;
                 StateHasChanged();
             }
             catch (Exception ex)
             {
                 Console.WriteLine($"Error stopping speech: {ex.Message}");
             }
+        }
+
+        // Helper method to check if a specific message is currently being spoken
+        private bool IsMessageBeingSpoken(string message)
+        {
+            return IsSpeaking && CurrentlySpeakingMessage == message;
         }
 
         private string ConvertMarkdownToPlainText(string markdown)

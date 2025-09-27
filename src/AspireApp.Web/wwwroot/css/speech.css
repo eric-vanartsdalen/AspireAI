@@ -1,10 +1,19 @@
 /* Speech control styles for Chat component */
 
+.speech-controls-container {
+    margin-bottom: 1rem;
+    clear: both;
+    position: relative;
+    z-index: 5;
+}
+
 .speech-controls {
     display: flex;
     align-items: center;
-    gap: 0.5rem;
-    margin-bottom: 1rem;
+    gap: 0.75rem;
+    flex-wrap: wrap;
+    min-height: 60px;
+    padding: 0.5rem 0;
 }
 
 .speech-button {
@@ -18,6 +27,15 @@
     font-size: 1.2rem;
     transition: all 0.3s ease;
     cursor: pointer;
+    padding: 8px;
+    flex-shrink: 0;
+}
+
+.speech-button img {
+    width: 24px;
+    height: 24px;
+    object-fit: contain;
+    transition: all 0.3s ease;
 }
 
 .mic-button {
@@ -28,6 +46,10 @@
 .mic-button:hover {
     background-color: #218838;
     transform: scale(1.05);
+}
+
+.mic-button:hover img {
+    transform: scale(1.1);
 }
 
 .mic-button.listening {
@@ -49,6 +71,10 @@
     transform: scale(1.05);
 }
 
+.tts-button:hover img {
+    transform: scale(1.1);
+}
+
 .tts-button.speaking {
     background-color: #ffc107;
     color: #212529;
@@ -59,6 +85,47 @@
     background-color: #6c757d;
     cursor: not-allowed;
     transform: none;
+    opacity: 0.6;
+}
+
+.tts-button:disabled img {
+    opacity: 0.7;
+}
+
+/* Message-specific TTS buttons */
+.tts-message-button {
+    background: transparent !important;
+    border: 1px solid rgba(255, 255, 255, 0.3) !important;
+    border-radius: 4px !important;
+    padding: 4px 6px !important;
+    width: auto !important;
+    height: auto !important;
+    min-width: 28px;
+    min-height: 28px;
+    transition: all 0.2s ease;
+}
+
+.tts-message-button:hover {
+    background-color: rgba(23, 162, 184, 0.1) !important;
+    border-color: rgba(23, 162, 184, 0.5) !important;
+    transform: scale(1.05);
+}
+
+.tts-message-button:disabled {
+    opacity: 0.5;
+    cursor: not-allowed !important;
+    transform: none !important;
+}
+
+.tts-message-button img {
+    width: 16px;
+    height: 16px;
+    object-fit: contain;
+    transition: all 0.2s ease;
+}
+
+.tts-message-button:hover img {
+    transform: scale(1.1);
 }
 
 @keyframes pulse {
@@ -80,6 +147,17 @@
     font-size: 0.85rem;
     opacity: 0.8;
     min-height: 1.2rem;
+    display: flex;
+    align-items: center;
+    gap: 0.25rem;
+    flex: 1;
+    margin-left: 0.5rem;
+}
+
+.input-container {
+    position: relative;
+    z-index: 1;
+    margin-top: 0.5rem;
 }
 
 .input-group {
@@ -98,9 +176,58 @@
     margin-bottom: 0.25rem;
     font-size: 0.9rem;
     z-index: 10;
+    backdrop-filter: blur(10px);
 }
 
 .interim-text {
     opacity: 0.7;
     font-style: italic;
+}
+
+/* Dark theme adjustments for better visibility */
+.speech-button:focus {
+    outline: 2px solid rgba(255, 255, 255, 0.5);
+    outline-offset: 2px;
+}
+
+.tts-message-button:focus {
+    outline: 1px solid rgba(23, 162, 184, 0.8);
+    outline-offset: 1px;
+}
+
+/* Responsive adjustments */
+@media (max-width: 768px) {
+    .speech-controls {
+        justify-content: flex-start;
+        gap: 0.5rem;
+    }
+    
+    .speech-button {
+        width: 45px;
+        height: 45px;
+    }
+    
+    .speech-button img {
+        width: 20px;
+        height: 20px;
+    }
+    
+    .speech-status {
+        margin-left: 0.25rem;
+        font-size: 0.8rem;
+    }
+}
+
+@media (max-width: 480px) {
+    .speech-controls {
+        flex-direction: column;
+        align-items: flex-start;
+        min-height: auto;
+        gap: 0.5rem;
+    }
+    
+    .speech-status {
+        margin-left: 0;
+        width: 100%;
+    }
 }
