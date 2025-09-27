@@ -169,6 +169,12 @@ namespace AspireApp.Web.Components.Pages
         {
             if (!Question.Trim().Equals(string.Empty) && !IsAIResponsing)
             {
+                // Stop listening if currently active before submitting query
+                if (IsListening)
+                {
+                    await StopListening();
+                }
+
                 Status = Question;
                 Question = string.Empty;
                 
