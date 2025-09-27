@@ -29,6 +29,7 @@
     cursor: pointer;
     padding: 8px;
     flex-shrink: 0;
+    border: 2px solid rgba(255, 255, 255, 0.2);
 }
 
 .speech-button img {
@@ -36,65 +37,84 @@
     height: 24px;
     object-fit: contain;
     transition: all 0.3s ease;
+    filter: brightness(0.9);
 }
 
 .mic-button {
-    background-color: #28a745;
-    color: white;
+    background-color: #1a0a30; /* Darker shade of main background */
+    color: #f5f5f0;
+    border-color: #28a745;
 }
 
 .mic-button:hover {
-    background-color: #218838;
+    background-color: #2a1540; /* Slightly lighter for hover */
+    border-color: #34ce57;
     transform: scale(1.05);
 }
 
 .mic-button:hover img {
     transform: scale(1.1);
+    filter: brightness(1.1);
 }
 
 .mic-button.listening {
-    background-color: #dc3545;
+    background-color: #2a1540; /* Keep dark background */
+    border-color: #dc3545;
     animation: pulse 1s infinite;
 }
 
+.mic-button.listening img {
+    filter: brightness(1.2);
+}
+
 .mic-button.error {
-    background-color: #6c757d;
+    background-color: #1a0a30;
+    border-color: #6c757d;
 }
 
 .tts-button {
-    background-color: #17a2b8;
-    color: white;
+    background-color: #1a0a30; /* Darker shade of main background */
+    color: #f5f5f0;
+    border-color: #17a2b8;
 }
 
 .tts-button:hover {
-    background-color: #138496;
+    background-color: #2a1540; /* Slightly lighter for hover */
+    border-color: #20c5db;
     transform: scale(1.05);
 }
 
 .tts-button:hover img {
     transform: scale(1.1);
+    filter: brightness(1.1);
 }
 
 .tts-button.speaking {
-    background-color: #ffc107;
-    color: #212529;
+    background-color: #2a1540; /* Keep dark background */
+    border-color: #ffc107;
     animation: pulse 1s infinite;
 }
 
+.tts-button.speaking img {
+    filter: brightness(1.2);
+}
+
 .tts-button:disabled {
-    background-color: #6c757d;
+    background-color: #0f0520; /* Even darker for disabled */
+    border-color: #4a4a4a;
     cursor: not-allowed;
     transform: none;
     opacity: 0.6;
 }
 
 .tts-button:disabled img {
-    opacity: 0.7;
+    opacity: 0.5;
+    filter: brightness(0.6);
 }
 
 /* Message-specific TTS buttons */
 .tts-message-button {
-    background: transparent !important;
+    background: rgba(26, 10, 48, 0.8) !important; /* Dark background with transparency */
     border: 1px solid rgba(255, 255, 255, 0.3) !important;
     border-radius: 4px !important;
     padding: 4px 6px !important;
@@ -106,12 +126,13 @@
 }
 
 .tts-message-button:hover {
-    background-color: rgba(23, 162, 184, 0.1) !important;
+    background-color: rgba(42, 21, 64, 0.9) !important; /* Lighter dark background on hover */
     border-color: rgba(23, 162, 184, 0.5) !important;
     transform: scale(1.05);
 }
 
 .tts-message-button:disabled {
+    background-color: rgba(15, 5, 32, 0.6) !important; /* Very dark for disabled */
     opacity: 0.5;
     cursor: not-allowed !important;
     transform: none !important;
@@ -122,24 +143,29 @@
     height: 16px;
     object-fit: contain;
     transition: all 0.2s ease;
+    filter: brightness(0.9);
 }
 
 .tts-message-button:hover img {
     transform: scale(1.1);
+    filter: brightness(1.1);
 }
 
 @keyframes pulse {
     0% {
         transform: scale(1);
         opacity: 1;
+        box-shadow: 0 0 0 0 rgba(255, 255, 255, 0.3);
     }
     50% {
-        transform: scale(1.1);
-        opacity: 0.7;
+        transform: scale(1.05);
+        opacity: 0.8;
+        box-shadow: 0 0 0 8px rgba(255, 255, 255, 0.1);
     }
     100% {
         transform: scale(1);
         opacity: 1;
+        box-shadow: 0 0 0 0 rgba(255, 255, 255, 0.3);
     }
 }
 
@@ -152,6 +178,7 @@
     gap: 0.25rem;
     flex: 1;
     margin-left: 0.5rem;
+    color: #f5f5f0; /* Match main text color */
 }
 
 .input-container {
@@ -169,7 +196,7 @@
     bottom: 100%;
     left: 0;
     right: 0;
-    background-color: rgba(255, 255, 255, 0.1);
+    background-color: rgba(26, 10, 48, 0.95); /* Match dark theme */
     border: 1px solid rgba(255, 255, 255, 0.2);
     border-radius: 0.375rem;
     padding: 0.5rem;
@@ -177,6 +204,7 @@
     font-size: 0.9rem;
     z-index: 10;
     backdrop-filter: blur(10px);
+    color: #f5f5f0; /* Match main text color */
 }
 
 .interim-text {

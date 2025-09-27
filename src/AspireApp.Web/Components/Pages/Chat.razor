@@ -188,6 +188,99 @@
 		min-height: 50px;
 		vertical-align: middle;
 	}
+
+	/* Speech button dark theme overrides with higher specificity */
+	#mic-button.speech-button.mic-button {
+		background-color: #1a0a30 !important;
+		color: #f5f5f0 !important;
+		border: 2px solid #28a745 !important;
+		border-radius: 50%;
+		width: 50px;
+		height: 50px;
+		padding: 8px;
+		transition: all 0.3s ease;
+	}
+
+	#mic-button.speech-button.mic-button:hover {
+		background-color: #2a1540 !important;
+		border-color: #34ce57 !important;
+		transform: scale(1.05);
+	}
+
+	#mic-button.speech-button.mic-button.listening {
+		background-color: #2a1540 !important;
+		border-color: #dc3545 !important;
+		animation: pulse 1s infinite;
+	}
+
+	.speech-button.tts-button {
+		background-color: #1a0a30 !important;
+		color: #f5f5f0 !important;
+		border: 2px solid #17a2b8 !important;
+		border-radius: 50%;
+		width: 50px;
+		height: 50px;
+		padding: 8px;
+		transition: all 0.3s ease;
+	}
+
+	.speech-button.tts-button:hover {
+		background-color: #2a1540 !important;
+		border-color: #20c5db !important;
+		transform: scale(1.05);
+	}
+
+	.speech-button.tts-button.speaking {
+		background-color: #2a1540 !important;
+		border-color: #ffc107 !important;
+		animation: pulse 1s infinite;
+	}
+
+	.speech-button.tts-button:disabled {
+		background-color: #0f0520 !important;
+		border-color: #4a4a4a !important;
+		cursor: not-allowed;
+		transform: none;
+		opacity: 0.6;
+	}
+
+	/* Message TTS button overrides */
+	.btn.tts-message-button {
+		background-color: rgba(26, 10, 48, 0.8) !important;
+		border-color: rgba(255, 255, 255, 0.3) !important;
+		color: #f5f5f0 !important;
+	}
+
+	.btn.tts-message-button:hover {
+		background-color: rgba(42, 21, 64, 0.9) !important;
+		border-color: rgba(23, 162, 184, 0.5) !important;
+		color: #f5f5f0 !important;
+	}
+
+	.btn.tts-message-button:disabled {
+		background-color: rgba(15, 5, 32, 0.6) !important;
+		border-color: rgba(255, 255, 255, 0.2) !important;
+		color: rgba(245, 245, 240, 0.5) !important;
+	}
+
+	/* Pulse animation */
+	@@keyframes pulse {
+		0% {
+			transform: scale(1);
+			opacity: 1;
+			box-shadow: 0 0 0 0 rgba(255, 255, 255, 0.3);
+		}
+		50% {
+			transform: scale(1.05);
+			opacity: 0.8;
+			box-shadow: 0 0 0 8px rgba(255, 255, 255, 0.1);
+		}
+		100% {
+			transform: scale(1);
+			opacity: 1;
+			box-shadow: 0 0 0 0 rgba(255, 255, 255, 0.3);
+		}
+	}
 </style>
 
 <h1>AI Chatbot</h1>
@@ -360,5 +453,3 @@ else
 		<p><div><span style="background-color: darkslateblue; color:yellowgreen; padding: 1em;"><strong>Chat AI Service loading...</strong></span></div></p>
 	}
 }
-
-
