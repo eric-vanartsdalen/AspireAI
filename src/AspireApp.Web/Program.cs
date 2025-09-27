@@ -1,5 +1,6 @@
 using AspireApp.Web;
 using AspireApp.Web.Components;
+using AspireApp.Web.Components.Shared;
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -24,6 +25,10 @@ builder.Services.AddSingleton<IConfiguration>(builder.Configuration);
 
 // Add this line to make environment variables accessible
 builder.Services.AddSingleton(provider => new EnvironmentProvider(builder.Environment));
+
+// Register AI and Chat services
+builder.Services.AddSingleton<ChatRefreshService>();
+builder.Services.AddSingleton<AiInfoStateService>();
 
 var app = builder.Build();
 
