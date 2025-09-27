@@ -44,14 +44,35 @@ namespace AspireApp.Web.Components.Pages
 
         protected override async Task OnInitializedAsync()
         {
+            Console.WriteLine("=== Chat OnInitializedAsync START ===");
+            
+            // Debug: Check what configuration values we have
+            var configEndpoint = configuration["AI-Endpoint"];
+            var configModel = configuration["AI-Model"];
+            var envEndpoint = Environment.GetEnvironmentVariable("AI-Endpoint");
+            var envModel = Environment.GetEnvironmentVariable("AI-Model");
+            
+            Console.WriteLine($"Chat: Config AI-Endpoint = '{configEndpoint}'");
+            Console.WriteLine($"Chat: Config AI-Model = '{configModel}'");
+            Console.WriteLine($"Chat: Env AI-Endpoint = '{envEndpoint}'");
+            Console.WriteLine($"Chat: Env AI-Model = '{envModel}'");
+            Console.WriteLine($"Chat: HomeConfigurations.ActiveModelURL = '{HomeConfigurations.ActiveModelURL}'");
+            Console.WriteLine($"Chat: HomeConfigurations.ActiveModel = '{HomeConfigurations.ActiveModel}'");
+            
             // Use the centralized AiInfoStateService initialization
             await AiInfoState.InitializeAsync();
+            
+            Console.WriteLine($"Chat: AiInfoState.EndPointAvailable = {AiInfoState.EndPointAvailable}");
+            Console.WriteLine($"Chat: AiInfoState.CurrentAiUri = '{AiInfoState.CurrentAiUri}'");
+            Console.WriteLine($"Chat: AiInfoState.CurrentAiModel = '{AiInfoState.CurrentAiModel}'");
 
             // Initialize kernel early to avoid delays during first AI call
             await InitializeKernelAsync();
 
             await CheckOllamaService();
             IsNotFirstTimeLoading = true;
+            
+            Console.WriteLine("=== Chat OnInitializedAsync END ===");
             StateHasChanged(); // This call is for the Chatbot component itself.
         }
 

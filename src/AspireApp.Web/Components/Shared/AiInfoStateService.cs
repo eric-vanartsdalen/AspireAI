@@ -34,17 +34,24 @@
             var aspireOllamaUri = ServiceDiscoveryUtilities.GetServiceConnectionString("ollama").Replace("Endpoint=", "");
             if (!string.IsNullOrEmpty(aspireOllamaUri))
             {
-                Console.WriteLine($"Chatbot.OnInitializedAsync: Overriding AI_Endpoint with Aspire Ollama URI: {aspireOllamaUri}");
-                Environment.SetEnvironmentVariable("AI_Endpoint", aspireOllamaUri);
-                _configuration["AI_Endpoint"] = aspireOllamaUri;
+                Console.WriteLine($"Chatbot.OnInitializedAsync: Overriding AI-Endpoint with Aspire Ollama URI: {aspireOllamaUri}");
+                Environment.SetEnvironmentVariable("AI-Endpoint", aspireOllamaUri);
             }
-            // set through configuration
-            var aiUri = Environment.GetEnvironmentVariable("AI_Endpoint")
-                ?? _configuration["AI_Endpoint"]
+            
+            // Use the correct configuration keys (with hyphens) and try both environment variable formats
+            var aiUri = Environment.GetEnvironmentVariable("AI-Endpoint")      // AppHost format
+                ?? Environment.GetEnvironmentVariable("AI_Endpoint")           // Legacy format
+                ?? _configuration["AI-Endpoint"]                               // Configuration format
+                ?? _configuration["AI_Endpoint"]                               // Legacy configuration format
                 ?? string.Empty;
-            var aiModel = Environment.GetEnvironmentVariable("AI_Model")
-                ?? _configuration["AI_Model"]
+                
+            var aiModel = Environment.GetEnvironmentVariable("AI-Model")       // AppHost format
+                ?? Environment.GetEnvironmentVariable("AI_Model")              // Legacy format
+                ?? _configuration["AI-Model"]                                  // Configuration format
+                ?? _configuration["AI_Model"]                                  // Legacy configuration format
                 ?? string.Empty;
+
+            Console.WriteLine($"AiInfoStateService: AI URI = '{aiUri}', AI Model = '{aiModel}'");
 
             bool endpointAvailable = false;
 
@@ -58,14 +65,32 @@
                     if (response.IsSuccessStatusCode)
                     {
                         var responseBody = await response.Content.ReadAsStringAsync();
+                        Console.WriteLine($"AiInfoStateService: Response from {aiUri}: {responseBody}");
                         if (responseBody.Trim().Equals("Ollama is running", StringComparison.InvariantCultureIgnoreCase))
                         {
                             endpointAvailable = true;
+                            Console.WriteLine("AiInfoStateService: Ollama endpoint is available");
+                        }
+                        else
+                        {
+                            Console.WriteLine($"AiInfoStateService: Unexpected response from Ollama endpoint: {responseBody}");
                         }
                     }
+                    else
+                    {
+                        Console.WriteLine($"AiInfoStateService: HTTP error {response.StatusCode} from {aiUri}");
+                    }
                 }
-                catch { }
+                catch (Exception ex)
+                {
+                    Console.WriteLine($"AiInfoStateService: Exception checking endpoint {aiUri}: {ex.Message}");
+                }
             }
+            else
+            {
+                Console.WriteLine("AiInfoStateService: No AI URI configured");
+            }
+            
             SetState(endpointAvailable, aiUri, aiModel);
         }
     }
