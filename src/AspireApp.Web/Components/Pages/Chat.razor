@@ -7,6 +7,8 @@
 
 <PageTitle>AI Chatbot</PageTitle>
 
+<link href="~/css/speech.css" rel="stylesheet" />
+
 <style>
 	:root {
 		--main-bg-color: #2C1050;
@@ -153,6 +155,14 @@
 
 <h1>AI Chatbot</h1>
 
+@* Speech support status *@
+@if (!string.IsNullOrEmpty(SpeechStatusMessage))
+{
+	<div class="alert alert-warning" role="alert">
+		@SpeechStatusMessage
+	</div>
+}
+
 @if (IsNotFirstTimeLoading && AiInfoState.EndPointAvailable)
 {
 	<div id="chat-messages-container" class="chat-container">
@@ -168,7 +178,18 @@
 				{
 					<tr>
 						<td class="user-column"><span>@message.User</span></td>
-						<td class="message-column"><span>@ConvertToMarkup(message.Message)</span></td>
+						<td class="message-column">
+							<span>@ConvertToMarkup(message.Message)</span>
+							@if (message.User == "Assistant" && SpeechSupport?.TextToSpeech == true)
+							{
+								<button class="btn btn-sm btn-outline-info ms-2 tts-message-button" 
+										@onclick="() => SpeakMessage(message.Message)"
+										disabled="@IsSpeaking"
+										title="Read message aloud">
+									??
+								</button>
+							}
+						</td>
 					</tr>
 				}
 			</tbody>
@@ -199,14 +220,71 @@
 		</table>
 	}
 
-	<input @bind="Question"
-		   @bind:event="oninput"
-		   @onkeydown="@(async (e) => { if (e.Key == "Enter" && !IsAIResponsing) { await QueryAIChat(); } })"
-		   type="text"
-		   class="form-control"
-		   placeholder="Enter your question"
-		   disabled="@IsAIResponsing"
-		   @ref="questionInput" />
+	@* Speech controls *@
+	@if (SpeechSupport != null && (SpeechSupport.SpeechRecognition || SpeechSupport.TextToSpeech))
+	{
+		<div class="speech-controls">
+			@if (SpeechSupport.SpeechRecognition)
+			{
+				<button id="mic-button" 
+						class="speech-button mic-button @(IsListening ? "listening" : "")"
+						@onclick="ToggleMicrophone"
+						disabled="@IsAIResponsing"
+						title="@(IsListening ? "Stop listening" : "Start voice input")">
+					@(IsListening ? "??" : "??")
+				</button>
+			}
+
+			@if (SpeechSupport.TextToSpeech && !string.IsNullOrEmpty(AIResponse))
+			{
+				<button class="speech-button tts-button @(IsSpeaking ? "speaking" : "")"
+						@onclick="ToggleTextToSpeech"
+						disabled="@(string.IsNullOrEmpty(AIResponse) && !IsSpeaking)"
+						title="@(IsSpeaking ? "Stop speaking" : "Read AI response aloud")">
+					@(IsSpeaking ? "??" : "??")
+				</button>
+			}
+
+			<div class="speech-status">
+				@if (IsListening)
+				{
+					<span class="text-danger">?? Listening...</span>
+				}
+				else if (IsSpeaking)
+				{
+					<span class="text-info">?? Speaking...</span>
+				}
+				else if (!string.IsNullOrEmpty(SpeechStatusText))
+				{
+					<span>@SpeechStatusText</span>
+				}
+			</div>
+		</div>
+	}
+
+	@* Input area with speech transcript overlay *@
+	<div class="input-group">
+		@if (!string.IsNullOrEmpty(SpeechTranscript))
+		{
+			<div class="speech-transcript">
+				<strong>Speech:</strong> @SpeechTranscript
+				@if (!string.IsNullOrEmpty(InterimTranscript))
+				{
+					<span class="interim-text"> @InterimTranscript</span>
+				}
+			</div>
+		}
+		
+		<input @bind="Question"
+			   @bind:event="oninput"
+			   @onkeydown="@(async (e) => { if (e.Key == "Enter" && !IsAIResponsing) { await QueryAIChat(); } })"
+			   type="text"
+			   class="form-control"
+			   placeholder="Enter your question or use voice input"
+			   disabled="@IsAIResponsing"
+			   @ref="questionInput" />
+	</div>
+	
 	<br />
 	<div class="d-flex">
 		<button class="btn btn-primary"
