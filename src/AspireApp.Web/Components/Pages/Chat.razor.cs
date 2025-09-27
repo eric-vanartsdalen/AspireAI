@@ -19,9 +19,16 @@ namespace AspireApp.Web.Components.Pages
         [Inject]
         public required ChatRefreshService RefreshService { get; set; }
 
+        [Inject]
+        public required IHttpClientFactory HttpClientFactory { get; set; }
+
         private ElementReference questionInput;
         private CancellationTokenSource? _cancellationTokenSource;
         private DotNetObjectReference<Chat>? _dotNetRef;
+        
+        // Cache the kernel instance to avoid recreation overhead
+        private Kernel? _kernel;
+        private readonly object _kernelLock = new object();
 
         private Microsoft.SemanticKernel.ChatCompletion.ChatHistory _chatHistory { get; set; } = new Microsoft.SemanticKernel.ChatCompletion.ChatHistory();
         private string Status { get; set; } = string.Empty;
@@ -40,9 +47,48 @@ namespace AspireApp.Web.Components.Pages
             // Use the centralized AiInfoStateService initialization
             await AiInfoState.InitializeAsync();
 
+            // Initialize kernel early to avoid delays during first AI call
+            await InitializeKernelAsync();
+
             await CheckOllamaService();
             IsNotFirstTimeLoading = true;
             StateHasChanged(); // This call is for the Chatbot component itself.
+        }
+
+        private async Task InitializeKernelAsync()
+        {
+            await Task.Run(() =>
+            {
+                lock (_kernelLock)
+                {
+                    if (_kernel == null)
+                    {
+                        IKernelBuilder builder = Kernel.CreateBuilder();
+                        builder.AddOllamaChatCompletion(
+                            modelId: HomeConfigurations.ActiveModel,
+                            endpoint: new Uri(HomeConfigurations.ActiveModelURL)
+                        );
+                        _kernel = builder.Build();
+                    }
+                }
+            });
+        }
+
+        private Kernel GetOrCreateKernel()
+        {
+            lock (_kernelLock)
+            {
+                if (_kernel == null)
+                {
+                    IKernelBuilder builder = Kernel.CreateBuilder();
+                    builder.AddOllamaChatCompletion(
+                        modelId: HomeConfigurations.ActiveModel,
+                        endpoint: new Uri(HomeConfigurations.ActiveModelURL)
+                    );
+                    _kernel = builder.Build();
+                }
+                return _kernel;
+            }
         }
 
         private async Task QueryAIChat()
@@ -145,16 +191,9 @@ namespace AspireApp.Web.Components.Pages
 
         private async Task CallBackgroundAI()
         {
-            IKernelBuilder builder = Kernel.CreateBuilder();
-            builder.AddOllamaChatCompletion(
-                modelId: @HomeConfigurations.ActiveModel,
-                endpoint: new Uri(@HomeConfigurations.ActiveModelURL)
-            );
-
-            var kernel = builder.Build();
-            var prompt = Status;
+            // Use the cached kernel instance instead of creating new one each time
+            var kernel = GetOrCreateKernel();
             var stopwatch = Stopwatch.StartNew();
-            stopwatch.Start();
 
             _cancellationTokenSource = new CancellationTokenSource();
 
@@ -173,19 +212,36 @@ namespace AspireApp.Web.Components.Pages
                 // Initialize empty response
                 AIResponse = string.Empty;
 
+                // Buffer updates to reduce UI thrashing
+                var updateBuffer = new System.Text.StringBuilder();
+                var lastUpdateTime = DateTime.UtcNow;
+                const int updateIntervalMs = 50; // Update UI every 50ms max
+
                 await foreach (var message in stream)
                 {
-                    AIResponse += message.Content;
-                    StateHasChanged();
-                    try
+                    updateBuffer.Append(message.Content);
+                    
+                    // Only update UI if enough time has passed to reduce thrashing
+                    var now = DateTime.UtcNow;
+                    if ((now - lastUpdateTime).TotalMilliseconds >= updateIntervalMs)
                     {
-                        await JSRuntime.InvokeVoidAsync("scrollToBottom");
-                    }
-                    catch (Exception ex)
-                    {
-                        Console.WriteLine($"Error scrolling: {ex.Message}");
+                        AIResponse = updateBuffer.ToString();
+                        StateHasChanged();
+                        lastUpdateTime = now;
+                        
+                        try
+                        {
+                            await JSRuntime.InvokeVoidAsync("scrollToBottom");
+                        }
+                        catch (Exception ex)
+                        {
+                            Console.WriteLine($"Error scrolling: {ex.Message}");
+                        }
                     }
                 }
+                
+                // Final update to ensure all content is displayed
+                AIResponse = updateBuffer.ToString();
             }
             catch (OperationCanceledException)
             {
@@ -205,11 +261,13 @@ namespace AspireApp.Web.Components.Pages
                 _cancellationTokenSource?.Dispose();
                 _cancellationTokenSource = null;
             }
+            
             // Add the complete AI response to chat history only once after streaming is done
             if (!string.IsNullOrEmpty(AIResponse))
             {
                 _chatHistory.AddAssistantMessage(AIResponse);
             }
+            
             stopwatch.Stop();
             IsAIResponsing = false;
             ElapsedTimeMessage = $"Response time: {stopwatch.Elapsed.TotalMilliseconds} milliseconds";
@@ -235,19 +293,22 @@ namespace AspireApp.Web.Components.Pages
             }
             try
             {
-                HttpClient client = new HttpClient();
+                // Use HttpClient factory instead of creating new instance
+                using var client = HttpClientFactory.CreateClient();
+                client.Timeout = TimeSpan.FromSeconds(5); // Set reasonable timeout
+                
                 var response = await client.GetAsync(AiInfoState.CurrentAiUri);
                 if (response.IsSuccessStatusCode)
                 {
-                    var Content = await client.GetStringAsync(AiInfoState.CurrentAiUri);
-                    if (Content.Trim().Equals("Ollama is running"))
+                    var content = await response.Content.ReadAsStringAsync();
+                    if (content.Trim().Equals("Ollama is running"))
                     {
                         Console.WriteLine("Ollama is running");
                         OllamaServiceMessage = string.Empty;
                     }
                     else
                     {
-                        OllamaServiceMessage = $"Not Ollama Service endpoint. \n{AiInfoState.CurrentAiUri}  returned:\n {Content}";
+                        OllamaServiceMessage = $"Not Ollama Service endpoint. \n{AiInfoState.CurrentAiUri}  returned:\n {content}";
                     }
                 }
                 else
@@ -292,6 +353,13 @@ namespace AspireApp.Web.Components.Pages
         {
             try
             {
+                // Cancel any ongoing AI operations
+                _cancellationTokenSource?.Cancel();
+                _cancellationTokenSource?.Dispose();
+                
+                // Note: Kernel doesn't implement IDisposable, so we don't need to dispose it
+                _kernel = null;
+                
                 if (_dotNetRef != null)
                 {
                     await JSRuntime.InvokeVoidAsync("dispose");
