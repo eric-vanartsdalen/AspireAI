@@ -29,7 +29,7 @@ Note: Updates to Aspire and .Net framework SDK will be likely and affected as se
 
 **Objective**: Create a simple chat interface that can send and receive text-based messages from a backend LLM.  
 **Outcomes**:
-- Blazor chat page (conversation view, input box, “Send” button)  
+- Blazor chat page (conversation view, input box, "Send" button)  
 - Backend stub endpoint that echoes or forwards messages  
 - Wiring of chat frontend → backend → response display  
 - Clean UI with user and assistant bubbles, timestamping, scroll behavior  
@@ -40,16 +40,22 @@ Note: Updates to Aspire and .Net framework SDK will be likely and affected as se
 
 ## Phase 2: Speech-to-Text (Mic) & Text-to-Speech (TTS) Integration
 
-**Status**: ⏳ TO-DO
+**Status**: ✅ Complete
 
 **Objective**: Enable voice input and voice output in the chat UI using browser-based APIs.  
 **Outcomes**:
-- JS interop for speech recognition (mic → text) using Web Speech API. :contentReference[oaicite:0]{index=0}  
-- JS or Blazor interop for text-to-speech output using SpeechSynthesis or Blazor speech packages. :contentReference[oaicite:1]{index=1}  
-- UI controls (“Start/Stop Mic”, “Read Aloud”) with status indicators  
-- Clean fallback / error handling for browsers without speech support  
+- ✅ JS interop for speech recognition (mic → text) using Web Speech API
+- ✅ JS/Blazor interop for text-to-speech output using SpeechSynthesis API
+- ✅ UI controls ("Start/Stop Mic", "Read Aloud") with status indicators  
+- ✅ Clean fallback / error handling for browsers without speech support
+- ✅ Real-time speech transcription with interim results
+- ✅ Markdown-to-speech conversion for AI responses
+- ✅ Individual message playback buttons
+- ✅ Visual feedback with animated buttons during speech operations
 
 **Branch suggestion**: `feature/speech-io`
+
+**Documentation**: See [Speech Features Documentation](docs/SPEECH_FEATURES.md) for detailed implementation details.
 
 ---
 
@@ -78,7 +84,7 @@ Note: Updates to Aspire and .Net framework SDK will be likely and affected as se
 **Objective**: Implement simple RAG using flat vector retrieval to give chat responses augmented context from documents.  
 **Outcomes**:
 - `FlatVectorRetriever` implementation (see plugin scaffold)  
-- Frontend config toggle for “Enable RAG” / “No RAG”  
+- Frontend config toggle for "Enable RAG" / "No RAG"  
 - Backend retrieval logic:  
   1. Receive user query  
   2. Retrieve top-K chunks from vector store  
@@ -154,7 +160,7 @@ Note: Updates to Aspire and .Net framework SDK will be likely and affected as se
 
 These are stretch or future goals once the core is solid:
 
-- Multi-agent chat flows (e.g. “Planner → Researcher → Writer”)  
+- Multi-agent chat flows (e.g. "Planner → Researcher → Writer")  
 - Memory or long-term conversation recall beyond the current session  
 - Web crawler or website ingestion to allow querying of live web pages  
 - Real-time collaborative chat or document editing  
@@ -170,7 +176,7 @@ These are stretch or future goals once the core is solid:
 |------|-----------|--------|--------|
 | Phase 0 | Repo setup, extension interface scaffolding | `feature/setup` | ✅ Complete |
 | Phase 1 | Basic Blazor chat UI (text only) | `feature/blazor-chat-ui` | ✅ Complete |
-| Phase 2 | Mic input (speech-to-text) and TTS (text-to-speech) | `feature/speech-io` | ⏳ TO-DO |
+| Phase 2 | Mic input (speech-to-text) and TTS (text-to-speech) | `feature/speech-io` | ✅ Complete |
 | Phase 3 | Document upload and ingestion (Docling pipeline) | `feature/doc-upload` | ⏳ TO-DO |
 | Phase 4 | Flat-vector RAG and citation footnotes | `feature/rag-flat` | ⏳ TO-DO |
 | Phase 5 | LightRAG / GraphRAG retrieval strategies | `feature/rag-graph` | ⏳ TO-DO |
@@ -183,8 +189,8 @@ These are stretch or future goals once the core is solid:
 ### Final Thoughts
 
 - As you work through each branch and use Copilot, we can iterate on each feature one at a time.  
-- The extension interfaces and plugin scaffolding help ensure that future changes — like swapping out Ollama for another LLM, or switching to GraphRAG — don’t require heavy refactorings.  
-- We’ll revisit the `Roadmap.md` as things evolve — it’s meant to be a living document.
+- The extension interfaces and plugin scaffolding help ensure that future changes — like swapping out Ollama for another LLM, or switching to GraphRAG — don't require heavy refactorings.  
+- We'll revisit the `Roadmap.md` as things evolve — it's meant to be a living document.
 
 If you want, I can also generate a **starter Blazor Chat component + JS interop module** for mic and speech synthesis as a base-coded file to drop into your repo.
 ::contentReference[oaicite:3]{index=3}

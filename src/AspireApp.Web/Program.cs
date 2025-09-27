@@ -34,6 +34,9 @@ builder.Services.AddSingleton(provider => new EnvironmentProvider(builder.Enviro
 builder.Services.AddSingleton<ChatRefreshService>();
 builder.Services.AddSingleton<AiInfoStateService>();
 
+// Register Speech service
+builder.Services.AddScoped<SpeechService>();
+
 // Initialize configurations early
 HomeConfigurations.PullConfigure();
 

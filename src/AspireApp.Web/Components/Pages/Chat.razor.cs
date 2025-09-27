@@ -22,6 +22,9 @@ namespace AspireApp.Web.Components.Pages
         [Inject]
         public required IHttpClientFactory HttpClientFactory { get; set; }
 
+        [Inject]
+        public required SpeechService SpeechService { get; set; }
+
         private ElementReference questionInput;
         private CancellationTokenSource? _cancellationTokenSource;
         private DotNetObjectReference<Chat>? _dotNetRef;
@@ -38,6 +41,16 @@ namespace AspireApp.Web.Components.Pages
         private Boolean IsAIResponsing { get; set; } = false;
         private Boolean IsNotFirstTimeLoading { get; set; } = false;
         private string OllamaServiceMessage { get; set; } = string.Empty;
+
+        // Speech-related properties
+        private SpeechSupport? SpeechSupport { get; set; }
+        private bool IsListening { get; set; } = false;
+        private bool IsSpeaking { get; set; } = false;
+        private string SpeechTranscript { get; set; } = string.Empty;
+        private string InterimTranscript { get; set; } = string.Empty;
+        private string SpeechStatusText { get; set; } = string.Empty;
+        private string SpeechStatusMessage { get; set; } = string.Empty;
+        private string? CurrentlySpeakingMessage { get; set; } = null; // Track which message is being spoken
 
         [Inject]
         public AiInfoStateService AiInfoState { get; set; } = default!;
@@ -66,6 +79,9 @@ namespace AspireApp.Web.Components.Pages
             Console.WriteLine($"Chat: AiInfoState.CurrentAiUri = '{AiInfoState.CurrentAiUri}'");
             Console.WriteLine($"Chat: AiInfoState.CurrentAiModel = '{AiInfoState.CurrentAiModel}'");
 
+            // Initialize speech service
+            await InitializeSpeechService();
+
             // Initialize kernel early to avoid delays during first AI call
             await InitializeKernelAsync();
 
@@ -74,6 +90,43 @@ namespace AspireApp.Web.Components.Pages
             
             Console.WriteLine("=== Chat OnInitializedAsync END ===");
             StateHasChanged(); // This call is for the Chatbot component itself.
+        }
+
+        private async Task InitializeSpeechService()
+        {
+            try
+            {
+                // Initialize speech service and get support information
+                SpeechSupport = await SpeechService.InitializeAsync();
+                
+                if (!SpeechSupport.SpeechRecognition && !SpeechSupport.TextToSpeech)
+                {
+                    SpeechStatusMessage = "Speech features are not supported in this browser. Please use Chrome, Edge, or Safari for voice functionality.";
+                }
+                else if (!SpeechSupport.SpeechRecognition)
+                {
+                    SpeechStatusMessage = "Speech recognition is not supported in this browser. Text-to-speech is available.";
+                }
+                else if (!SpeechSupport.TextToSpeech)
+                {
+                    SpeechStatusMessage = "Text-to-speech is not supported in this browser. Speech recognition is available.";
+                }
+
+                // Subscribe to speech events
+                SpeechService.SpeechRecognitionResult += OnSpeechRecognitionResult;
+                SpeechService.SpeechRecognitionError += OnSpeechRecognitionError;
+                SpeechService.SpeechRecognitionEnd += OnSpeechRecognitionEnd;
+                SpeechService.TextToSpeechStart += OnTextToSpeechStart;
+                SpeechService.TextToSpeechEnd += OnTextToSpeechEnd;
+                SpeechService.TextToSpeechError += OnTextToSpeechError;
+
+                Console.WriteLine($"Speech service initialized - Recognition: {SpeechSupport.SpeechRecognition}, TTS: {SpeechSupport.TextToSpeech}");
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"Error initializing speech service: {ex.Message}");
+                SpeechStatusMessage = "Error initializing speech features. Please refresh the page to try again.";
+            }
         }
 
         private async Task InitializeKernelAsync()
@@ -116,8 +169,19 @@ namespace AspireApp.Web.Components.Pages
         {
             if (!Question.Trim().Equals(string.Empty) && !IsAIResponsing)
             {
+                // Stop listening if currently active before submitting query
+                if (IsListening)
+                {
+                    await StopListening();
+                }
+
                 Status = Question;
                 Question = string.Empty;
+                
+                // Clear speech transcript when sending message
+                SpeechTranscript = string.Empty;
+                InterimTranscript = string.Empty;
+                
                 IsAIResponsing = true;
                 AIResponse = string.Empty;
                 StateHasChanged();
@@ -137,6 +201,242 @@ namespace AspireApp.Web.Components.Pages
                 }
 
                 await CallBackgroundAI();
+            }
+        }
+
+        // Speech event handlers
+        private void OnSpeechRecognitionResult(string finalTranscript, string interimTranscript)
+        {
+            InvokeAsync(() =>
+            {
+                if (!string.IsNullOrWhiteSpace(finalTranscript))
+                {
+                    // Add final transcript to the question input
+                    if (string.IsNullOrWhiteSpace(Question))
+                    {
+                        Question = finalTranscript.Trim();
+                    }
+                    else
+                    {
+                        Question += " " + finalTranscript.Trim();
+                    }
+                    
+                    SpeechTranscript = string.Empty;
+                }
+                
+                InterimTranscript = interimTranscript;
+                SpeechTranscript = finalTranscript;
+                StateHasChanged();
+            });
+        }
+
+        private void OnSpeechRecognitionError(string error)
+        {
+            InvokeAsync(() =>
+            {
+                IsListening = false;
+                SpeechStatusText = $"Speech recognition stopped";
+                StateHasChanged();
+            });
+        }
+
+        private void OnSpeechRecognitionEnd()
+        {
+            InvokeAsync(() =>
+            {
+                IsListening = false;
+                SpeechStatusText = "Speech recognition stopped";
+                SpeechTranscript = string.Empty;
+                InterimTranscript = string.Empty;
+                StateHasChanged();
+            });
+        }
+
+        private void OnTextToSpeechStart()
+        {
+            InvokeAsync(() =>
+            {
+                IsSpeaking = true;
+                StateHasChanged();
+            });
+        }
+
+        private void OnTextToSpeechEnd()
+        {
+            InvokeAsync(() =>
+            {
+                IsSpeaking = false;
+                CurrentlySpeakingMessage = null;
+                SpeechStatusText = $"Text-to-speech stopped";
+                StateHasChanged();
+            });
+        }
+
+        private void OnTextToSpeechError(string error)
+        {
+            InvokeAsync(() =>
+            {
+                IsSpeaking = false;
+                CurrentlySpeakingMessage = null;
+                SpeechStatusText = $"Text-to-speech stopped";
+                StateHasChanged();
+            });
+        }
+
+        // Speech control methods
+        private async Task ToggleMicrophone()
+        {
+            if (IsListening)
+            {
+                await StopListening();
+            }
+            else
+            {
+                await StartListening();
+            }
+        }
+
+        private async Task StartListening()
+        {
+            try
+            {
+                var success = await SpeechService.StartListeningAsync();
+                if (success)
+                {
+                    // Stop any ongoing TTS when starting speech recognition
+                    if (IsSpeaking)
+                    {
+                        await StopSpeaking();
+                    }
+                    
+                    IsListening = true;
+                    SpeechStatusText = "Listening... Speak now";
+                }
+                else
+                {
+                    SpeechStatusText = "Failed to start speech recognition";
+                }
+                StateHasChanged();
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"Error starting speech recognition: {ex.Message}");
+                SpeechStatusText = "Error starting speech recognition";
+                StateHasChanged();
+            }
+        }
+
+        private async Task StopListening()
+        {
+            try
+            {
+                await SpeechService.StopListeningAsync();
+                IsListening = false;
+                SpeechStatusText = "Speech recognition stopped";
+                StateHasChanged();
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"Error stopping speech recognition: {ex.Message}");
+            }
+        }
+
+        private async Task ToggleTextToSpeech()
+        {
+            if (IsSpeaking)
+            {
+                await StopSpeaking();
+            }
+            else if (!string.IsNullOrEmpty(AIResponse))
+            {
+                await SpeakAIResponse();
+            }
+        }
+
+        private async Task SpeakAIResponse()
+        {
+            if (!string.IsNullOrEmpty(AIResponse))
+            {
+                CurrentlySpeakingMessage = AIResponse;
+                await SpeakMessage(AIResponse);
+            }
+        }
+
+        private async Task SpeakMessage(string message)
+        {
+            try
+            {
+                // Stop any ongoing speech or listening
+                if (IsSpeaking)
+                {
+                    await StopSpeaking();
+                    return; // If we're already speaking this message, just stop
+                }
+                
+                if (IsListening)
+                {
+                    await StopListening();
+                }
+
+                // Set the currently speaking message
+                CurrentlySpeakingMessage = message;
+                
+                // Convert markdown to plain text for better speech
+                var plainText = ConvertMarkdownToPlainText(message);
+                await SpeechService.SpeakAsync(plainText);
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"Error speaking message: {ex.Message}");
+                SpeechStatusText = "Error speaking message";
+                CurrentlySpeakingMessage = null;
+                StateHasChanged();
+            }
+        }
+
+        private async Task StopSpeaking()
+        {
+            try
+            {
+                await SpeechService.StopSpeakingAsync();
+                IsSpeaking = false;
+                CurrentlySpeakingMessage = null;
+                StateHasChanged();
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"Error stopping speech: {ex.Message}");
+            }
+        }
+
+        // Helper method to check if a specific message is currently being spoken
+        private bool IsMessageBeingSpoken(string message)
+        {
+            return IsSpeaking && CurrentlySpeakingMessage == message;
+        }
+
+        private string ConvertMarkdownToPlainText(string markdown)
+        {
+            if (string.IsNullOrWhiteSpace(markdown))
+                return string.Empty;
+
+            try
+            {
+                // Convert markdown to HTML first
+                var html = Markdown.ToHtml(markdown);
+                
+                // Simple HTML tag removal for speech
+                var plainText = System.Text.RegularExpressions.Regex.Replace(html, "<.*?>", string.Empty);
+                
+                // Decode HTML entities
+                plainText = System.Net.WebUtility.HtmlDecode(plainText);
+                
+                return plainText.Trim();
+            }
+            catch
+            {
+                // Fallback to original text if conversion fails
+                return markdown;
             }
         }
 
@@ -405,6 +705,19 @@ namespace AspireApp.Web.Components.Pages
         {
             try
             {
+                // Unsubscribe from speech events
+                if (SpeechService != null)
+                {
+                    SpeechService.SpeechRecognitionResult -= OnSpeechRecognitionResult;
+                    SpeechService.SpeechRecognitionError -= OnSpeechRecognitionError;
+                    SpeechService.SpeechRecognitionEnd -= OnSpeechRecognitionEnd;
+                    SpeechService.TextToSpeechStart -= OnTextToSpeechStart;
+                    SpeechService.TextToSpeechEnd -= OnTextToSpeechEnd;
+                    SpeechService.TextToSpeechError -= OnTextToSpeechError;
+                    
+                    await SpeechService.DisposeAsync();
+                }
+
                 // Cancel any ongoing AI operations
                 _cancellationTokenSource?.Cancel();
                 _cancellationTokenSource?.Dispose();

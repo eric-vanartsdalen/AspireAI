@@ -7,6 +7,8 @@
 
 <PageTitle>AI Chatbot</PageTitle>
 
+<link href="~/css/speech.css" rel="stylesheet" />
+
 <style>
 	:root {
 		--main-bg-color: #2C1050;
@@ -149,9 +151,147 @@
 	.chat-container::-webkit-scrollbar-thumb:hover {
 		background: #8a8a8a;
 	}
+
+	/* Speech button image styling */
+	.speech-button img {
+		width: 24px;
+		height: 24px;
+		object-fit: contain;
+	}
+
+	.tts-message-button img {
+		width: 16px;
+		height: 16px;
+		object-fit: contain;
+	}
+
+	/* Speech controls layout fixes */
+	.speech-controls-container {
+		margin-bottom: 1rem;
+		clear: both;
+		position: relative;
+		z-index: 5;
+	}
+
+	.input-container {
+		position: relative;
+		z-index: 1;
+		margin-top: 0.5rem;
+	}
+
+	.speech-status {
+		margin-left: 1rem;
+		display: inline-flex;
+		align-items: center;
+		gap: 0.25rem;
+		font-size: 0.9rem;
+		min-height: 50px;
+		vertical-align: middle;
+	}
+
+	/* Speech button dark theme overrides with higher specificity */
+	#mic-button.speech-button.mic-button {
+		background-color: #483D8B !important;
+		color: #f5f5f0 !important;
+		border: 2px solid #28a745 !important;
+		border-radius: 50%;
+		width: 50px;
+		height: 50px;
+		padding: 8px;
+		transition: all 0.3s ease;
+	}
+
+	#mic-button.speech-button.mic-button:hover {
+		background-color: #2a1540 !important;
+		border-color: #34ce57 !important;
+		transform: scale(1.05);
+	}
+
+	#mic-button.speech-button.mic-button.listening {
+		background-color: #2a1540 !important;
+		border-color: #dc3545 !important;
+		animation: pulse 1s infinite;
+	}
+
+	.speech-button.tts-button {
+		background-color: #483D8B !important;
+		color: #f5f5f0 !important;
+		border: 2px solid #17a2b8 !important;
+		border-radius: 50%;
+		width: 50px;
+		height: 50px;
+		padding: 8px;
+		transition: all 0.3s ease;
+	}
+
+	.speech-button.tts-button:hover {
+		background-color: #2a1540 !important;
+		border-color: #20c5db !important;
+		transform: scale(1.05);
+	}
+
+	.speech-button.tts-button.speaking {
+		background-color: #2a1540 !important;
+		border-color: #ffc107 !important;
+		animation: pulse 1s infinite;
+	}
+
+	.speech-button.tts-button:disabled {
+		background-color: #0f0520 !important;
+		border-color: #4a4a4a !important;
+		cursor: not-allowed;
+		transform: none;
+		opacity: 0.6;
+	}
+
+	/* Message TTS button overrides */
+	.btn.tts-message-button {
+		background-color: #483D8B !important;
+		border-color: rgba(255, 255, 255, 0.3) !important;
+		color: #f5f5f0 !important;
+	}
+
+	.btn.tts-message-button:hover {
+		background-color: rgba(42, 21, 64, 0.9) !important;
+		border-color: rgba(23, 162, 184, 0.5) !important;
+		color: #f5f5f0 !important;
+	}
+
+	.btn.tts-message-button:disabled {
+		background-color: rgba(15, 5, 32, 0.6) !important;
+		border-color: rgba(255, 255, 255, 0.2) !important;
+		color: rgba(245, 245, 240, 0.5) !important;
+	}
+
+	/* Pulse animation */
+	@@keyframes pulse {
+		0% {
+			transform: scale(1);
+			opacity: 1;
+			box-shadow: 0 0 0 0 rgba(255, 255, 255, 0.3);
+		}
+		50% {
+			transform: scale(1.05);
+			opacity: 0.8;
+			box-shadow: 0 0 0 8px rgba(255, 255, 255, 0.1);
+		}
+		100% {
+			transform: scale(1);
+			opacity: 1;
+			box-shadow: 0 0 0 0 rgba(255, 255, 255, 0.3);
+		}
+	}
 </style>
 
 <h1>AI Chatbot</h1>
+
+@* Speech support status *@
+@if (!string.IsNullOrEmpty(SpeechStatusMessage))
+{
+	<div class="alert alert-warning" role="alert">
+		@SpeechStatusMessage
+	</div>
+}
 
 @if (IsNotFirstTimeLoading && AiInfoState.EndPointAvailable)
 {
@@ -168,7 +308,19 @@
 				{
 					<tr>
 						<td class="user-column"><span>@message.User</span></td>
-						<td class="message-column"><span>@ConvertToMarkup(message.Message)</span></td>
+						<td class="message-column">
+							<span>@ConvertToMarkup(message.Message)</span>
+							@if (message.User == "Assistant" && SpeechSupport?.TextToSpeech == true)
+							{
+								<button class="btn btn-sm btn-outline-info ms-2 tts-message-button" 
+										@onclick="() => SpeakMessage(message.Message)"
+										disabled="@(IsSpeaking && !IsMessageBeingSpoken(message.Message))"
+										title="@(IsMessageBeingSpoken(message.Message) ? "Stop speaking" : "Read message aloud")">
+									<img src="/images/@(IsMessageBeingSpoken(message.Message) ? "stop.png" : "playback.png")" 
+										 alt="@(IsMessageBeingSpoken(message.Message) ? "Stop" : "Play")" />
+								</button>
+							}
+						</td>
 					</tr>
 				}
 			</tbody>
@@ -199,14 +351,65 @@
 		</table>
 	}
 
-	<input @bind="Question"
-		   @bind:event="oninput"
-		   @onkeydown="@(async (e) => { if (e.Key == "Enter" && !IsAIResponsing) { await QueryAIChat(); } })"
-		   type="text"
-		   class="form-control"
-		   placeholder="Enter your question"
-		   disabled="@IsAIResponsing"
-		   @ref="questionInput" />
+	@* Speech controls - properly positioned above input *@
+	@if (SpeechSupport != null && (SpeechSupport.SpeechRecognition || SpeechSupport.TextToSpeech))
+	{
+		<div class="speech-controls-container">
+			<div class="speech-controls">
+				@if (SpeechSupport.SpeechRecognition)
+				{
+					<button id="mic-button" 
+							class="speech-button mic-button @(IsListening ? "listening" : "")"
+							@onclick="ToggleMicrophone"
+							disabled="@IsAIResponsing"
+							title="@(IsListening ? "Stop listening" : "Start voice input")">
+						<img src="/images/@(IsListening ? "stop.png" : "record.png")" alt="@(IsListening ? "Stop Recording" : "Start Recording")" />
+					</button>
+				}
+				&nbsp;
+				@if (SpeechSupport.TextToSpeech && !string.IsNullOrEmpty(AIResponse))
+				{
+					<button class="speech-button tts-button"
+							@onclick="ToggleTextToSpeech"
+							disabled="@(string.IsNullOrEmpty(AIResponse))"
+							title="@(IsMessageBeingSpoken(AIResponse) ? "Stop speaking" : "Read AI response aloud")">
+						<img src="/images/@(IsMessageBeingSpoken(AIResponse) ? "stop.png" : "playback.png")" alt="@(IsMessageBeingSpoken(AIResponse) ? "Stop Speaking" : "Play Audio")" />
+					</button>
+				}
+
+				<div class="speech-status">
+					@if (IsListening)
+					{
+						<span class="text-danger"><img src="/images/record.png" style="width: 16px; height: 16px;" alt="Recording" /> Listening...</span>
+					}
+					else if (IsSpeaking)
+					{
+						<span class="text-info">
+							Speaking...</span>
+					}
+					else if (!string.IsNullOrEmpty(SpeechStatusText))
+					{
+						<span>@SpeechStatusText</span>
+					}
+				</div>
+			</div>
+		</div>
+	}
+
+	@* Input area with speech transcript overlay *@
+	<div class="input-container">
+		<div class="input-group">
+			<input @bind="Question"
+				   @bind:event="oninput"
+				   @onkeydown="@(async (e) => { if (e.Key == "Enter" && !IsAIResponsing) { if (IsListening) await StopListening(); await QueryAIChat(); } })"
+				   type="text"
+				   class="form-control"
+				   placeholder="Enter your question or use voice input"
+				   disabled="@IsAIResponsing"
+				   @ref="questionInput" />
+		</div>
+	</div>
+	
 	<br />
 	<div class="d-flex">
 		<button class="btn btn-primary"
@@ -239,5 +442,3 @@ else
 		<p><div><span style="background-color: darkslateblue; color:yellowgreen; padding: 1em;"><strong>Chat AI Service loading...</strong></span></div></p>
 	}
 }
-
-
