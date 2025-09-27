@@ -7,30 +7,14 @@ namespace AspireApp.Web.Components.Pages
     {
         protected override void OnInitialized()
         {
-            // Calling configuration setup during initialization
+            // Configuration is already called in Program.cs, but ensure it's done
             HomeConfigurations.PullConfigure();
         }
         
-        // Add OnParametersSet as well to handle potential re-rendering
-        protected override void OnParametersSet()
-        {
-            HomeConfigurations.PullConfigure();
-            base.OnParametersSet();
-        }
-
-        // Force refresh when navigating to this component
-        protected override void OnAfterRender(bool firstRender)
-        {
-            if (firstRender)
-            {
-                HomeConfigurations.PullConfigure();
-                StateHasChanged();
-            }
-        }
-
         protected void RefreshValues()
         {
-            HomeConfigurations.PullConfigure();
+            // Force reconfiguration when explicitly requested
+            HomeConfigurations.ForceReconfigure();
             StateHasChanged();
         }
     }

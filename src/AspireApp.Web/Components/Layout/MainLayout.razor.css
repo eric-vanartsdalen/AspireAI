@@ -13,8 +13,7 @@ main {
 }
 
 .top-row {
-    background-color: #f7f7f7;
-    border-bottom: 1px solid #d6d5d5;
+    background-color: rgba(0,0,0,0.4);
     justify-content: flex-end;
     height: 3.5rem;
     display: flex;
@@ -25,10 +24,12 @@ main {
         white-space: nowrap;
         margin-left: 1.5rem;
         text-decoration: none;
+        color: #d7d7d7;
     }
 
     .top-row ::deep a:hover, .top-row ::deep .btn-link:hover {
         text-decoration: underline;
+        color: white;
     }
 
     .top-row ::deep a:first-child {

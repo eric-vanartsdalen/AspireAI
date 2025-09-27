@@ -9,6 +9,8 @@ Note: Updates to Aspire and .Net framework SDK will be likely and affected as se
 
 ## Phase 0: Repo Cleanup & Setup *(foundation)*
 
+**Status**: ✅ Complete
+
 **Objective**: Clean up existing repository, add scaffolding and core structure.  
 **Outcomes**:
 - Define solution/project layout
@@ -23,6 +25,8 @@ Note: Updates to Aspire and .Net framework SDK will be likely and affected as se
 
 ## Phase 1: Basic Blazor Chat UI *(MVP)*
 
+**Status**: ✅ Complete
+
 **Objective**: Create a simple chat interface that can send and receive text-based messages from a backend LLM.  
 **Outcomes**:
 - Blazor chat page (conversation view, input box, “Send” button)  
@@ -36,6 +40,8 @@ Note: Updates to Aspire and .Net framework SDK will be likely and affected as se
 
 ## Phase 2: Speech-to-Text (Mic) & Text-to-Speech (TTS) Integration
 
+**Status**: ⏳ TO-DO
+
 **Objective**: Enable voice input and voice output in the chat UI using browser-based APIs.  
 **Outcomes**:
 - JS interop for speech recognition (mic → text) using Web Speech API. :contentReference[oaicite:0]{index=0}  
@@ -48,6 +54,8 @@ Note: Updates to Aspire and .Net framework SDK will be likely and affected as se
 ---
 
 ## Phase 3: Document Upload & Ingestion Pipeline
+
+**Status**: ⏳ TO-DO
 
 **Objective**: Allow users to upload documents (PDF, DOCX, etc.), which are chunked, embedded, and stored for later retrieval.  
 **Outcomes**:
@@ -64,6 +72,8 @@ Note: Updates to Aspire and .Net framework SDK will be likely and affected as se
 ---
 
 ## Phase 4: Retrieval-Augmented Generation (RAG) — Flat Vector RAG
+
+**Status**: ⏳ TO-DO
 
 **Objective**: Implement simple RAG using flat vector retrieval to give chat responses augmented context from documents.  
 **Outcomes**:
@@ -84,6 +94,8 @@ Note: Updates to Aspire and .Net framework SDK will be likely and affected as se
 
 ## Phase 5: RAG Enhancement — LightRAG or GraphRAG
 
+**Status**: ⏳ TO-DO
+
 **Objective**: Implement more advanced retrieval strategies (LightRAG or GraphRAG) and improve citation/graphical retrieval logic.  
 **Outcomes**:
 - `LightRagRetriever` or `GraphRagRetriever` plugin implementation  
@@ -98,6 +110,8 @@ Note: Updates to Aspire and .Net framework SDK will be likely and affected as se
 ---
 
 ## Phase 6: Plugin Ecosystem & Community Extensibility
+
+**Status**: ⏳ TO-DO
 
 **Objective**: Harden AspireAI as a plugin-friendly, community extensible platform where others can add new LLM providers, retrieval strategies, or UI components.  
 **Outcomes**:
@@ -115,6 +129,8 @@ Note: Updates to Aspire and .Net framework SDK will be likely and affected as se
 ---
 
 ## Phase 7: UX Polish, Testing, Deployment, and Dockerization
+
+**Status**: ⏳ TO-DO
 
 **Objective**: Improve user experience, add robust testing, and prepare AspireAI for containerized deployment using Docker.  
 **Outcomes**:
@@ -134,6 +150,8 @@ Note: Updates to Aspire and .Net framework SDK will be likely and affected as se
 
 ## Phase 8: Advanced Features (Optional / Future)
 
+**Status**: ⏳ TO-DO
+
 These are stretch or future goals once the core is solid:
 
 - Multi-agent chat flows (e.g. “Planner → Researcher → Writer”)  
@@ -148,17 +166,17 @@ These are stretch or future goals once the core is solid:
 
 ## Summary Table
 
-| Phase | Key Focus | Branch |
-|------|-----------|--------|
-| Phase 0 | Repo setup, extension interface scaffolding | `feature/setup` |
-| Phase 1 | Basic Blazor chat UI (text only) | `feature/blazor-chat-ui` |
-| Phase 2 | Mic input (speech-to-text) and TTS (text-to-speech) | `feature/speech-io` |
-| Phase 3 | Document upload and ingestion (Docling pipeline) | `feature/doc-upload` |
-| Phase 4 | Flat-vector RAG and citation footnotes | `feature/rag-flat` |
-| Phase 5 | LightRAG / GraphRAG retrieval strategies | `feature/rag-graph` |
-| Phase 6 | Plugin ecosystem and extensibility | `feature/plugin-ecosystem` |
-| Phase 7 | Testing, UX polish, Dockerization, CI/CD | `feature/deployment-ci` |
-| Phase 8 | Advanced / stretch features | `feature/advanced` |
+| Phase | Key Focus | Branch | Status |
+|------|-----------|--------|--------|
+| Phase 0 | Repo setup, extension interface scaffolding | `feature/setup` | ✅ Complete |
+| Phase 1 | Basic Blazor chat UI (text only) | `feature/blazor-chat-ui` | ✅ Complete |
+| Phase 2 | Mic input (speech-to-text) and TTS (text-to-speech) | `feature/speech-io` | ⏳ TO-DO |
+| Phase 3 | Document upload and ingestion (Docling pipeline) | `feature/doc-upload` | ⏳ TO-DO |
+| Phase 4 | Flat-vector RAG and citation footnotes | `feature/rag-flat` | ⏳ TO-DO |
+| Phase 5 | LightRAG / GraphRAG retrieval strategies | `feature/rag-graph` | ⏳ TO-DO |
+| Phase 6 | Plugin ecosystem and extensibility | `feature/plugin-ecosystem` | ⏳ TO-DO |
+| Phase 7 | Testing, UX polish, Dockerization, CI/CD | `feature/deployment-ci` | ⏳ TO-DO |
+| Phase 8 | Advanced / stretch features | `feature/advanced` | ⏳ TO-DO |
 
 ---
 

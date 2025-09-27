@@ -1,5 +1,243 @@
 @page "/chat"
+@rendermode InteractiveServer
+@attribute [StreamRendering]
+@inject IConfiguration Configuration
 
-<h3>Chat</h3>
+@using AspireApp.Web.Components.Shared
 
-<p>Welcome to the chat page! (Implement your chat UI here.)</p>
+<PageTitle>AI Chatbot</PageTitle>
+
+<style>
+	:root {
+		--main-bg-color: #2C1050;
+		--main-text-color: #f5f5f0;
+	}
+
+	body {
+		background-color: var(--main-bg-color);
+		color: var(--main-text-color);
+	}
+
+	.loading-container {
+		display: inline-flex;
+		align-items: center;
+		gap: 0.5rem;
+	}
+
+	.loading-text {
+		margin: 0;
+	}
+
+	.stop-button {
+		background-color: #dc3545;
+		color: white;
+		margin-left: 8px;
+	}
+
+	.chat-container {
+		max-height: 60vh;
+		overflow-y: auto;
+		border: 1px solid rgba(255, 255, 255, 0.2);
+		border-radius: 0.375rem;
+		margin-bottom: 1rem;
+		background-color: var(--main-bg-color);
+	}
+
+	.table {
+		color: var(--main-text-color);
+		background-color: 1px solid rgba(255, 255, 255, 0.05);
+		border: 1px solid rgba(255, 255, 255, 0.2);
+		margin-bottom: 0;
+	}
+
+	.table th {
+		background-color: #1a0a30;
+		color: var(--main-text-color);
+		border-color: #4a4a4a;
+		border-width: 2px;
+		font-weight: 600;
+		position: sticky;
+		top: 0;
+		z-index: 1;
+			border-bottom: 2px solid rgba(255, 255, 255, 0.3);
+	}
+
+	.table td {
+		background-color: rgba(255, 255, 255, 0.03);
+		color: var(--main-text-color);
+		border-color: rgba(255, 255, 255, 0.1);
+		border-width: 1px;
+		vertical-align: top;
+		padding: 12px;
+	}
+
+	.table tbody tr:hover {
+		background-color: #3a1550;
+	}
+
+	.table tbody tr:hover td {
+		background-color: #3a1550;
+	}
+
+	.user-column {
+		width: 100px;
+		min-width: 100px;
+		max-width: 100px;
+		font-weight: 600;
+	}
+
+	.message-column {
+		word-wrap: break-word;
+		word-break: break-word;
+	}
+
+	#ai-request {
+		color: var(--main-text-color);
+		background-color: rgba(255, 255, 255, 0.05);
+		border: 1px solid rgba(255, 255, 255, 0.2);
+		width: 100%;
+		margin-bottom: 1rem;
+	}
+
+	#ai-request td {
+			background-color: rgba(255, 255, 255, 0.03);
+		color: var(--main-text-color);
+		border-color: rgba(255, 255, 255, 0.1);
+		border-width: 1px;
+		padding: 8px 12px;
+	}
+
+	.form-control {
+		background-color: #3a1550;
+		color: var(--main-text-color);
+		border: 2px solid #4a4a4a;
+	}
+
+		.form-control::placeholder {
+			color: rgba(255, 255, 255, 0.6);
+		}
+
+		.form-control:focus {
+			background-color: #4a1560;
+			color: var(--main-text-color);
+			border-color: #6a6a6a;
+		}
+
+		/* Style for disabled input */
+		.form-control:disabled {
+			background-color: #1a0a30;
+			color: rgba(245, 245, 240, 0.7);
+			border-color: #4a4a4a;
+			cursor: not-allowed;
+		}
+
+	/* Scroll bar styling for webkit browsers */
+	.chat-container::-webkit-scrollbar {
+		width: 8px;
+	}
+
+	.chat-container::-webkit-scrollbar-track {
+		background: #4a4a4a;
+		border-radius: 4px;
+	}
+
+	.chat-container::-webkit-scrollbar-thumb {
+		background: #6a6a6a;
+		border-radius: 4px;
+	}
+
+	.chat-container::-webkit-scrollbar-thumb:hover {
+		background: #8a8a8a;
+	}
+</style>
+
+<h1>AI Chatbot</h1>
+
+@if (IsNotFirstTimeLoading && AiInfoState.EndPointAvailable)
+{
+	<div id="chat-messages-container" class="chat-container">
+		<table id="chathistory" class="table">
+			<thead>
+				<tr>
+					<th class="user-column">User</th>
+					<th class="message-column">Messages</th>
+				</tr>
+			</thead>
+			<tbody>
+				@foreach (var message in ChatHistoryService.GetFormattedMessages(_chatHistory))
+				{
+					<tr>
+						<td class="user-column"><span>@message.User</span></td>
+						<td class="message-column"><span>@ConvertToMarkup(message.Message)</span></td>
+					</tr>
+				}
+			</tbody>
+		</table>
+	</div>
+
+	@if (IsAIResponsing == true)
+	{
+		<table id="ai-request">
+			<tr>
+				<td class="user-column">AI in Action&nbsp;&nbsp;</td>
+				<td class="message-column">
+					@if (string.IsNullOrEmpty(AIResponse))
+					{
+						<div class="loading-container">
+							<div class="spinner-border spinner-border-sm text-primary" role="status">
+								<span class="visually-hidden">Loading...</span>
+							</div>
+							<p class="loading-text">&nbsp;Thinking...</p>
+						</div>
+					}
+					else
+					{
+						@ConvertToMarkup(AIResponse)
+					}
+				</td>
+			</tr>
+		</table>
+	}
+
+	<input @bind="Question"
+		   @bind:event="oninput"
+		   @onkeydown="@(async (e) => { if (e.Key == "Enter" && !IsAIResponsing) { await QueryAIChat(); } })"
+		   type="text"
+		   class="form-control"
+		   placeholder="Enter your question"
+		   disabled="@IsAIResponsing"
+		   @ref="questionInput" />
+	<br />
+	<div class="d-flex">
+		<button class="btn btn-primary"
+				@onclick="QueryAIChat"
+				disabled="@IsAIResponsing">
+			@(IsAIResponsing ? "Processing..." : "Send Query")
+		</button>
+		@if (IsAIResponsing)
+		{
+			<button class="btn stop-button"
+					@onclick="StopAIResponse"
+					title="Stop response (Ctrl+C)">
+				Stop Response
+			</button>
+		}
+	</div>
+	<br />
+	<div><span>Elapsed time: @ElapsedTimeMessage</span></div>
+	<br />
+	<br />
+}
+else
+{
+	@if (IsNotFirstTimeLoading)
+	{
+		<p><div><span style="background-color:darkred; color:antiquewhite; padding: 1em;"><strong>Chat Endpoint AI Service URI unavailable!</strong></span></div></p>
+	}
+	else
+	{
+		<p><div><span style="background-color: darkslateblue; color:yellowgreen; padding: 1em;"><strong>Chat AI Service loading...</strong></span></div></p>
+	}
+}
+
+
