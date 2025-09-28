@@ -1,0 +1,470 @@
+﻿@page "/upload"
+@rendermode InteractiveServer
+@attribute [StreamRendering]
+@using AspireApp.Web.Data
+@using Microsoft.AspNetCore.Components.Forms
+@inject IHttpClientFactory ClientFactory
+@inject ILogger<UploadData> Logger
+@inject IJSRuntime JSRuntime
+@inject FileStorageService FileStorageService
+@implements IDisposable
+
+<PageTitle>Upload Data</PageTitle>
+
+<style>
+    :root {
+        --main-bg-color: #2C1050;
+        --main-text-color: #f5f5f0;
+        --purple-dark: #1a0a30;
+        --purple-medium: #483D8B;
+        --purple-light: #6a5acd;
+        --accent-color: #28a745;
+    }
+
+    html, body {
+        height: 100%;
+        margin: 0;
+        padding: 0;
+        background: var(--main-bg-color) !important;
+        color: var(--main-text-color);
+    }
+
+    .page-background {
+        min-height: 100vh;
+        min-width: 100vw;
+        background-color: var(--main-bg-color);
+        margin: 0;
+        padding: 0;
+    }
+
+    .upload-container {
+        max-width: 800px;
+        margin: 2rem auto;
+        padding: 2rem;
+        background-color: rgba(255, 255, 255, 0.05);
+        border-radius: 0.375rem;
+        border: 1px solid rgba(255, 255, 255, 0.2);
+        color: var(--main-text-color);
+    }
+
+    .upload-container h1 {
+        color: var(--main-text-color);
+        margin-bottom: 1rem;
+    }
+
+    .upload-container h2 {
+        color: var(--main-text-color);
+        margin-top: 2rem;
+        margin-bottom: 1rem;
+    }
+
+    .phase-info {
+        background-color: rgba(72, 61, 139, 0.3);
+        border: 1px solid rgba(72, 61, 139, 0.6);
+        border-radius: 0.375rem;
+        padding: 1rem;
+        margin-bottom: 2rem;
+    }
+
+    .phase-info h4 {
+        color: #f5f5f0;
+        margin-bottom: 0.5rem;
+    }
+
+    .phase-info p {
+        color: rgba(255, 255, 255, 0.8);
+        margin-bottom: 0;
+    }
+
+    .simple-upload {
+        margin: 2rem 0;
+        padding: 2rem;
+        background-color: rgba(255, 255, 255, 0.03);
+        border-radius: 0.375rem;
+        border: 2px dashed rgba(255, 255, 255, 0.3);
+    }
+
+    .upload-hint {
+        margin-top: 0.5rem;
+        font-size: 0.875rem;
+        color: #dda0dd;
+    }
+
+    .form-control {
+        display: block;
+        width: 100%;
+        padding: 0.75rem;
+        font-size: 1rem;
+        line-height: 1.5;
+        color: var(--main-text-color);
+        background-color: var(--purple-dark);
+        border: 2px solid #4a4a4a;
+        border-radius: 0.375rem;
+        transition: border-color 0.15s ease-in-out, box-shadow 0.15s ease-in-out;
+    }
+
+    .form-control:focus {
+        background-color: #4a1560;
+        color: var(--main-text-color);
+        border-color: #6a6a6a;
+        box-shadow: 0 0 0 0.2rem rgba(72, 61, 139, 0.25);
+    }
+
+    .btn-primary {
+        background-color: var(--purple-medium);
+        color: #f5f5f0;
+        border: 2px solid var(--accent-color);
+        padding: 0.75rem 2rem;
+        font-size: 1rem;
+        border-radius: 0.375rem;
+        transition: all 0.3s ease;
+        cursor: pointer;
+    }
+
+    .btn-primary:hover:not(:disabled) {
+        background-color: #2a1540;
+        border-color: #34ce57;
+        color: #f5f5f0;
+        transform: translateY(-2px);
+    }
+
+    .btn-primary:disabled {
+        background-color: #333;
+        border-color: #555;
+        color: #999;
+        cursor: not-allowed;
+        transform: none;
+    }
+
+    .btn-danger {
+        background-color: #dc3545;
+        color: white;
+        border: 1px solid #dc3545;
+        padding: 0.375rem 0.75rem;
+        border-radius: 0.25rem;
+        cursor: pointer;
+        transition: all 0.3s ease;
+    }
+
+    .btn-danger:hover {
+        background-color: #c82333;
+        border-color: #bd2130;
+    }
+
+    .btn-sm {
+        font-size: 0.875rem;
+        padding: 0.25rem 0.5rem;
+    }
+
+    .mt-3 {
+        margin-top: 1rem;
+    }
+
+    .mt-5 {
+        margin-top: 2rem;
+    }
+
+    .alert {
+        padding: 1rem;
+        margin: 1rem 0;
+        border-radius: 0.375rem;
+        border: 1px solid transparent;
+    }
+
+    .alert-success {
+        background-color: rgba(40, 167, 69, 0.2);
+        color: var(--main-text-color);
+        border-color: rgba(40, 167, 69, 0.5);
+    }
+
+    .alert-error {
+        background-color: rgba(220, 53, 69, 0.2);
+        color: var(--main-text-color);
+        border-color: rgba(220, 53, 69, 0.5);
+    }
+
+    .alert-warning {
+        background-color: rgba(255, 193, 7, 0.2);
+        color: var(--main-text-color);
+        border-color: rgba(255, 193, 7, 0.5);
+    }
+
+    .alert-info {
+        background-color: rgba(23, 162, 184, 0.2);
+        color: var(--main-text-color);
+        border-color: rgba(23, 162, 184, 0.5);
+    }
+
+    .uploaded-files {
+        margin-top: 2rem;
+        padding: 1rem;
+        background-color: rgba(255, 255, 255, 0.03);
+        border-radius: 0.375rem;
+        border: 1px solid rgba(255, 255, 255, 0.1);
+    }
+
+    .file-table {
+        width: 100%;
+        border-collapse: collapse;
+        margin-top: 1rem;
+        background-color: rgba(255, 255, 255, 0.05);
+        border-radius: 0.375rem;
+        overflow: hidden;
+    }
+
+    .file-table th {
+        background-color: var(--purple-dark);
+        color: var(--main-text-color);
+        font-weight: 600;
+        padding: 0.75rem;
+        text-align: left;
+        border-bottom: 2px solid rgba(255, 255, 255, 0.3);
+    }
+
+    .file-table td {
+        padding: 0.75rem;
+        text-align: left;
+        border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+        background-color: rgba(255, 255, 255, 0.03);
+        color: var(--main-text-color);
+    }
+
+    .file-table tr:hover td {
+        background-color: #3a1550;
+    }
+
+    .selected-file {
+        margin-top: 1rem;
+        padding: 0.75rem;
+        background-color: rgba(72, 61, 139, 0.3);
+        border-radius: 0.375rem;
+        border: 1px solid rgba(72, 61, 139, 0.6);
+    }
+
+    .loading-indicator {
+        display: flex;
+        align-items: center;
+        gap: 0.5rem;
+        color: rgba(255, 255, 255, 0.8);
+    }
+
+    .spinner-border {
+        width: 1rem;
+        height: 1rem;
+        border: 0.125em solid currentColor;
+        border-right-color: transparent;
+        border-radius: 50%;
+        animation: spinner-border 0.75s linear infinite;
+    }
+
+    @@keyframes spinner-border {
+        to {
+            transform: rotate(360deg);
+        }
+    }
+
+    .no-files-message {
+        text-align: center;
+        color: rgba(255, 255, 255, 0.7);
+        font-style: italic;
+        padding: 2rem;
+    }
+
+    .file-actions {
+        display: flex;
+        gap: 0.5rem;
+    }
+
+    .file-name-cell {
+        font-weight: 500;
+    }
+
+    .file-size-cell {
+        color: rgba(255, 255, 255, 0.8);
+    }
+
+    .upload-date-cell {
+        color: rgba(255, 255, 255, 0.8);
+        font-size: 0.875rem;
+    }
+
+    .error-list {
+        margin-top: 0.5rem;
+        padding-left: 1.5rem;
+    }
+
+    .error-list li {
+        margin-bottom: 0.25rem;
+        color: #ffcccc;
+    }
+
+    .upload-progress {
+        margin-top: 0.5rem;
+    }
+
+    .progress-bar {
+        width: 100%;
+        height: 4px;
+        background-color: rgba(255, 255, 255, 0.2);
+        border-radius: 2px;
+        overflow: hidden;
+    }
+
+    .progress-fill {
+        height: 100%;
+        background-color: var(--accent-color);
+        transition: width 0.3s ease;
+    }
+</style>
+
+<div class="upload-container">
+    <h1><i class="bi bi-cloud-upload-fill"></i> Upload Data</h1>
+    
+    <div class="phase-info">
+        <h4><i class="bi bi-info-circle"></i> Phase 3: Document Upload & Storage</h4>
+        <p>Upload documents for processing and storage. Files are saved to the local file system and metadata is tracked for future RAG implementation.</p>
+    </div>
+
+    <p>Select a file to upload for processing:</p>
+
+    <div class="simple-upload">
+        <input type="file" id="fileInput" accept=".pdf,.docx,.txt,.md" class="form-control" />
+        <button @onclick="UploadFile" class="btn btn-primary mt-3" disabled="@_isUploading">
+            @if (_isUploading)
+            {
+                <span class="spinner-border me-2" role="status"></span>
+                <text>Uploading...</text>
+            }
+            else
+            {
+                <i class="bi bi-upload"></i>
+                <text> Upload File</text>
+            }
+        </button>
+        <p class="upload-hint">
+            <i class="bi bi-info-circle"></i> Maximum file size: @FormatFileSize(MaxFileSize)
+            <br>Supported formats: PDF, DOCX, TXT, MD
+        </p>
+        
+        @if (_uploadProgress > 0 && _uploadProgress < 100)
+        {
+            <div class="upload-progress">
+                <div class="progress-bar">
+                    <div class="progress-fill" style="width: @(_uploadProgress)%"></div>
+                </div>
+                <small>Uploading: @_uploadProgress%</small>
+            </div>
+        }
+    </div>
+
+    @if (!string.IsNullOrEmpty(UploadMessage))
+    {
+        <div class="alert alert-@MessageClass" role="alert">
+            @UploadMessage
+            @if (MessageClass == "error" && UploadErrors != null && UploadErrors.Count > 0)
+            {
+                <ul class="error-list">
+                    @foreach (var err in UploadErrors)
+                    {
+                        <li>@err</li>
+                    }
+                </ul>
+            }
+        </div>
+    }
+
+    @if (_selectedFileName != null)
+    {
+        <div class="selected-file">
+            <strong><i class="bi bi-file-earmark"></i> Selected file:</strong> @_selectedFileName
+        </div>
+    }
+
+    <div class="uploaded-files mt-5">
+        <h2><i class="bi bi-folder-fill"></i> Uploaded Files</h2>
+        @if (_isLoading)
+        {
+            <div class="loading-indicator">
+                <div class="spinner-border" role="status"></div>
+                <span>Loading uploaded files...</span>
+            </div>
+        }
+        else if (_uploadedFiles == null || !_uploadedFiles.Any())
+        {
+            <div class="no-files-message">
+                <i class="bi bi-inbox"></i><br />
+                No files have been uploaded yet.
+            </div>
+        }
+        else
+        {
+            <table class="file-table">
+                <thead>
+                    <tr>
+                        <th><i class="bi bi-file-earmark"></i> File Name</th>
+                        <th><i class="bi bi-hdd"></i> Size</th>
+                        <th><i class="bi bi-calendar"></i> Uploaded At</th>
+                        <th><i class="bi bi-gear"></i> Actions</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    @foreach (var file in _uploadedFiles)
+                    {
+                        <tr>
+                            <td class="file-name-cell">
+                                <i class="bi @GetFileIcon(file.FileName)"></i> @file.FileName
+                            </td>
+                            <td class="file-size-cell">@FormatFileSize(file.Size)</td>
+                            <td class="upload-date-cell">@file.UploadedAt.ToLocalTime().ToString("g")</td>
+                            <td>
+                                <div class="file-actions">
+                                    <button @onclick="() => DeleteFile(file.Id)" class="btn btn-danger btn-sm" disabled="@_isUploading">
+                                        <i class="bi bi-trash"></i> Delete
+                                    </button>
+                                </div>
+                            </td>
+                        </tr>
+                    }
+                </tbody>
+            </table>
+        }
+    </div>
+
+    <div class="mt-5">
+        <h6><i class="bi bi-roadmap"></i> Next Steps (Future Phases):</h6>
+        <ul class="text-muted">
+            <li><strong>Phase 4:</strong> Document processing pipeline with chunking and embedding</li>
+            <li><strong>Phase 5:</strong> Vector storage and retrieval system</li>
+            <li><strong>Phase 6:</strong> RAG integration with chat interface</li>
+            <li><strong>Phase 7:</strong> Advanced retrieval strategies (GraphRAG)</li>
+        </ul>
+    </div>
+</div>
+
+@code {
+    // Remove duplicate field declarations - they are already in the code-behind file
+    // Keep only the GetFileIcon method that's used in the razor markup
+    private static string GetFileIcon(string fileName)
+    {
+        var extension = Path.GetExtension(fileName).ToLowerInvariant();
+        return extension switch
+        {
+            ".pdf" => "bi-file-earmark-pdf",
+            ".docx" => "bi-file-earmark-word",
+            ".doc" => "bi-file-earmark-word",
+            ".txt" => "bi-file-earmark-text",
+            ".md" => "bi-file-earmark-code",
+            ".json" => "bi-file-earmark-code",
+            ".xml" => "bi-file-earmark-code",
+            ".csv" => "bi-file-earmark-spreadsheet",
+            ".xlsx" => "bi-file-earmark-spreadsheet",
+            ".xls" => "bi-file-earmark-spreadsheet",
+            ".jpg" or ".jpeg" => "bi-file-earmark-image",
+            ".png" => "bi-file-earmark-image",
+            ".gif" => "bi-file-earmark-image",
+            ".zip" => "bi-file-earmark-zip",
+            ".rar" => "bi-file-earmark-zip",
+            _ => "bi-file-earmark"
+        };
+    }
+}
