@@ -38,13 +38,15 @@
     }
 
     .upload-container {
-        max-width: 1000px;
-        margin: 2rem auto;
+        max-width: none; /* Remove max-width to allow full stretch */
+        width: 100%; /* Take full width of parent */
+        margin: 2rem 0; /* Remove auto centering, use vertical margins only */
         padding: 2rem;
         background-color: rgba(255, 255, 255, 0.05);
         border-radius: 0.375rem;
         border: 1px solid rgba(255, 255, 255, 0.2);
         color: var(--main-text-color);
+        box-sizing: border-box; /* Include padding in width calculation */
     }
 
     .upload-container h1 {
@@ -276,10 +278,110 @@
         background: rgba(255, 255, 255, 0.5);
     }
 
+    .file-table {
+        width: 100%;
+        border-collapse: collapse;
+        margin-top: 1rem;
+        background-color: rgba(255, 255, 255, 0.05);
+        border-radius: 0.375rem;
+        overflow: hidden;
+        table-layout: fixed; /* Force table to respect width constraints */
+    }
+
+    .file-table th {
+        background-color: var(--purple-dark);
+        color: var(--main-text-color);
+        font-weight: 600;
+        padding: 0.75rem;
+        text-align: left;
+        border-bottom: 2px solid rgba(255, 255, 255, 0.3);
+    }
+
+    .file-table td {
+        padding: 0.75rem;
+        text-align: left;
+        border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+        background-color: rgba(255, 255, 255, 0.03);
+        color: var(--main-text-color);
+        word-wrap: break-word;
+        overflow-wrap: break-word;
+    }
+
+    .file-table tr:hover td {
+        background-color: #3a1550;
+    }
+
+    /* Column width allocation for fixed table layout */
+    .file-table th:nth-child(1), /* File Name */
+    .file-table td:nth-child(1) {
+        width: 35%;
+        max-width: 0; /* Required for text-overflow to work with table-layout: fixed */
+    }
+
+    .file-table th:nth-child(2), /* Size */
+    .file-table td:nth-child(2) {
+        width: 10%;
+    }
+
+    .file-table th:nth-child(3), /* Status */
+    .file-table td:nth-child(3) {
+        width: 12%;
+    }
+
+    .file-table th:nth-child(4), /* Hash */
+    .file-table td:nth-child(4) {
+        width: 15%;
+    }
+
+    .file-table th:nth-child(5), /* Uploaded At */
+    .file-table td:nth-child(5) {
+        width: 18%;
+    }
+
+    .file-table th:nth-child(6), /* Actions */
+    .file-table td:nth-child(6) {
+        width: 10%;
+    }
+
+    .file-name-cell {
+        font-weight: 500;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+        position: relative;
+    }
+
+    .file-name-cell:hover {
+        white-space: normal;
+        word-wrap: break-word;
+        overflow-wrap: break-word;
+    }
+
+    /* Tooltip for full file name on hover */
+    .file-name-cell .file-name-full {
+        display: none;
+        position: absolute;
+        background-color: var(--purple-dark);
+        border: 1px solid rgba(255, 255, 255, 0.3);
+        border-radius: 0.25rem;
+        padding: 0.5rem;
+        z-index: 1000;
+        max-width: 300px;
+        word-break: break-all;
+        top: 100%;
+        left: 0;
+        margin-top: 0.25rem;
+        box-shadow: 0 4px 6px rgba(0, 0, 0, 0.3);
+    }
+
+    .file-name-cell:hover .file-name-full {
+        display: block;
+    }
+
     /* Responsive adjustments for smaller screens */
     @@media (max-width: 768px) {
         .upload-container {
-            margin: 1rem;
+            margin: 1rem 0; /* Adjust margins for mobile */
             padding: 1rem;
         }
         
@@ -290,10 +392,83 @@
     }
 
     @@media (max-width: 480px) {
+        .upload-container {
+            margin: 0.5rem 0; /* Smaller margins for very small screens */
+            padding: 0.75rem;
+        }
+        
         .file-table th:nth-child(3),
         .file-table td:nth-child(3) {
             display: none; /* Hide status column on very small screens */
         }
+    }
+
+    @@keyframes slideInRight {
+        from {
+            transform: translateX(100%);
+            opacity: 0;
+        }
+        to {
+            transform: translateX(0);
+            opacity: 1;
+        }
+    }
+
+    /* Toast Notification Styles */
+    .toast-container {
+        position: fixed;
+        top: 20px;
+        right: 20px;
+        z-index: 1050;
+        max-width: 400px;
+    }
+
+    .duplicate-toast {
+        background-color: rgba(255, 193, 7, 0.95);
+        color: #212529;
+        border: 2px solid #ffc107;
+        border-radius: 0.5rem;
+        box-shadow: 0 4px 6px rgba(0, 0, 0, 0.3);
+        animation: slideInRight 0.3s ease-out;
+    }
+
+    .duplicate-toast .toast-header {
+        background-color: rgba(255, 193, 7, 0.8);
+        border-bottom: 1px solid rgba(255, 193, 7, 0.5);
+        color: #212529;
+    }
+
+    .duplicate-toast .toast-body {
+        padding: 1rem;
+    }
+
+    .duplicate-toast-details {
+        margin-top: 0.75rem;
+        padding: 0.5rem;
+        background-color: rgba(255, 255, 255, 0.3);
+        border-radius: 0.25rem;
+    }
+
+    .btn-close {
+        background: none;
+        border: none;
+        font-size: 1.2rem;
+        opacity: 0.7;
+        cursor: pointer;
+        color: #212529;
+    }
+
+    .btn-close:hover {
+        opacity: 1;
+    }
+
+    .toast {
+        display: block;
+        margin-bottom: 0.5rem;
+    }
+
+    .toast.show {
+        opacity: 1;
     }
 </style>
 
