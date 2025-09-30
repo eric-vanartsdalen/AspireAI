@@ -17,11 +17,13 @@ Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "roadmap", "roadmap", "{02EA
 EndProject
 Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "docs", "docs", "{FBE155A9-2F55-417C-851F-620540B898B6}"
 	ProjectSection(SolutionItems) = preProject
+		docs\DATABASE_SETUP.md = docs\DATABASE_SETUP.md
 		README.md = README.md
 		docs\SPEECH_FEATURES.md = docs\SPEECH_FEATURES.md
-		docs\DATABASE_SETUP.md = docs\DATABASE_SETUP.md
 		docs\TESTING_FILE_UPLOAD.md = docs\TESTING_FILE_UPLOAD.md
 	EndProjectSection
+EndProject
+Project("{888888A0-9F3D-457C-B088-3A5042F75D52}") = "AspireApp.PythonServices", "src\AspireApp.PythonServices\AspireApp.PythonServices.pyproj", "{B58F2D78-4D31-4407-A831-CB05DA1C1D32}"
 EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
@@ -45,12 +47,14 @@ Global
 		{E494093C-6340-9888-0364-A77ED66DE782}.Debug|Any CPU.Build.0 = Debug|Any CPU
 		{E494093C-6340-9888-0364-A77ED66DE782}.Release|Any CPU.ActiveCfg = Release|Any CPU
 		{E494093C-6340-9888-0364-A77ED66DE782}.Release|Any CPU.Build.0 = Release|Any CPU
+		{B58F2D78-4D31-4407-A831-CB05DA1C1D32}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{B58F2D78-4D31-4407-A831-CB05DA1C1D32}.Release|Any CPU.ActiveCfg = Release|Any CPU
 	EndGlobalSection
 	GlobalSection(SolutionProperties) = preSolution
 		HideSolutionNode = FALSE
 	EndGlobalSection
 	GlobalSection(ExtensibilityGlobals) = postSolution
-		SolutionGuid = {CBD3E3C3-D6AB-4EE7-A317-B47493A7C9F2}
 		StartupProject = AspireApp.AppHost
+		SolutionGuid = {CBD3E3C3-D6AB-4EE7-A317-B47493A7C9F2}
 	EndGlobalSection
 EndGlobal

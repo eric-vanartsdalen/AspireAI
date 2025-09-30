@@ -38,7 +38,7 @@
     }
 
     .upload-container {
-        max-width: 800px;
+        max-width: 1000px;
         margin: 2rem auto;
         padding: 2rem;
         background-color: rgba(255, 255, 255, 0.05);
@@ -195,6 +195,54 @@
         border-color: rgba(23, 162, 184, 0.5);
     }
 
+    .duplicate-warning {
+        padding: 0.5rem 0;
+    }
+
+    .duplicate-warning h5 {
+        color: #ffc107;
+        margin-bottom: 0.75rem;
+        font-weight: 600;
+    }
+
+    .duplicate-warning h5 i {
+        margin-right: 0.5rem;
+        font-size: 1.2rem;
+    }
+
+    .duplicate-details {
+        margin-top: 1rem;
+        padding: 1rem;
+        background-color: rgba(255, 193, 7, 0.1);
+        border-radius: 0.375rem;
+        border: 1px solid rgba(255, 193, 7, 0.3);
+    }
+
+    .duplicate-details h6 {
+        color: #ffc107;
+        margin-bottom: 0.5rem;
+        font-weight: 500;
+    }
+
+    .duplicate-details ul {
+        margin-bottom: 0.75rem;
+        padding-left: 1.5rem;
+    }
+
+    .duplicate-details li {
+        margin-bottom: 0.25rem;
+        color: var(--main-text-color);
+    }
+
+    .duplicate-details code {
+        background-color: rgba(255, 255, 255, 0.1);
+        color: #ffc107;
+        padding: 0.2rem 0.4rem;
+        border-radius: 0.25rem;
+        font-size: 0.85rem;
+        word-break: break-all;
+    }
+
     .uploaded-files {
         margin-top: 2rem;
         padding: 1rem;
@@ -288,6 +336,70 @@
         font-size: 0.875rem;
     }
 
+    .status-cell {
+        color: rgba(255, 255, 255, 0.8);
+        font-size: 0.875rem;
+    }
+
+    .status-badge {
+        display: inline-block;
+        padding: 0.25rem 0.5rem;
+        border-radius: 0.25rem;
+        font-size: 0.75rem;
+        font-weight: 500;
+        text-transform: uppercase;
+    }
+
+    .status-uploaded {
+        background-color: rgba(40, 167, 69, 0.3);
+        color: #28a745;
+        border: 1px solid rgba(40, 167, 69, 0.5);
+    }
+
+    .status-pending {
+        background-color: rgba(255, 193, 7, 0.3);
+        color: #ffc107;
+        border: 1px solid rgba(255, 193, 7, 0.5);
+    }
+
+    .status-processing {
+        background-color: rgba(23, 162, 184, 0.3);
+        color: #17a2b8;
+        border: 1px solid rgba(23, 162, 184, 0.5);
+    }
+
+    .status-error {
+        background-color: rgba(220, 53, 69, 0.3);
+        color: #dc3545;
+        border: 1px solid rgba(220, 53, 69, 0.5);
+    }
+
+    .file-hash-cell {
+        color: rgba(255, 255, 255, 0.6);
+        font-size: 0.75rem;
+        font-family: monospace;
+        max-width: 120px;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+    }
+
+    .file-hash-full {
+        display: none;
+    }
+
+    .file-hash-cell:hover .file-hash-full {
+        display: block;
+        position: absolute;
+        background-color: var(--purple-dark);
+        border: 1px solid rgba(255, 255, 255, 0.3);
+        border-radius: 0.25rem;
+        padding: 0.5rem;
+        z-index: 1000;
+        max-width: 300px;
+        word-break: break-all;
+    }
+
     .error-list {
         margin-top: 0.5rem;
         padding-left: 1.5rem;
@@ -315,16 +427,106 @@
         background-color: var(--accent-color);
         transition: width 0.3s ease;
     }
+
+    /* Toast Notification Styles */
+    .toast-container {
+        position: fixed;
+        top: 20px;
+        right: 20px;
+        z-index: 1050;
+        max-width: 400px;
+    }
+
+    .duplicate-toast {
+        background-color: rgba(255, 193, 7, 0.95);
+        color: #212529;
+        border: 2px solid #ffc107;
+        border-radius: 0.5rem;
+        box-shadow: 0 4px 6px rgba(0, 0, 0, 0.3);
+        animation: slideInRight 0.3s ease-out;
+    }
+
+    .duplicate-toast .toast-header {
+        background-color: rgba(255, 193, 7, 0.8);
+        border-bottom: 1px solid rgba(255, 193, 7, 0.5);
+        color: #212529;
+    }
+
+    .duplicate-toast .toast-body {
+        padding: 1rem;
+    }
+
+    .duplicate-toast-details {
+        margin-top: 0.75rem;
+        padding: 0.5rem;
+        background-color: rgba(255, 255, 255, 0.3);
+        border-radius: 0.25rem;
+    }
+
+    .btn-close {
+        background: none;
+        border: none;
+        font-size: 1.2rem;
+        opacity: 0.7;
+        cursor: pointer;
+        color: #212529;
+    }
+
+    .btn-close:hover {
+        opacity: 1;
+    }
+
+    .toast {
+        display: block;
+        margin-bottom: 0.5rem;
+    }
+
+    .toast.show {
+        opacity: 1;
+    }
+
+    @@keyframes slideInRight {
+        from {
+            transform: translateX(100%);
+            opacity: 0;
+        }
+        to {
+            transform: translateX(0);
+            opacity: 1;
+        }
+    }
 </style>
 
 <div class="upload-container">
-    <h1><i class="bi bi-cloud-upload-fill"></i> Upload Data</h1>
+	<h1><i class="bi bi-cloud-upload-fill"></i>Document Upload & Storage</h1>
     
-    <div class="phase-info">
-        <h4><i class="bi bi-info-circle"></i> Phase 3: Document Upload & Storage</h4>
-        <p>Upload documents for processing and storage. Files are saved to the local file system and metadata is tracked for future RAG implementation.</p>
-    </div>
-
+    <!-- Toast Notification for Duplicates -->
+    @if (_showDuplicateToast)
+    {
+        <div class="toast-container">
+            <div class="toast show duplicate-toast" role="alert">
+                <div class="toast-header">
+                    <i class="bi bi-exclamation-triangle-fill text-warning me-2"></i>
+                    <strong class="me-auto">Duplicate File Detected</strong>
+                    <button type="button" class="btn-close" @onclick="CloseDuplicateToast" aria-label="Close"></button>
+                </div>
+                <div class="toast-body">
+                    <p><strong>File already exists!</strong></p>
+                    <p>The uploaded file is identical to an existing file and was not saved.</p>
+                    @if (_duplicateFileInfo != null)
+                    {
+                        <div class="duplicate-toast-details">
+                            <small>
+                                <strong>Existing file:</strong> @_duplicateFileInfo.FileName<br>
+                                <strong>Uploaded:</strong> @_duplicateFileInfo.UploadedAt.ToLocalTime().ToString("MMM dd, yyyy HH:mm")
+                            </small>
+                        </div>
+                    }
+                </div>
+            </div>
+        </div>
+    }
+    
     <p>Select a file to upload for processing:</p>
 
     <div class="simple-upload">
@@ -344,6 +546,7 @@
         <p class="upload-hint">
             <i class="bi bi-info-circle"></i> Maximum file size: @FormatFileSize(MaxFileSize)
             <br>Supported formats: PDF, DOCX, TXT, MD
+            <br><small>Files are automatically checked for duplicates using hash comparison</small>
         </p>
         
         @if (_uploadProgress > 0 && _uploadProgress < 100)
@@ -360,7 +563,33 @@
     @if (!string.IsNullOrEmpty(UploadMessage))
     {
         <div class="alert alert-@MessageClass" role="alert">
-            @UploadMessage
+            @if (MessageClass == "warning" && _isDuplicateDetected)
+            {
+                <div class="duplicate-warning">
+                    <h5><i class="bi bi-exclamation-triangle-fill"></i> Duplicate File Detected!</h5>
+                    <p><strong>@UploadMessage</strong></p>
+                    @if (_duplicateFileInfo != null)
+                    {
+                        <div class="duplicate-details">
+                            <h6>Existing File Details:</h6>
+                            <ul>
+                                <li><strong>Original Name:</strong> @_duplicateFileInfo.FileName</li>
+                                <li><strong>Size:</strong> @FormatFileSize(_duplicateFileInfo.Size)</li>
+                                <li><strong>Uploaded:</strong> @_duplicateFileInfo.UploadedAt.ToLocalTime().ToString("yyyy-MM-dd HH:mm:ss")</li>
+                                <li><strong>File Hash:</strong> <code>@_duplicateFileInfo.FileHash</code></li>
+                            </ul>
+                            <small class="text-muted">
+                                <i class="bi bi-info-circle"></i> 
+                                Files are compared using SHA256 hash to detect identical content, even with different names.
+                            </small>
+                        </div>
+                    }
+                </div>
+            }
+            else
+            {
+                @UploadMessage
+            }
             @if (MessageClass == "error" && UploadErrors != null && UploadErrors.Count > 0)
             {
                 <ul class="error-list">
@@ -403,6 +632,8 @@
                     <tr>
                         <th><i class="bi bi-file-earmark"></i> File Name</th>
                         <th><i class="bi bi-hdd"></i> Size</th>
+                        <th><i class="bi bi-flag"></i> Status</th>
+                        <th><i class="bi bi-shield-check"></i> Hash</th>
                         <th><i class="bi bi-calendar"></i> Uploaded At</th>
                         <th><i class="bi bi-gear"></i> Actions</th>
                     </tr>
@@ -415,6 +646,22 @@
                                 <i class="bi @GetFileIcon(file.FileName)"></i> @file.FileName
                             </td>
                             <td class="file-size-cell">@FormatFileSize(file.Size)</td>
+                            <td class="status-cell">
+                                <span class="status-badge @GetStatusClass(file.Status)">
+                                    @file.Status
+                                </span>
+                            </td>
+                            <td class="file-hash-cell" title="@file.FileHash">
+                                @if (!string.IsNullOrEmpty(file.FileHash))
+                                {
+                                    <span>@file.FileHash.Substring(0, Math.Min(8, file.FileHash.Length))...</span>
+                                    <div class="file-hash-full">@file.FileHash</div>
+                                }
+                                else
+                                {
+                                    <span class="text-muted">-</span>
+                                }
+                            </td>
                             <td class="upload-date-cell">@file.UploadedAt.ToLocalTime().ToString("g")</td>
                             <td>
                                 <div class="file-actions">
@@ -442,8 +689,7 @@
 </div>
 
 @code {
-    // Remove duplicate field declarations - they are already in the code-behind file
-    // Keep only the GetFileIcon method that's used in the razor markup
+    // GetFileIcon and GetStatusClass methods used in the razor markup
     private static string GetFileIcon(string fileName)
     {
         var extension = Path.GetExtension(fileName).ToLowerInvariant();
@@ -465,6 +711,18 @@
             ".zip" => "bi-file-earmark-zip",
             ".rar" => "bi-file-earmark-zip",
             _ => "bi-file-earmark"
+        };
+    }
+
+    private static string GetStatusClass(string status)
+    {
+        return status.ToLowerInvariant() switch
+        {
+            "uploaded" => "status-uploaded",
+            "pending" => "status-pending",
+            "processing" => "status-processing",
+            "error" => "status-error",
+            _ => "status-pending"
         };
     }
 }

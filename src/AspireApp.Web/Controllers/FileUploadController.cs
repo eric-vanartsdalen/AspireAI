@@ -66,6 +66,36 @@ public class FileUploadController : ControllerBase
                 });
             }
 
+            // Calculate file hash
+            string fileHash;
+            using (var stream = file.OpenReadStream())
+            {
+                fileHash = FileStorageService.CalculateFileHash(stream);
+            }
+
+            _logger.LogInformation("Calculated file hash: {Hash} for file: {FileName}", fileHash, file.FileName);
+
+            // Check for duplicate files based on hash
+            var existingFile = await _fileStorageService.FindDuplicateByHashAsync(fileHash);
+            if (existingFile != null)
+            {
+                _logger.LogInformation("Duplicate file detected. Original: {OriginalFile} (ID: {Id}), New: {NewFile}", 
+                    existingFile.FileName, existingFile.Id, file.FileName);
+
+                return Ok(new { 
+                    success = true, 
+                    isDuplicate = true,
+                    fileName = file.FileName,
+                    originalFileName = file.FileName,
+                    length = file.Length,
+                    existingFileId = existingFile.Id,
+                    existingFileName = existingFile.FileName,
+                    existingUploadedAt = existingFile.UploadedAt,
+                    message = $"File already exists as '{existingFile.FileName}' (uploaded on {existingFile.UploadedAt:yyyy-MM-dd HH:mm:ss}). Duplicate not saved.",
+                    fileHash = fileHash
+                });
+            }
+
             // Generate unique filename to avoid conflicts
             var uniqueFileName = GenerateUniqueFileName(file.FileName);
             var dataDirectory = GetDataDirectory();
@@ -77,19 +107,27 @@ public class FileUploadController : ControllerBase
                 await file.CopyToAsync(stream);
             }
 
-            // Add file metadata to database
-            var fileMetadata = await _fileStorageService.AddFileAsync(uniqueFileName, file.Length);
+            // Add file metadata to database with hash and status
+            var fileMetadata = await _fileStorageService.AddFileAsync(
+                uniqueFileName, 
+                file.Length, 
+                fileHash, 
+                "Uploaded");
 
-            _logger.LogInformation("File uploaded successfully: {FileName} -> {FilePath}, Size: {Size} bytes", 
-                file.FileName, filePath, file.Length);
+            _logger.LogInformation("File uploaded successfully: {FileName} -> {FilePath}, Size: {Size} bytes, Hash: {Hash}", 
+                file.FileName, filePath, file.Length, fileHash);
 
             return Ok(new { 
                 success = true, 
+                isDuplicate = false,
                 fileName = uniqueFileName,
                 originalFileName = file.FileName,
                 length = file.Length,
                 id = fileMetadata.Id,
-                uploadedAt = fileMetadata.UploadedAt
+                uploadedAt = fileMetadata.UploadedAt,
+                status = fileMetadata.Status,
+                fileHash = fileHash,
+                message = "File uploaded successfully."
             });
         }
         catch (Exception ex)

@@ -1,9 +1,4 @@
-using Aspire.Hosting;
-using Microsoft.Extensions.Configuration;
-using Newtonsoft.Json.Schema;
-using System;
-using System.Diagnostics;
-
+// ASPIRE LOCAL SETUP
 var builder = DistributedApplication.CreateBuilder(args);
 
 // Config with .NET Aspire
@@ -22,17 +17,28 @@ var ollama = builder.AddOllama("ollama")
     .WithContainerRuntimeArgs("--gpus", "all");
 var appmodel = ollama.AddModel("chat", modelName);
 
-// See Blazor Home page... and the variables I pull...
+// Setup Python services environment
+var pythonServices = builder
+    .AddDockerfile("python-service", "../../src/AspireApp.PythonServices/")
+    .WithHttpEndpoint(port: 8000, targetPort: 8000, name: "http")
+    .WithBindMount("../../data", "/app/data")
+    .WithBindMount("../../database", "/app/database")
+    .WithHttpHealthCheck("/health");  // Add health check
+
+// Now you can reference it in the web frontend
 builder.AddProject<Projects.AspireApp_Web>("webfrontend")
-	.WithExternalHttpEndpoints()
-	.WithHttpHealthCheck("/health")
-	.WithReference(apiService)
-	.WithReference(ollama)
+    .WithExternalHttpEndpoints()
+    .WithHttpHealthCheck("/health")
+    .WithReference(apiService)
+    .WithReference(ollama)
     .WithReference(appmodel)
-	.WithEnvironment("AI-Endpoint", aiEndpoint)
-	.WithEnvironment("AI-Model", aiModel)
-	.WaitFor(ollama)
+//    .WithReference(pythonServices)
+    .WithEnvironment("AI-Endpoint", aiEndpoint)
+    .WithEnvironment("AI-Model", aiModel)
+    .WithEnvironment("PYTHON_SERVICE_URL", pythonServices.GetEndpoint("http")) // Get Python service endpoint
+    .WaitFor(ollama)
     .WaitFor(appmodel)
-	.WaitFor(apiService);
+    .WaitFor(apiService)
+    .WaitFor(pythonServices);
 
 await builder.Build().RunAsync();

@@ -17,6 +17,11 @@ public partial class UploadData : ComponentBase, IAsyncDisposable, IDisposable
     private bool _isUploading = false;
     private int _uploadProgress = 0;
     private List<string> UploadErrors = new();
+    
+    // Duplicate detection tracking
+    private bool _isDuplicateDetected = false;
+    private DuplicateFileInfo? _duplicateFileInfo = null;
+    private bool _showDuplicateToast = false;
 
     [Inject]
     public IConfiguration Configuration { get; set; } = default!;
@@ -131,6 +136,12 @@ public partial class UploadData : ComponentBase, IAsyncDisposable, IDisposable
             UploadMessage = "Starting upload...";
             MessageClass = "info";
             UploadErrors.Clear();
+            
+            // Clear previous duplicate detection state
+            _isDuplicateDetected = false;
+            _duplicateFileInfo = null;
+            _showDuplicateToast = false;
+            
             StateHasChanged();
 
             // Check if JavaScript functions are available
@@ -158,16 +169,53 @@ public partial class UploadData : ComponentBase, IAsyncDisposable, IDisposable
             if (result.Success)
             {
                 _uploadProgress = 100;
-                UploadMessage = $"File '{result.FileName}' uploaded successfully.";
-                MessageClass = "success";
-                Logger.LogInformation("File uploaded successfully: {FileName}, Size: {Size}", result.FileName, result.Size);
+                
+                // Handle duplicate detection
+                if (result.IsDuplicate)
+                {
+                    _isDuplicateDetected = true;
+                    _showDuplicateToast = true;
+                    _duplicateFileInfo = new DuplicateFileInfo
+                    {
+                        FileName = result.ExistingFileName ?? "Unknown",
+                        Size = result.Size,
+                        UploadedAt = result.ExistingUploadedAt ?? DateTime.Now,
+                        FileHash = result.FileHash ?? "Unknown"
+                    };
+                    
+                    UploadMessage = $"This file is identical to '{result.ExistingFileName}' and was not uploaded to prevent duplicates.";
+                    MessageClass = "warning";
+                    
+                    Logger.LogInformation("Duplicate file detected: {FileName}, Existing: {ExistingFile}, Hash: {Hash}", 
+                        result.FileName, result.ExistingFileName, result.FileHash);
+                        
+                    // Auto-hide toast after 8 seconds
+                    _ = Task.Delay(8000).ContinueWith(_ => 
+                    {
+                        InvokeAsync(() =>
+                        {
+                            _showDuplicateToast = false;
+                            StateHasChanged();
+                        });
+                    });
+                }
+                else
+                {
+                    UploadMessage = result.Message ?? $"File '{result.FileName}' uploaded successfully.";
+                    MessageClass = "success";
+                    Logger.LogInformation("File uploaded successfully: {FileName}, Size: {Size}, Hash: {Hash}", 
+                        result.FileName, result.Size, result.FileHash);
+                }
 
                 // Clear the file input
                 await JSRuntime.InvokeVoidAsync("eval", "document.getElementById('fileInput').value = ''");
                 _selectedFileName = null;
 
-                // Reload the file list
-                await LoadUploadedFiles();
+                // Reload the file list only if it wasn't a duplicate
+                if (!result.IsDuplicate)
+                {
+                    await LoadUploadedFiles();
+                }
             }
             else
             {
@@ -262,6 +310,12 @@ public partial class UploadData : ComponentBase, IAsyncDisposable, IDisposable
             {
                 UploadMessage = "File deleted successfully.";
                 MessageClass = "success";
+                
+                // Clear duplicate detection state when showing other messages
+                _isDuplicateDetected = false;
+                _duplicateFileInfo = null;
+                _showDuplicateToast = false;
+                
                 await LoadUploadedFiles();
             }
             else
@@ -288,7 +342,10 @@ public partial class UploadData : ComponentBase, IAsyncDisposable, IDisposable
         UploadMessage = string.Empty;
         MessageClass = "";
         UploadErrors.Clear();
-        
+        _isDuplicateDetected = false;
+        _duplicateFileInfo = null;
+        _showDuplicateToast = false;
+
         StateHasChanged();
     }
 
@@ -334,6 +391,12 @@ public partial class UploadData : ComponentBase, IAsyncDisposable, IDisposable
         return $"{size:0.##} {sizes[order]}";
     }
 
+    private void CloseDuplicateToast()
+    {
+        _showDuplicateToast = false;
+        StateHasChanged();
+    }
+
     public class FileInfo
     {
         public string Name { get; set; } = string.Empty;
@@ -348,5 +411,19 @@ public partial class UploadData : ComponentBase, IAsyncDisposable, IDisposable
         public string? FileName { get; set; }
         public long Size { get; set; }
         public string? Error { get; set; }
+        public bool IsDuplicate { get; set; }
+        public string? Message { get; set; }
+        public string? FileHash { get; set; }
+        public string? ExistingFileName { get; set; }
+        public int? ExistingFileId { get; set; }
+        public DateTime? ExistingUploadedAt { get; set; }
+    }
+
+    public class DuplicateFileInfo
+    {
+        public string FileName { get; set; } = string.Empty;
+        public long Size { get; set; }
+        public DateTime UploadedAt { get; set; }
+        public string FileHash { get; set; } = string.Empty;
     }
 }
