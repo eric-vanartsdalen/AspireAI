@@ -527,6 +527,17 @@
         </div>
     }
     
+    <!-- Debug info (remove in production) -->
+    @if (true) // Set to false to hide debug info
+    {
+        <div style="position: fixed; bottom: 10px; left: 10px; background: rgba(0,0,0,0.8); color: white; padding: 10px; border-radius: 5px; font-family: monospace; font-size: 12px; z-index: 9999;">
+            <div>Toast Visible: @_showDuplicateToast</div>
+            <div>Duplicate Detected: @_isDuplicateDetected</div>
+            <div>Message Class: @MessageClass</div>
+            <div>Upload Message: @UploadMessage</div>
+        </div>
+    }
+    
     <p>Select a file to upload for processing:</p>
 
     <div class="simple-upload">
@@ -542,6 +553,11 @@
                 <i class="bi bi-upload"></i>
                 <text> Upload File</text>
             }
+        </button>
+        
+        <!-- Test button for debugging (remove in production) -->
+        <button @onclick="TestDuplicateToast" class="btn btn-secondary mt-3 ms-2" type="button">
+            Test Duplicate Toast
         </button>
         <p class="upload-hint">
             <i class="bi bi-info-circle"></i> Maximum file size: @FormatFileSize(MaxFileSize)

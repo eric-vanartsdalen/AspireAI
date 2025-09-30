@@ -166,6 +166,9 @@ public partial class UploadData : ComponentBase, IAsyncDisposable, IDisposable
             _uploadProgress = 90;
             StateHasChanged();
 
+            Logger.LogInformation("Upload result received: Success={Success}, IsDuplicate={IsDuplicate}, FileName={FileName}", 
+                result.Success, result.IsDuplicate, result.FileName);
+
             if (result.Success)
             {
                 _uploadProgress = 100;
@@ -173,6 +176,7 @@ public partial class UploadData : ComponentBase, IAsyncDisposable, IDisposable
                 // Handle duplicate detection
                 if (result.IsDuplicate)
                 {
+                    Logger.LogInformation("Duplicate detected - showing toast notification");
                     _isDuplicateDetected = true;
                     _showDuplicateToast = true;
                     _duplicateFileInfo = new DuplicateFileInfo
@@ -189,6 +193,9 @@ public partial class UploadData : ComponentBase, IAsyncDisposable, IDisposable
                     Logger.LogInformation("Duplicate file detected: {FileName}, Existing: {ExistingFile}, Hash: {Hash}", 
                         result.FileName, result.ExistingFileName, result.FileHash);
                         
+                    Logger.LogInformation("Toast state: _showDuplicateToast={ShowToast}, _isDuplicateDetected={IsDuplicate}", 
+                        _showDuplicateToast, _isDuplicateDetected);
+                        
                     // Auto-hide toast after 8 seconds
                     _ = Task.Delay(8000).ContinueWith(_ => 
                     {
@@ -201,6 +208,7 @@ public partial class UploadData : ComponentBase, IAsyncDisposable, IDisposable
                 }
                 else
                 {
+                    Logger.LogInformation("File uploaded successfully - not a duplicate");
                     UploadMessage = result.Message ?? $"File '{result.FileName}' uploaded successfully.";
                     MessageClass = "success";
                     Logger.LogInformation("File uploaded successfully: {FileName}, Size: {Size}, Hash: {Hash}", 
@@ -395,6 +403,36 @@ public partial class UploadData : ComponentBase, IAsyncDisposable, IDisposable
     {
         _showDuplicateToast = false;
         StateHasChanged();
+    }
+
+    private void TestDuplicateToast()
+    {
+        Logger.LogInformation("Test duplicate toast button clicked");
+        _isDuplicateDetected = true;
+        _showDuplicateToast = true;
+        _duplicateFileInfo = new DuplicateFileInfo
+        {
+            FileName = "test-file.pdf",
+            Size = 1024000,
+            UploadedAt = DateTime.Now.AddDays(-1),
+            FileHash = "ABC123DEF456..."
+        };
+        
+        UploadMessage = "Test duplicate message";
+        MessageClass = "warning";
+        
+        Logger.LogInformation("Test toast state set: _showDuplicateToast={ShowToast}", _showDuplicateToast);
+        StateHasChanged();
+        
+        // Auto-hide after 8 seconds
+        _ = Task.Delay(8000).ContinueWith(_ => 
+        {
+            InvokeAsync(() =>
+            {
+                _showDuplicateToast = false;
+                StateHasChanged();
+            });
+        });
     }
 
     public class FileInfo

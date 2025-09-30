@@ -68,13 +68,22 @@ window.uploadFile = async function (inputId, uploadUrl) {
         
         if (response.ok) {
             const result = await response.json();
-            console.log('Upload result:', result);
+            console.log('Upload result from server:', result);
             if (result.success) {
-                return { 
+                // Map server response properties to JavaScript object with camelCase
+                const uploadResult = { 
                     success: true, 
                     fileName: result.fileName || result.originalFileName,
-                    size: result.length 
+                    size: result.length || result.size,
+                    isDuplicate: result.isDuplicate || false,
+                    message: result.message,
+                    fileHash: result.fileHash,
+                    existingFileName: result.existingFileName,
+                    existingFileId: result.existingFileId,
+                    existingUploadedAt: result.existingUploadedAt ? new Date(result.existingUploadedAt) : null
                 };
+                console.log('Mapped upload result for Blazor:', uploadResult);
+                return uploadResult;
             } else {
                 return { 
                     success: false, 
