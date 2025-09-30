@@ -405,36 +405,6 @@ public partial class UploadData : ComponentBase, IAsyncDisposable, IDisposable
         StateHasChanged();
     }
 
-    private void TestDuplicateToast()
-    {
-        Logger.LogInformation("Test duplicate toast button clicked");
-        _isDuplicateDetected = true;
-        _showDuplicateToast = true;
-        _duplicateFileInfo = new DuplicateFileInfo
-        {
-            FileName = "test-file.pdf",
-            Size = 1024000,
-            UploadedAt = DateTime.Now.AddDays(-1),
-            FileHash = "ABC123DEF456..."
-        };
-        
-        UploadMessage = "Test duplicate message";
-        MessageClass = "warning";
-        
-        Logger.LogInformation("Test toast state set: _showDuplicateToast={ShowToast}", _showDuplicateToast);
-        StateHasChanged();
-        
-        // Auto-hide after 8 seconds
-        _ = Task.Delay(8000).ContinueWith(_ => 
-        {
-            InvokeAsync(() =>
-            {
-                _showDuplicateToast = false;
-                StateHasChanged();
-            });
-        });
-    }
-
     public class FileInfo
     {
         public string Name { get; set; } = string.Empty;
