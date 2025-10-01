@@ -1,5 +1,7 @@
 ﻿using Microsoft.EntityFrameworkCore;
 using System.Security.Cryptography;
+using AspireApp.Web.Data;
+using AspireApp.Web.Shared;
 
 namespace AspireApp.Web.Data;
 
@@ -304,7 +306,16 @@ public class FileStorageService
     /// </summary>
     public async Task<DocumentBridgeHealthCheck> PerformHealthCheckAsync()
     {
-        return await _bridgeService.PerformHealthCheckAsync();
+        var health = await _bridgeService.PerformHealthCheckAsync();
+        return new DocumentBridgeHealthCheck
+        {
+            OverallHealthy = health.OverallHealthy,
+            DatabaseConnected = health.CanConnect,
+            DocumentsTableAccessible = health.SchemaHealthy,
+            SyncStatus = health.SyncStatus?.IsHealthy == true ? "In Sync" : "Out of Sync",
+            ErrorMessage = health.ErrorMessage,
+            Timestamp = health.Timestamp
+        };
     }
 
     private static string ConvertFileStatusToDocumentStatus(string fileStatus)

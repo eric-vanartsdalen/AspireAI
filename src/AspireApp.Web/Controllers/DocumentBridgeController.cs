@@ -1,4 +1,5 @@
 using AspireApp.Web.Data;
+using AspireApp.Web.Shared;
 using Microsoft.AspNetCore.Mvc;
 
 namespace AspireApp.Web.Controllers
@@ -225,7 +226,7 @@ namespace AspireApp.Web.Controllers
             }
         }
 
-        private static List<string> GenerateRecommendations(DocumentBridgeHealthCheck healthCheck, DocumentProcessingStats stats)
+        private static List<string> GenerateRecommendations(HealthCheckResult healthCheck, DocumentProcessingStats stats)
         {
             var recommendations = new List<string>();
 
@@ -234,17 +235,17 @@ namespace AspireApp.Web.Controllers
                 recommendations.Add("System health check failed - investigate database connectivity");
             }
 
-            if (!healthCheck.DatabaseConnected)
+            if (!healthCheck.CanConnect)
             {
                 recommendations.Add("Database connection failed - check connection string and database availability");
             }
 
-            if (!healthCheck.DocumentsTableAccessible)
+            if (!healthCheck.SchemaHealthy)
             {
                 recommendations.Add("Documents table not accessible - run database initialization");
             }
 
-            if (healthCheck.SyncStatus == "Out of Sync")
+            if (healthCheck.SyncStatus?.IsHealthy == false)
             {
                 recommendations.Add("File metadata and documents are out of sync - run sync operation");
             }

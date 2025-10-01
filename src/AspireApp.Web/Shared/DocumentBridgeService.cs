@@ -1,6 +1,7 @@
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging;
 using AspireApp.Web.Data;
+using AspireApp.Web.Shared;
 
 namespace AspireApp.Web.Shared
 {
@@ -366,46 +367,67 @@ namespace AspireApp.Web.Shared
                 };
             }
         }
-    }
 
-    /// <summary>
-    /// Synchronization status information
-    /// </summary>
-    public class SyncStatus
-    {
-        public int FilesCount { get; set; }
-        public int DocumentsCount { get; set; }
-        public int UnsyncedFiles { get; set; }
-        public int UnsyncedDocuments { get; set; }
-        public bool IsHealthy { get; set; }
-        public string? ErrorMessage { get; set; }
-        public DateTime LastChecked { get; set; }
-    }
+        // --- ADDED: Create Document from FileMetadata (async wrapper) ---
+        public async Task<Document?> CreateDocumentFromFileMetadataAsync(FileMetadata fileMetadata)
+        {
+            try
+            {
+                var document = CreateDocumentFromFileMetadata(fileMetadata);
+                _context.Documents.Add(document);
+                await _context.SaveChangesAsync();
+                return document;
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Error creating Document from FileMetadata");
+                return null;
+            }
+        }
 
-    /// <summary>
-    /// Synchronization operation result
-    /// </summary>
-    public class SyncResult
-    {
-        public bool Success { get; set; }
-        public int FilesSyncedToDocuments { get; set; }
-        public int DocumentsSyncedToFiles { get; set; }
-        public SyncStatus? FinalStatus { get; set; }
-        public string? ErrorMessage { get; set; }
-        public DateTime Timestamp { get; set; }
-    }
+        // --- ADDED: Update processing status for a document ---
+        public async Task<bool> UpdateProcessingStatusAsync(int documentId, string status)
+        {
+            try
+            {
+                var document = await _context.Documents.FindAsync(documentId);
+                if (document == null)
+                    return false;
+                document.ProcessingStatus = status;
+                await _context.SaveChangesAsync();
+                return true;
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Error updating processing status for document {DocumentId}", documentId);
+                return false;
+            }
+        }
 
-    /// <summary>
-    /// Health check result
-    /// </summary>
-    public class HealthCheckResult
-    {
-        public bool OverallHealthy { get; set; }
-        public bool CanConnect { get; set; }
-        public bool SchemaHealthy { get; set; }
-        public bool SyncHealthy { get; set; }
-        public SyncStatus? SyncStatus { get; set; }
-        public string? ErrorMessage { get; set; }
-        public DateTime Timestamp { get; set; }
+        // --- ADDED: Get unprocessed documents ---
+        public async Task<List<Document>> GetUnprocessedDocumentsAsync()
+        {
+            return await _context.Documents
+                .Where(d => d.ProcessingStatus == "pending" || d.ProcessingStatus == "processing")
+                .ToListAsync();
+        }
+
+        // --- ADDED: Get processing statistics ---
+        public async Task<DocumentProcessingStats> GetProcessingStatsAsync()
+        {
+            var total = await _context.Documents.CountAsync();
+            var pending = await _context.Documents.CountAsync(d => d.ProcessingStatus == "pending" || d.ProcessingStatus == "processing");
+            var processed = await _context.Documents.CountAsync(d => d.ProcessingStatus == "completed");
+            var error = await _context.Documents.CountAsync(d => d.ProcessingStatus == "error");
+            double percent = total > 0 ? (double)processed / total * 100.0 : 100.0;
+            return new DocumentProcessingStats
+            {
+                TotalDocuments = total,
+                PendingDocuments = pending,
+                ProcessedDocuments = processed,
+                ErrorDocuments = error,
+                SyncedPercentage = percent
+            };
+        }
     }
 }
