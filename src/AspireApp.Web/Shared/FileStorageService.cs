@@ -8,12 +8,18 @@ public class FileStorageService
     private readonly UploadDbContext _context;
     private readonly ILogger<FileStorageService> _logger;
     private readonly string _dataDirectory;
+    private readonly DocumentBridgeService _bridgeService;
 
-    public FileStorageService(UploadDbContext context, ILogger<FileStorageService> logger, string dataDirectory)
+    public FileStorageService(
+        UploadDbContext context, 
+        ILogger<FileStorageService> logger, 
+        string dataDirectory,
+        DocumentBridgeService bridgeService)
     {
         _context = context;
         _logger = logger;
         _dataDirectory = dataDirectory;
+        _bridgeService = bridgeService;
     }
 
     /// <summary>
@@ -30,12 +36,19 @@ public class FileStorageService
                 _logger.LogInformation("Created data directory: {DataDirectory}", _dataDirectory);
             }
 
-            // Ensure database is created and can connect
-            var canConnect = await _context.Database.CanConnectAsync();
-            if (!canConnect)
+            // Ensure database schema exists for both systems
+            var schemaInitialized = await _bridgeService.EnsureDatabaseSchemaAsync();
+            if (!schemaInitialized)
             {
-                await _context.Database.EnsureCreatedAsync();
-                _logger.LogInformation("Database created and initialized");
+                _logger.LogError("Failed to initialize database schema");
+                return false;
+            }
+
+            // Sync any existing FileMetadata to Documents
+            var syncedCount = await _bridgeService.SyncFileMetadataToDocumentsAsync();
+            if (syncedCount > 0)
+            {
+                _logger.LogInformation("Synced {Count} existing files to Documents table", syncedCount);
             }
 
             return true;
@@ -88,6 +101,7 @@ public class FileStorageService
 
     /// <summary>
     /// Adds a file with hash calculation and duplicate detection
+    /// Also creates corresponding Document entity for Python service compatibility
     /// </summary>
     public async Task<FileMetadata> AddFileAsync(string fileName, long size, string fileHash, string status = "Uploaded")
     {
@@ -110,6 +124,18 @@ public class FileStorageService
             _logger.LogInformation("Added file metadata to database: {FileName}, Size: {Size}, Hash: {Hash}, Status: {Status}", 
                 fileName, size, fileHash, status);
 
+            // Create corresponding Document entity for Python service
+            var document = await _bridgeService.CreateDocumentFromFileMetadataAsync(fileMetadata);
+            if (document != null)
+            {
+                _logger.LogInformation("Created corresponding Document entity (ID: {DocumentId}) for file: {FileName}", 
+                    document.Id, fileName);
+            }
+            else
+            {
+                _logger.LogWarning("Failed to create Document entity for file: {FileName}", fileName);
+            }
+
             return fileMetadata;
         }
         catch (Exception ex)
@@ -128,7 +154,7 @@ public class FileStorageService
     }
 
     /// <summary>
-    /// Updates file status
+    /// Updates file status and corresponding document status
     /// </summary>
     public async Task<bool> UpdateFileStatusAsync(int fileId, string status)
     {
@@ -146,6 +172,17 @@ public class FileStorageService
             await _context.SaveChangesAsync();
             
             _logger.LogInformation("Updated file status: {FileId}, Status: {Status}", fileId, status);
+
+            // Update corresponding Document entity
+            var document = await _context.Documents
+                .FirstOrDefaultAsync(d => d.FileName == file.FileName);
+            
+            if (document != null)
+            {
+                var documentStatus = ConvertFileStatusToDocumentStatus(status);
+                await _bridgeService.UpdateProcessingStatusAsync(document.Id, documentStatus);
+            }
+            
             return true;
         }
         catch (Exception ex)
@@ -220,6 +257,17 @@ public class FileStorageService
             var fileName = file.FileName;
             var filePath = Path.Combine(_dataDirectory, fileName);
 
+            // Delete corresponding Document entity first (cascade will handle related entities)
+            var document = await _context.Documents
+                .FirstOrDefaultAsync(d => d.FileName == fileName);
+            
+            if (document != null)
+            {
+                _context.Documents.Remove(document);
+                _logger.LogInformation("Deleted corresponding Document entity (ID: {DocumentId}) for file: {FileName}", 
+                    document.Id, fileName);
+            }
+
             _context.Files.Remove(file);
             await _context.SaveChangesAsync();
             _logger.LogInformation("Deleted file metadata from database: {FileName}", fileName);
@@ -241,5 +289,33 @@ public class FileStorageService
             _logger.LogError(ex, "Error deleting file metadata or file from data directory");
             throw;
         }
+    }
+
+    /// <summary>
+    /// Gets processing statistics from the bridge service
+    /// </summary>
+    public async Task<DocumentProcessingStats> GetProcessingStatsAsync()
+    {
+        return await _bridgeService.GetProcessingStatsAsync();
+    }
+
+    /// <summary>
+    /// Performs health check on the file storage and bridge system
+    /// </summary>
+    public async Task<DocumentBridgeHealthCheck> PerformHealthCheckAsync()
+    {
+        return await _bridgeService.PerformHealthCheckAsync();
+    }
+
+    private static string ConvertFileStatusToDocumentStatus(string fileStatus)
+    {
+        return fileStatus.ToLowerInvariant() switch
+        {
+            "uploaded" => "pending",
+            "processed" => "completed",
+            "error" => "error",
+            "processing" => "processing",
+            _ => "pending"
+        };
     }
 }

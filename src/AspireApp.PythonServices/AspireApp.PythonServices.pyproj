@@ -12,6 +12,7 @@
     <Name>AspireApp.PythonServices</Name>
     <RootNamespace>AspireApp.PythonServices</RootNamespace>
     <InterpreterId>MSBuild|.venv|$(MSBuildProjectFullPath)</InterpreterId>
+    <TestFramework>Pytest</TestFramework>
   </PropertyGroup>
   <PropertyGroup Condition=" '$(Configuration)' == 'Debug' ">
     <DebugSymbols>true</DebugSymbols>
@@ -23,15 +24,53 @@
   </PropertyGroup>
   <ItemGroup>
     <Compile Include="app\fastapi.py" />
+    <Compile Include="app\models\models.py" />
+    <Compile Include="app\models\__init__.py" />
+    <Compile Include="app\routers\documents.py" />
+    <Compile Include="app\routers\processing.py" />
+    <Compile Include="app\routers\rag.py" />
+    <Compile Include="app\routers\__init__.py" />
+    <Compile Include="app\services\database_service.py" />
+    <Compile Include="app\services\docling_service.py" />
+    <Compile Include="app\services\docling_service_fallback.py" />
+    <Compile Include="app\services\neo4j_service.py" />
+    <Compile Include="app\services\service_factory.py" />
+    <Compile Include="app\services\__init__.py" />
+    <Compile Include="demo_processing.py" />
+    <Compile Include="diagnose_database.py" />
+    <Compile Include="fix_database.py" />
+    <Compile Include="scripts\check_db_status.py" />
+    <Compile Include="scripts\fix_schema.py" />
+    <Compile Include="scripts\init_database.py" />
+    <Compile Include="scripts\monitor_database.py" />
+    <Compile Include="scripts\test_concurrent_access.py" />
+    <Compile Include="setup_dev_env.py" />
     <Compile Include="test_app_main.py" />
+    <Compile Include="test_build_config.py" />
+    <Compile Include="test_services.py" />
+    <Compile Include="verify_service.py" />
   </ItemGroup>
   <ItemGroup>
+    <Content Include=".dockerignore" />
     <Content Include=".gitignore" />
+    <Content Include="BUILD_CONFIGURATION.md" />
+    <Content Include="DATABASE_FIX_SUMMARY.md" />
     <Content Include="Dockerfile" />
+    <Content Include="Dockerfile.cached" />
+    <Content Include="Dockerfile.lightweight" />
+    <Content Include="docs\DATABASE_CONCURRENT_ACCESS.md" />
+    <Content Include="docs\SCHEMA_UNIFICATION.md" />
+    <Content Include="ENHANCEMENT_SUMMARY.md" />
+    <Content Include="README.md" />
     <Content Include="requirements.txt" />
   </ItemGroup>
   <ItemGroup>
     <Folder Include="app\" />
+    <Folder Include="app\models\" />
+    <Folder Include="app\routers\" />
+    <Folder Include="app\services\" />
+    <Folder Include="docs\" />
+    <Folder Include="scripts\" />
   </ItemGroup>
   <ItemGroup>
     <Interpreter Include=".venv\">

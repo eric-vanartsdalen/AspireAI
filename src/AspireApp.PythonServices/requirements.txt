@@ -1,3 +1,21 @@
+# FastAPI web framework and ASGI server
 anyio
 fastapi
 uvicorn
+
+# Document processing (CPU-only versions to avoid CUDA timeouts)
+docling-core
+pypdf2
+python-docx
+python-multipart
+pydantic
+aiofiles
+
+# Database connections
+neo4j
+
+# Logging and utilities
+python-json-logger
+
+# Note: docling and docling-ibm-models can cause long build times due to CUDA dependencies
+# They will be installed in the full Dockerfile with proper timeout handling

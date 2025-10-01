@@ -17,27 +17,49 @@ var ollama = builder.AddOllama("ollama")
     .WithContainerRuntimeArgs("--gpus", "all");
 var appmodel = ollama.AddModel("chat", modelName);
 
-// Add a NEO4J container for graph database
+// Add a NEO4J container for graph database with caching optimizations
 var neo4jUser = builder.AddParameter("neo4j-user", "neo4j"); 
 var neo4jPass = builder.AddParameter("neo4j-pass", "neo4j@secret");
 
-var neo4jDb = builder.AddDockerfile("graph-db", "../../src/AspireApp.Neo4jService/")
+// Configure Neo4j build options
+var useLightweightBuild = builder.Configuration["USE_LIGHTWEIGHT_PYTHON"] ?? "false";
+var useLightweightNeo4j = builder.Configuration["USE_LIGHTWEIGHT_NEO4J"] ?? "false";
+var neo4jDockerfile = useLightweightNeo4j.ToLower() == "true" ? "Dockerfile.lightweight" : "Dockerfile";
+
+var neo4jDb = builder.AddDockerfile("graph-db", "../../src/AspireApp.Neo4jService/", neo4jDockerfile)
     .WithHttpEndpoint(port: 7474, targetPort: 7474, name: "http")  // Neo4j browser interface
     .WithEndpoint(port: 7687, targetPort: 7687, name: "bolt")      // Neo4j bolt protocol
-    .WithBindMount("../../database/neo4j/data", "/data")               // Data persistence - direct host access
-    .WithBindMount("../../database/neo4j/logs", "/logs")               // Logs - direct host access
-    .WithBindMount("../../database/neo4j/config", "/config")           // Configuration - direct host access
-    .WithBindMount("../../database/neo4j/plugins", "/plugins")         // Plugins - direct host access
+    // Persistent volumes for caching and data
+    .WithVolume("neo4j-data", "/data")                             // Data persistence with volume
+    .WithVolume("neo4j-logs", "/logs")                             // Logs persistence with volume
+    .WithVolume("neo4j-plugins", "/plugins")                       // Plugin cache with volume
+    .WithVolume("neo4j-conf", "/conf")                            // Configuration persistence
+    .WithVolume("neo4j-import", "/import")                        // Import cache for bulk operations
+    .WithBindMount("../../database/neo4j/backup", "/backup")       // Backup directory (optional)
     .WithEnvironment("NEO4J_AUTH", $"{neo4jUser.Resource.Value}/{neo4jPass.Resource.Value}")
+    .WithEnvironment("NEO4J_ACCEPT_LICENSE_AGREEMENT", "yes")
+    .WithEnvironment("DOCKER_BUILDKIT", "1")                      // Enable BuildKit for Neo4j too
     .WithHttpHealthCheck("/");
 
-// Setup Python services environment
+// Setup Python services environment with optimized caching and build settings
+var pythonDockerfile = useLightweightBuild.ToLower() == "true" ? "Dockerfile.lightweight" : "Dockerfile";
+
 var pythonServices = builder
-    .AddDockerfile("python-service", "../../src/AspireApp.PythonServices/")
+    .AddDockerfile("python-service", "../../src/AspireApp.PythonServices/", pythonDockerfile)
     .WithHttpEndpoint(port: 8000, targetPort: 8000, name: "http")
     .WithBindMount("../../data", "/app/data")
-    .WithBindMount("../../database", "/app/database")
-    .WithHttpHealthCheck("/health");  // Add health check
+    .WithVolume("aspire-database", "/app/database")  // Use volume for database persistence
+    .WithBindMount("../../database", "/app/host-database")  // Keep host access for debugging/backup
+    .WithVolume("python-pip-cache", "/root/.cache/pip")            // Persist pip cache
+    .WithEnvironment("NEO4J_URI", neo4jDb.GetEndpoint("bolt"))
+    .WithEnvironment("NEO4J_USER", neo4jUser.Resource)
+    .WithEnvironment("NEO4J_PASSWORD", neo4jPass.Resource)
+    .WithEnvironment("PIP_CACHE_DIR", "/root/.cache/pip")          // Use persistent pip cache
+    .WithEnvironment("DOCKER_BUILDKIT", "1")                      // Enable BuildKit for better caching
+    .WithEnvironment("ASPIRE_DB_PATH", "/app/database/data-resources.db")  // Use volume path
+    .WithEnvironment("ASPIRE_DB_BACKUP_PATH", "/app/host-database/data-resources.db")  // Backup to host
+    .WithHttpHealthCheck("/health")
+    .WaitFor(neo4jDb);  // Ensure Neo4j starts before Python service
 
 // Now you can reference it in the web frontend
 builder.AddProject<Projects.AspireApp_Web>("webfrontend")
