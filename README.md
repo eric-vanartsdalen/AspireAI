@@ -39,6 +39,27 @@ dotnet build
 3. **Run the project**
 4. **Explore the code and features**
 
+## Troubleshooting
+
+### Startup Project Issues
+
+**Problem**: The application may fail to start properly or show 404 errors when accessing URLs.
+
+**Common Cause**: The startup project may be incorrectly set to `AspireApp.ApiService` instead of `AspireApp.AppHost`.
+
+**Solution**: Since this is an Aspire application, the startup project should always be `AspireApp.AppHost`, which orchestrates all services including the API, web frontend, and supporting services (Ollama, Neo4j, Python services).
+
+**To fix this in Visual Studio:**
+1. In Solution Explorer, right-click on the `AspireApp.AppHost` project
+2. Select "Set as Startup Project"
+3. The `AspireApp.AppHost` project should now appear in **bold** in Solution Explorer
+4. Run the application (F5) - this will launch the Aspire dashboard and coordinate all services
+
+**Expected behavior when working correctly:**
+- The Aspire dashboard should launch showing all services
+- The web application should be accessible through the dashboard
+- All supporting services (API, Neo4j, Ollama) should start automatically
+
 ## Contributing
 
 Contributions are welcome! Feel free to fork and add new Blazor components, AI integrations, or configuration examples as the project grows.
