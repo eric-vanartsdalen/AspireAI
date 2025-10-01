@@ -628,3 +628,29 @@ class DatabaseService:
             return {"status": "healthy"}
         except Exception as e:
             return {"status": "unhealthy", "error": str(e)}
+
+    def get_all_documents(self) -> list:
+        """Return all documents from the database as a list of Document objects. Logs fetched rows for debugging."""
+        try:
+            with self._pool.get_connection() as conn:
+                cursor = conn.cursor()
+                cursor.execute("SELECT id, filename, original_filename, file_path, file_size, mime_type, upload_date, processed, processing_status FROM documents")
+                rows = cursor.fetchall()
+                logger.info(f"Fetched rows: {rows}")  # Debug log
+                return [
+                    Document(
+                        id=row[0],
+                        filename=row[1],
+                        original_filename=row[2],
+                        file_path=row[3],
+                        file_size=row[4],
+                        mime_type=row[5],
+                        upload_date=row[6],
+                        processed=row[7],
+                        processing_status=row[8]
+                    )
+                    for row in rows
+                ]
+        except Exception as e:
+            logger.error(f"Error fetching all documents: {e}")
+            raise
