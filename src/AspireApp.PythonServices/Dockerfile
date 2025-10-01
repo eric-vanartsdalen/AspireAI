@@ -68,10 +68,10 @@ ENV PATH="/opt/venv/bin:$PATH"
 WORKDIR /app
 
 # Create database and data directories with proper permissions before switching user
-RUN mkdir -p /app/database /app/data/uploads /app/data/processed/documents /tmp/aspire_database && \
-    chown -R appuser:appuser /app /tmp/aspire_database && \
-    chmod -R 755 /app && \
-    chmod -R 777 /tmp/aspire_database
+RUN mkdir -p /app/database /app/data/uploads /app/data/processed/documents && \
+    chmod 777 /app/database && \
+    chown -R appuser:appuser /app && \
+    chmod -R 755 /app
 
 # Copy the application code
 COPY --chown=appuser:appuser . .
@@ -83,4 +83,4 @@ USER appuser
 EXPOSE 8000
 
 # Command to run the application
-CMD ["uvicorn", "app.fastapi:app", "--host", "0.0.0.0", "--port", "8000", "--reload"]
+CMD ["uvicorn", "app.fastapi:app", "--host", "0.0.0.0", "--port", "8000", "--reload"]CMD ["uvicorn", "app.fastapi:app", "--host", "0.0.0.0", "--port", "8000", "--reload"]

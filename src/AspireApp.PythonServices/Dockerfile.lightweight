@@ -29,6 +29,9 @@ RUN pip install --upgrade pip setuptools wheel && \
 # Install a lightweight document processor as fallback
 RUN pip install pypdf2 python-docx
 
+# Create database directory with open permissions before switching user
+RUN mkdir -p /app/database && chmod 777 /app/database
+
 # Create non-root user
 RUN adduser --disabled-password --gecos '' --uid 1000 appuser && \
     chown -R appuser:appuser /app

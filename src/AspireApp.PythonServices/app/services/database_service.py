@@ -110,11 +110,8 @@ class DatabaseService:
     _pools_lock = threading.Lock()
     
     def __init__(self, db_path: str = None):
-        # Use environment variable or config file if available
-        if db_path is None:
-            db_path = self._get_database_path()
-        
-        self.db_path = db_path
+        # Always use the fixed database path
+        self.db_path = "/app/database/data-resources.db"
         self._ensure_database_directory()
         
         # Get or create connection pool for this database path
@@ -135,82 +132,20 @@ class DatabaseService:
         }
         self._stats_lock = threading.Lock()
 
-    def _get_database_path(self) -> str:
-        """Determine the best database path to use"""
-        
-        # Check environment variable first
-        env_path = os.getenv('ASPIRE_DB_PATH')
-        if env_path:
-            logger.info(f"Using database path from environment: {env_path}")
-            return env_path
-        
-        # Check for config file
-        config_path = Path("/tmp/db_config.json")
-        if config_path.exists():
-            try:
-                with open(config_path) as f:
-                    config = json.load(f)
-                    working_path = config.get('working_database_path')
-                    if working_path:
-                        logger.info(f"Using database path from config: {working_path}")
-                        return working_path
-            except Exception as e:
-                logger.warning(f"Could not read config file: {e}")
-        
-        # Default paths to try in order
-        default_paths = [
-            "/app/database/data-resources.db",        # Docker volume (preferred)
-            "/app/host-database/data-resources.db",   # Host bind mount (fallback)
-            "/tmp/aspire_database/data-resources.db", # Temp fallback
-            "/tmp/data-resources.db"                  # Last resort
-        ]
-        
-        # Test each path and use the first one that works
-        for path in default_paths:
-            try:
-                test_dir = Path(path).parent
-                test_dir.mkdir(parents=True, exist_ok=True)
-                
-                # Test write access more thoroughly
-                test_file = test_dir / ".write_test"
-                test_file.touch()
-                
-                # Try to write to the file to ensure full permissions
-                with open(test_file, 'w') as f:
-                    f.write("test")
-                
-                # Clean up test file
-                test_file.unlink()
-                
-                logger.info(f"? Using database path: {path}")
-                return path
-                
-            except Exception as e:
-                logger.debug(f"? Path {path} not usable: {e}")
-                continue
-        
-        # Fallback
-        logger.warning("Using fallback database path")
-        return "/tmp/data-resources.db"
-
     def _ensure_database_directory(self):
         """Ensure the database directory exists with proper permissions"""
         try:
             db_dir = Path(self.db_path).parent
-            
             # Create directory if it doesn't exist
             if not db_dir.exists():
                 logger.info(f"Creating database directory: {db_dir}")
                 db_dir.mkdir(parents=True, exist_ok=True)
-            
             # Try to set proper permissions if we can
             try:
-                # Make directory writable for owner
                 os.chmod(db_dir, stat.S_IRWXU | stat.S_IRGRP | stat.S_IXGRP | stat.S_IROTH | stat.S_IXOTH)
                 logger.debug(f"Set permissions on database directory: {db_dir}")
             except (OSError, PermissionError) as e:
                 logger.warning(f"Could not set directory permissions: {e}")
-            
             # Check if we can write to the directory
             test_file = db_dir / ".write_test"
             try:
@@ -221,195 +156,128 @@ class DatabaseService:
                 logger.info(f"Database directory is writable: {db_dir}")
             except Exception as e:
                 logger.error(f"Database directory is not writable: {db_dir}, error: {e}")
-                # Try to create in a fallback location
-                fallback_dir = Path("/tmp/aspire_database")
-                fallback_dir.mkdir(parents=True, exist_ok=True)
-                self.db_path = str(fallback_dir / "data-resources.db")
-                logger.warning(f"Using fallback database path: {self.db_path}")
-                
+                raise RuntimeError(f"Cannot write to database directory: {db_dir}. Error: {e}")
         except Exception as e:
             logger.error(f"Error ensuring database directory: {e}")
-            # Use absolute fallback
-            self.db_path = "/tmp/data-resources.db"
-            logger.warning(f"Using emergency fallback database path: {self.db_path}")
+            raise RuntimeError(f"Failed to ensure database directory for {self.db_path}: {e}")
 
     def _ensure_database_schema(self):
         """Ensure the database schema exists with both Files and documents tables"""
-        max_retries = 3
-        retry_delay = 1
-        
-        for attempt in range(max_retries):
-            try:
-                logger.info(f"Attempt {attempt + 1}: Using database path: {self.db_path}")
+        max_retries = 1
+        try:
+            logger.info(f"Using database path: {self.db_path}")
+            self._test_database_connection()
+            with self._pool.get_connection() as conn:
+                cursor = conn.cursor()
+                # Create Files table for C# FileMetadata compatibility
+                cursor.execute("""
+                    CREATE TABLE IF NOT EXISTS Files (
+                        Id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        FileName TEXT NOT NULL,
+                        Size INTEGER NOT NULL DEFAULT 0,
+                        UploadedAt DATETIME DEFAULT CURRENT_TIMESTAMP,
+                        Status TEXT DEFAULT 'Uploaded',
+                        FileHash TEXT DEFAULT ''
+                    )
+                """)
                 
-                # Get directory info for debugging
-                db_dir = Path(self.db_path).parent
-                try:
-                    import pwd
-                    import grp
-                    
-                    stat_info = db_dir.stat()
-                    try:
-                        owner = pwd.getpwuid(stat_info.st_uid).pw_name
-                    except KeyError:
-                        owner = str(stat_info.st_uid)
-                    try:
-                        group = grp.getgrgid(stat_info.st_gid).gr_name
-                    except KeyError:
-                        group = str(stat_info.st_gid)
-                    
-                    logger.info(f"Database directory owner: {owner}:{group} (uid:{stat_info.st_uid}, gid:{stat_info.st_gid})")
-                    logger.info(f"Database directory permissions: {oct(stat_info.st_mode)}")
-                    logger.info(f"Current process uid: {os.getuid()}, gid: {os.getgid()}")
-                except Exception as e:
-                    logger.debug(f"Could not get detailed directory info: {e}")
+                # Create documents table for Python Document compatibility
+                cursor.execute("""
+                    CREATE TABLE IF NOT EXISTS documents (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        filename TEXT NOT NULL,
+                        original_filename TEXT NOT NULL,
+                        file_path TEXT NOT NULL,
+                        file_size INTEGER,
+                        mime_type TEXT,
+                        upload_date DATETIME DEFAULT CURRENT_TIMESTAMP,
+                        processed BOOLEAN DEFAULT FALSE,
+                        processing_status TEXT DEFAULT 'pending'
+                    )
+                """)
                 
-                # Test connection first
-                self._test_database_connection()
+                # Create processed_documents table if it doesn't exist
+                cursor.execute("""
+                    CREATE TABLE IF NOT EXISTS processed_documents (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        document_id INTEGER REFERENCES documents(id),
+                        docling_document_path TEXT NOT NULL,
+                        total_pages INTEGER,
+                        processing_date DATETIME DEFAULT CURRENT_TIMESTAMP,
+                        processing_metadata TEXT,
+                        neo4j_node_id TEXT
+                    )
+                """)
                 
-                with self._pool.get_connection() as conn:
-                    cursor = conn.cursor()
-                    
-                    # Create Files table for C# FileMetadata compatibility
-                    cursor.execute("""
-                        CREATE TABLE IF NOT EXISTS Files (
-                            Id INTEGER PRIMARY KEY AUTOINCREMENT,
-                            FileName TEXT NOT NULL,
-                            Size INTEGER NOT NULL DEFAULT 0,
-                            UploadedAt DATETIME DEFAULT CURRENT_TIMESTAMP,
-                            Status TEXT DEFAULT 'Uploaded',
-                            FileHash TEXT DEFAULT ''
-                        )
-                    """)
-                    
-                    # Create documents table for Python Document compatibility
-                    cursor.execute("""
-                        CREATE TABLE IF NOT EXISTS documents (
-                            id INTEGER PRIMARY KEY AUTOINCREMENT,
-                            filename TEXT NOT NULL,
-                            original_filename TEXT NOT NULL,
-                            file_path TEXT NOT NULL,
-                            file_size INTEGER,
-                            mime_type TEXT,
-                            upload_date DATETIME DEFAULT CURRENT_TIMESTAMP,
-                            processed BOOLEAN DEFAULT FALSE,
-                            processing_status TEXT DEFAULT 'pending'
-                        )
-                    """)
-                    
-                    # Create processed_documents table if it doesn't exist
-                    cursor.execute("""
-                        CREATE TABLE IF NOT EXISTS processed_documents (
-                            id INTEGER PRIMARY KEY AUTOINCREMENT,
-                            document_id INTEGER REFERENCES documents(id),
-                            docling_document_path TEXT NOT NULL,
-                            total_pages INTEGER,
-                            processing_date DATETIME DEFAULT CURRENT_TIMESTAMP,
-                            processing_metadata TEXT,
-                            neo4j_node_id TEXT
-                        )
-                    """)
-                    
-                    # Create document_pages table if it doesn't exist
-                    cursor.execute("""
-                        CREATE TABLE IF NOT EXISTS document_pages (
-                            id INTEGER PRIMARY KEY AUTOINCREMENT,
-                            processed_document_id INTEGER REFERENCES processed_documents(id),
-                            page_number INTEGER NOT NULL,
-                            content TEXT NOT NULL,
-                            page_metadata TEXT,
-                            neo4j_node_id TEXT
-                        )
-                    """)
-                    
-                    # Create indexes for better performance
-                    # Files table indexes
-                    cursor.execute("CREATE INDEX IF NOT EXISTS idx_files_filehash ON Files(FileHash)")
-                    cursor.execute("CREATE INDEX IF NOT EXISTS idx_files_uploadedat ON Files(UploadedAt)")
-                    cursor.execute("CREATE INDEX IF NOT EXISTS idx_files_status ON Files(Status)")
-                    
-                    # Documents table indexes
-                    cursor.execute("CREATE INDEX IF NOT EXISTS idx_documents_processed ON documents(processed)")
-                    cursor.execute("CREATE INDEX IF NOT EXISTS idx_documents_upload_date ON documents(upload_date)")
-                    cursor.execute("CREATE INDEX IF NOT EXISTS idx_documents_status ON documents(processing_status)")
-                    cursor.execute("CREATE INDEX IF NOT EXISTS idx_documents_filename ON documents(filename)")
-                    
-                    # Related tables indexes
-                    cursor.execute("CREATE INDEX IF NOT EXISTS idx_processed_documents_document_id ON processed_documents(document_id)")
-                    cursor.execute("CREATE INDEX IF NOT EXISTS idx_document_pages_processed_doc_id ON document_pages(processed_document_id)")
-                    cursor.execute("CREATE INDEX IF NOT EXISTS idx_document_pages_page_number ON document_pages(page_number)")
-                    
-                    # Create a table for tracking concurrent access metrics if not exists
-                    cursor.execute("""
-                        CREATE TABLE IF NOT EXISTS service_metrics (
-                            id INTEGER PRIMARY KEY AUTOINCREMENT,
-                            service_name TEXT NOT NULL,
-                            last_activity DATETIME DEFAULT CURRENT_TIMESTAMP,
-                            operations_count INTEGER DEFAULT 0,
-                            active_connections INTEGER DEFAULT 0
-                        )
-                    """)
-                    
-                    # Create a bridge/sync table to track relationships between Files and documents
-                    cursor.execute("""
-                        CREATE TABLE IF NOT EXISTS file_document_bridge (
-                            id INTEGER PRIMARY KEY AUTOINCREMENT,
-                            file_id INTEGER REFERENCES Files(Id),
-                            document_id INTEGER REFERENCES documents(id),
-                            created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-                            sync_status TEXT DEFAULT 'synced'
-                        )
-                    """)
-                    cursor.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_file_document_bridge_unique ON file_document_bridge(file_id, document_id)")
-                    
-                    conn.commit()
-                    logger.info(f"? Database schema initialized successfully at: {self.db_path}")
-                    
-                    # Perform initial data sync between Files and documents tables
-                    self._sync_files_and_documents(conn)
-                    
-                    # Log database file info
-                    db_file = Path(self.db_path)
-                    if db_file.exists():
-                        size = db_file.stat().st_size
-                        logger.info(f"? Database file size: {size} bytes")
-                    
-                    # Create backup if possible
-                    self._create_backup_if_possible()
-                    
-                    # Register this service instance
-                    self._register_service_activity()
-                    
-                    return  # Success, exit retry loop
-                    
-            except sqlite3.OperationalError as e:
-                error_msg = str(e).lower()
-                logger.error(f"? SQLite error on attempt {attempt + 1}: {e}")
+                # Create document_pages table if it doesn't exist
+                cursor.execute("""
+                    CREATE TABLE IF NOT EXISTS document_pages (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        processed_document_id INTEGER REFERENCES processed_documents(id),
+                        page_number INTEGER NOT NULL,
+                        content TEXT NOT NULL,
+                        page_metadata TEXT,
+                        neo4j_node_id TEXT
+                    )
+                """)
                 
-                if "disk i/o error" in error_msg and attempt < max_retries - 1:
-                    # Try moving to a different location on disk I/O error
-                    logger.warning(f"?? Disk I/O error detected, trying fallback location (attempt {attempt + 1})")
-                    fallback_paths = [
-                        "/tmp/aspire_database/data-resources.db",
-                        f"/tmp/data-resources-{os.getpid()}.db",
-                        f"/tmp/backup-{int(time.time())}-data-resources.db"
-                    ]
-                    
-                    if attempt < len(fallback_paths):
-                        old_path = self.db_path
-                        self.db_path = fallback_paths[attempt]
-                        logger.info(f"?? Switching from {old_path} to {self.db_path}")
-                        self._ensure_database_directory()
-                        time.sleep(retry_delay)
-                        continue
+                # Create indexes for better performance
+                # Files table indexes
+                cursor.execute("CREATE INDEX IF NOT EXISTS idx_files_filehash ON Files(FileHash)")
+                cursor.execute("CREATE INDEX IF NOT EXISTS idx_files_uploadedat ON Files(UploadedAt)")
+                cursor.execute("CREATE INDEX IF NOT EXISTS idx_files_status ON Files(Status)")
                 
-                if attempt == max_retries - 1:
-                    raise RuntimeError(f"Failed to initialize database after {max_retries} attempts: {e}")
-            except Exception as e:
-                logger.error(f"? Unexpected error on attempt {attempt + 1}: {e}")
-                if attempt == max_retries - 1:
-                    raise RuntimeError(f"Failed to initialize database: {e}")
-                time.sleep(retry_delay)
+                # Documents table indexes
+                cursor.execute("CREATE INDEX IF NOT EXISTS idx_documents_processed ON documents(processed)")
+                cursor.execute("CREATE INDEX IF NOT EXISTS idx_documents_upload_date ON documents(upload_date)")
+                cursor.execute("CREATE INDEX IF NOT EXISTS idx_documents_status ON documents(processing_status)")
+                cursor.execute("CREATE INDEX IF NOT EXISTS idx_documents_filename ON documents(filename)")
+                
+                # Related tables indexes
+                cursor.execute("CREATE INDEX IF NOT EXISTS idx_processed_documents_document_id ON processed_documents(document_id)")
+                cursor.execute("CREATE INDEX IF NOT EXISTS idx_document_pages_processed_doc_id ON document_pages(processed_document_id)")
+                cursor.execute("CREATE INDEX IF NOT EXISTS idx_document_pages_page_number ON document_pages(page_number)")
+                
+                # Create a table for tracking concurrent access metrics if not exists
+                cursor.execute("""
+                    CREATE TABLE IF NOT EXISTS service_metrics (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        service_name TEXT NOT NULL,
+                        last_activity DATETIME DEFAULT CURRENT_TIMESTAMP,
+                        operations_count INTEGER DEFAULT 0,
+                        active_connections INTEGER DEFAULT 0
+                    )
+                """)
+                
+                # Create a bridge/sync table to track relationships between Files and documents
+                cursor.execute("""
+                    CREATE TABLE IF NOT EXISTS file_document_bridge (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        file_id INTEGER REFERENCES Files(Id),
+                        document_id INTEGER REFERENCES documents(id),
+                        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                        sync_status TEXT DEFAULT 'synced'
+                    )
+                """)
+                cursor.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_file_document_bridge_unique ON file_document_bridge(file_id, document_id)")
+                
+                conn.commit()
+                logger.info(f"Database schema initialized successfully at: {self.db_path}")
+                
+                # Perform initial data sync between Files and documents tables
+                self._sync_files_and_documents(conn)
+                
+                # Log database file info
+                db_file = Path(self.db_path)
+                if db_file.exists():
+                    size = db_file.stat().st_size
+                    logger.info(f"Database file size: {size} bytes")
+                
+                return  # Success, exit retry loop
+                
+        except Exception as e:
+            logger.error(f"Failed to initialize database: {e}")
+            raise RuntimeError(f"Failed to initialize database at {self.db_path}: {e}")
 
     def _sync_files_and_documents(self, conn: sqlite3.Connection):
         """Sync data between Files and documents tables"""
@@ -503,7 +371,7 @@ class DatabaseService:
             
             if synced_count > 0:
                 conn.commit()
-                logger.info(f"? Synced {synced_count} records between Files and documents tables")
+                logger.info(f"Synced {synced_count} records between Files and documents tables")
             
         except Exception as e:
             logger.warning(f"Could not sync Files and documents tables: {e}")
@@ -574,10 +442,10 @@ class DatabaseService:
                 document.upload_date,
                 document.processed,
                 document.processing_status
-            ))
+            ));
             
             # Also create corresponding Files record for C# compatibility
-            self._sync_document_to_files(doc_id, document)
+            self._sync_document_to_files(doc_id, document);
             
             logger.debug(f"Saved document with ID {doc_id}")
             return doc_id
@@ -744,3 +612,19 @@ class DatabaseService:
                 "sync_performed": False,
                 "timestamp": datetime.now().isoformat()
             }
+
+    def _test_database_connection(self):
+        """Test if the database file can be opened/created."""
+        try:
+            with self._pool.get_connection() as conn:
+                conn.execute("SELECT 1")
+        except Exception as e:
+            raise RuntimeError(f"Database connection test failed: {e}")
+
+    def health_check(self):
+        """Simple health check for the database connection."""
+        try:
+            self._test_database_connection()
+            return {"status": "healthy"}
+        except Exception as e:
+            return {"status": "unhealthy", "error": str(e)}
