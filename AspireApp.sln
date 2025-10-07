@@ -17,6 +17,7 @@ Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "roadmap", "roadmap", "{02EA
 EndProject
 Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "docs", "docs", "{FBE155A9-2F55-417C-851F-620540B898B6}"
 	ProjectSection(SolutionItems) = preProject
+		docs\CONTRIBUTIONS.md = docs\CONTRIBUTIONS.md
 		docs\DATABASE_SETUP.md = docs\DATABASE_SETUP.md
 		docs\NEO4J-README.md = docs\NEO4J-README.md
 		docs\RAG_IMPLEMENTATION.md = docs\RAG_IMPLEMENTATION.md
@@ -37,6 +38,34 @@ EndProject
 Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "SolutionItems", "SolutionItems", "{FD1FBAE9-5B65-4052-98E9-85E52DF3EFA6}"
 	ProjectSection(SolutionItems) = preProject
 		.gitignore = .gitignore
+	EndProjectSection
+EndProject
+Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "prompts", "prompts", "{D7078045-A923-47B9-9543-4D92F2C16E57}"
+	ProjectSection(SolutionItems) = preProject
+		.github\prompts\architecture-blueprint-generator.prompt.md = .github\prompts\architecture-blueprint-generator.prompt.md
+		.github\prompts\csharp-async.prompt.md = .github\prompts\csharp-async.prompt.md
+		.github\prompts\csharp-docs.prompt.md = .github\prompts\csharp-docs.prompt.md
+		.github\prompts\ef-core.prompt.md = .github\prompts\ef-core.prompt.md
+		.github\prompts\playwright-automation-fill-in-form.prompt.md = .github\prompts\playwright-automation-fill-in-form.prompt.md
+		.github\prompts\playwright-explore-website.prompt.md = .github\prompts\playwright-explore-website.prompt.md
+		.github\prompts\playwright-generate-test.prompt.md = .github\prompts\playwright-generate-test.prompt.md
+		.github\prompts\sql-code-review.prompt.md = .github\prompts\sql-code-review.prompt.md
+		.github\prompts\sql-optimization.prompt.md = .github\prompts\sql-optimization.prompt.md
+	EndProjectSection
+EndProject
+Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "instructions", "instructions", "{A278D685-967B-49C5-9CFF-726B1CBF259C}"
+	ProjectSection(SolutionItems) = preProject
+		.github\instructions\blazor.instructions.md = .github\instructions\blazor.instructions.md
+		.github\instructions\csharp.instructions.md = .github\instructions\csharp.instructions.md
+		.github\instructions\dotnet-architecture-good-practices.instructions.md = .github\instructions\dotnet-architecture-good-practices.instructions.md
+		.github\instructions\dotnet-framework.instructions.md = .github\instructions\dotnet-framework.instructions.md
+		.github\instructions\markdown.instructions.md = .github\instructions\markdown.instructions.md
+		.github\instructions\memory-bank.instructions.md = .github\instructions\memory-bank.instructions.md
+		.github\instructions\python.instructions.md = .github\instructions\python.instructions.md
+		.github\instructions\sql-sp-generation.instructions.md = .github\instructions\sql-sp-generation.instructions.md
+		.github\instructions\taming-copilot.instructions.md = .github\instructions\taming-copilot.instructions.md
+		.github\instructions\task-implementation.instructions.md = .github\instructions\task-implementation.instructions.md
+		.github\instructions\tasksync.instructions.md = .github\instructions\tasksync.instructions.md
 	EndProjectSection
 EndProject
 Global
@@ -71,8 +100,12 @@ Global
 	GlobalSection(SolutionProperties) = preSolution
 		HideSolutionNode = FALSE
 	EndGlobalSection
+	GlobalSection(NestedProjects) = preSolution
+		{D7078045-A923-47B9-9543-4D92F2C16E57} = {6C3EA053-9755-4CBA-9D1E-A8AED60F6099}
+		{A278D685-967B-49C5-9CFF-726B1CBF259C} = {6C3EA053-9755-4CBA-9D1E-A8AED60F6099}
+	EndGlobalSection
 	GlobalSection(ExtensibilityGlobals) = postSolution
-		StartupProject = {CE4A7D9A-E58D-B782-7CBC-051C53AF10B1}
 		SolutionGuid = {CBD3E3C3-D6AB-4EE7-A317-B47493A7C9F2}
+		StartupProject = {CE4A7D9A-E58D-B782-7CBC-051C53AF10B1}
 	EndGlobalSection
 EndGlobal
