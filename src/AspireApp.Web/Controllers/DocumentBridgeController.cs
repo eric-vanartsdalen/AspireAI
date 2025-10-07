@@ -1,5 +1,4 @@
 using AspireApp.Web.Data;
-using AspireApp.Web.Shared;
 using Microsoft.AspNetCore.Mvc;
 
 namespace AspireApp.Web.Controllers
@@ -203,9 +202,9 @@ namespace AspireApp.Web.Controllers
         {
             try
             {
-                var healthCheck = await _bridgeService.PerformHealthCheckAsync();
+                var healthCheck = await _bridgeService.PerformHealthCheckAsync(); // HealthCheckResult
                 var stats = await _bridgeService.GetProcessingStatsAsync();
-                
+
                 var systemStatus = new
                 {
                     timestamp = DateTime.UtcNow,
@@ -219,52 +218,31 @@ namespace AspireApp.Web.Controllers
             catch (Exception ex)
             {
                 _logger.LogError(ex, "Error retrieving system status");
-                return StatusCode(500, new { 
-                    error = "Failed to retrieve system status", 
-                    message = ex.Message 
+                return StatusCode(500, new {
+                    error = "Failed to retrieve system status",
+                    message = ex.Message
                 });
             }
         }
 
-        private static List<string> GenerateRecommendations(HealthCheckResult healthCheck, DocumentProcessingStats stats)
+        private static List<string> GenerateRecommendations(DocumentBridgeHealthCheck healthCheck, DocumentProcessingStats stats)
         {
             var recommendations = new List<string>();
 
             if (!healthCheck.OverallHealthy)
-            {
                 recommendations.Add("System health check failed - investigate database connectivity");
-            }
-
-            if (!healthCheck.CanConnect)
-            {
+            if (!healthCheck.DatabaseConnected)
                 recommendations.Add("Database connection failed - check connection string and database availability");
-            }
-
-            if (!healthCheck.SchemaHealthy)
-            {
+            if (!healthCheck.DocumentsTableAccessible)
                 recommendations.Add("Documents table not accessible - run database initialization");
-            }
-
-            if (healthCheck.SyncStatus?.IsHealthy == false)
-            {
+            if (healthCheck.SyncStatus == "Out of Sync")
                 recommendations.Add("File metadata and documents are out of sync - run sync operation");
-            }
-
             if (stats.PendingDocuments > 0)
-            {
                 recommendations.Add($"{stats.PendingDocuments} documents are pending processing by Python service");
-            }
-
             if (stats.SyncedPercentage < 100)
-            {
                 recommendations.Add($"Only {stats.SyncedPercentage:F1}% of files are synced to documents - consider running sync");
-            }
-
             if (recommendations.Count == 0)
-            {
                 recommendations.Add("System is healthy and fully operational");
-            }
-
             return recommendations;
         }
     }

@@ -1,8 +1,6 @@
 ﻿using Microsoft.EntityFrameworkCore;
-using Microsoft.SemanticKernel;
-using System.Collections.Generic;
-using AspireApp.Web.Data;
-using AspireApp.Web.Shared;
+using System.ComponentModel.DataAnnotations;
+using System.ComponentModel.DataAnnotations.Schema;
 
 namespace AspireApp.Web.Data
 {

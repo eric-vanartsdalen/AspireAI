@@ -1,9 +1,8 @@
 using AspireApp.Web;
 using AspireApp.Web.Components;
-using AspireApp.Web.Components.Shared;
 using AspireApp.Web.Components.Pages;
+using AspireApp.Web.Components.Shared;
 using AspireApp.Web.Data;
-using AspireApp.Web.Shared;
 using Microsoft.EntityFrameworkCore;
 
 var builder = WebApplication.CreateBuilder(args);

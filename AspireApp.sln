@@ -17,7 +17,6 @@ Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "roadmap", "roadmap", "{02EA
 EndProject
 Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "docs", "docs", "{FBE155A9-2F55-417C-851F-620540B898B6}"
 	ProjectSection(SolutionItems) = preProject
-		docs\DATABASE_BRIDGE_SOLUTION.md = docs\DATABASE_BRIDGE_SOLUTION.md
 		docs\DATABASE_SETUP.md = docs\DATABASE_SETUP.md
 		docs\NEO4J-README.md = docs\NEO4J-README.md
 		docs\RAG_IMPLEMENTATION.md = docs\RAG_IMPLEMENTATION.md
@@ -29,6 +28,11 @@ EndProject
 Project("{888888A0-9F3D-457C-B088-3A5042F75D52}") = "AspireApp.PythonServices", "src\AspireApp.PythonServices\AspireApp.PythonServices.pyproj", "{B58F2D78-4D31-4407-A831-CB05DA1C1D32}"
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "AspireApp.Neo4JService", "src\AspireApp.Neo4JService\AspireApp.Neo4JService.csproj", "{659E2264-AB42-40E4-B257-9A07AE14CC04}"
+EndProject
+Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = ".github", ".github", "{6C3EA053-9755-4CBA-9D1E-A8AED60F6099}"
+	ProjectSection(SolutionItems) = preProject
+		.github\copilot-instructions.md = .github\copilot-instructions.md
+	EndProjectSection
 EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
