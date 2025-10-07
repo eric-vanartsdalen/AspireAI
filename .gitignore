@@ -6,6 +6,7 @@
 # User-specific files
 *.rsuser
 *.suo
+*.suo
 *.user
 *.userosscache
 *.sln.docstates
@@ -419,5 +420,5 @@ FodyWeavers.xsd
 
 
 # Ignore data directories
-data/
-database/
+/data/
+/database/
