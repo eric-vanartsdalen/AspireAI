@@ -35,10 +35,7 @@ var connectionString = builder.Configuration.GetConnectionString("DefaultConnect
 builder.Services.AddDbContext<UploadDbContext>(options =>
     options.UseSqlite(connectionString));
 
-// Register the DocumentBridgeService first (required by FileStorageService)
-builder.Services.AddScoped<DocumentBridgeService>();
-
-// Register the FileStorageService with data directory and bridge service
+// Register the FileStorageService with data directory (simplified - no bridge service needed)
 var fileUploadDataDir = builder.Configuration.GetValue<string>("FileUpload:DataDirectory");
 var dataDirectory = !string.IsNullOrEmpty(fileUploadDataDir)
     ? Path.IsPathRooted(fileUploadDataDir)
@@ -50,8 +47,7 @@ builder.Services.AddScoped<FileStorageService>(sp =>
     new FileStorageService(
         sp.GetRequiredService<UploadDbContext>(),
         sp.GetRequiredService<ILogger<FileStorageService>>(),
-        dataDirectory,
-        sp.GetRequiredService<DocumentBridgeService>()));
+        dataDirectory));
 
 // Add this right after the AddHttpClient section
 builder.Services.AddSingleton<IConfiguration>(builder.Configuration);
@@ -102,7 +98,7 @@ app.MapGet("/health", () => Results.Ok("Healthy"));
 
 await app.RunAsync();
 
-// Enhanced database and directory initialization method
+// Simplified database initialization method
 static async Task InitializeDatabaseAsync(IServiceProvider services, string connectionString, string dataDirectory)
 {
     try
@@ -130,21 +126,13 @@ static async Task InitializeDatabaseAsync(IServiceProvider services, string conn
             Console.WriteLine($"Created data directory: {dataDirectory}");
         }
 
-        // Initialize database with enhanced schema support
+        // Initialize database with EF Core
         using var scope = services.CreateScope();
         var context = scope.ServiceProvider.GetRequiredService<UploadDbContext>();
-        var bridgeService = scope.ServiceProvider.GetRequiredService<DocumentBridgeService>();
         
-        // Ensure database schema is created (includes both original and new tables)
-        var schemaInitialized = await bridgeService.EnsureDatabaseSchemaAsync();
-        if (schemaInitialized)
-        {
-            Console.WriteLine($"Database schema initialized successfully at: {dbPath}");
-        }
-        else
-        {
-            Console.WriteLine($"Warning: Database schema initialization had issues");
-        }
+        // Ensure database schema is created
+        await context.Database.EnsureCreatedAsync();
+        Console.WriteLine($"? Database schema initialized successfully at: {dbPath}");
 
         // Test database connection
         var canConnect = await context.Database.CanConnectAsync();
@@ -152,35 +140,13 @@ static async Task InitializeDatabaseAsync(IServiceProvider services, string conn
         {
             Console.WriteLine("Database connection test successful");
             
-            // Test queries on both table systems
+            // Show current database stats
             var fileCount = await context.Files.CountAsync();
-            var documentCount = await context.Documents.CountAsync();
-            var processedDocCount = await context.ProcessedDocuments.CountAsync();
             var pageCount = await context.DocumentPages.CountAsync();
             
             Console.WriteLine($"Database initialized with:");
-            Console.WriteLine($"  - {fileCount} files in Files table");
-            Console.WriteLine($"  - {documentCount} documents in Documents table");
-            Console.WriteLine($"  - {processedDocCount} processed documents");
+            Console.WriteLine($"  - {fileCount} files in files table");
             Console.WriteLine($"  - {pageCount} document pages");
-
-            // Perform initial sync if needed
-            if (fileCount > documentCount)
-            {
-                var syncedCount = await bridgeService.SyncFileMetadataToDocumentsAsync();
-                Console.WriteLine($"Synced {syncedCount} files to Documents table");
-            }
-
-            // Perform health check
-            var healthCheck = await bridgeService.PerformHealthCheckAsync();
-            if (healthCheck.OverallHealthy)
-            {
-                Console.WriteLine("? Document bridge system is healthy");
-            }
-            else
-            {
-                Console.WriteLine($"?? Document bridge system health issues: {healthCheck.ErrorMessage}");
-            }
         }
         else
         {

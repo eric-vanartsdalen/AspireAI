@@ -109,7 +109,9 @@ public class FileUploadController : ControllerBase
 
             // Add file metadata to database with hash and status
             var fileMetadata = await _fileStorageService.AddFileAsync(
-                uniqueFileName, 
+                uniqueFileName,
+                file.FileName,
+                dataDirectory,
                 file.Length, 
                 fileHash, 
                 "Uploaded");

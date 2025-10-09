@@ -4,15 +4,15 @@
 
 This document outlines the implementation plan for Retrieval Augmented Generation (RAG) functionality in AspireAI, focusing on document processing using docling and Neo4j as the graph repository for advanced retrieval strategies.
 
-**Implementation Status: ? Phase 1-3 COMPLETED, Phase 4-5 IN PROGRESS**
+**Implementation Status: ? Phase 1-3 COMPLETED (Schema Simplified), Phase 4-5 IN PROGRESS**
 
 ## Architecture Overview
 
 ```mermaid
 graph TB
-    A[SQLite Database] --> B[Python FastAPI Service]
+    A[SQLite: files table] --> B[Python FastAPI Service]
     B --> C[Docling Processor]
-    C --> D[Document Pages]
+    C --> D[document_pages table]
     D --> E[Neo4j Graph DB]
     E --> F[RAG Retrieval]
     F --> G[Blazor Frontend]
@@ -36,501 +36,243 @@ graph TB
 - **Graph Database**: Neo4j (Container) ? **IMPLEMENTED**
 - **Frontend**: Blazor (.NET 10) ? **EXISTING**
 - **Orchestration**: .NET Aspire ? **CONFIGURED**
+- **Database**: SQLite (Unified Schema) ? **SIMPLIFIED**
 
 ---
 
-## ? Phase 1: Database Schema and Setup - **COMPLETED**
+## ? Phase 1: Simplified Database Schema - **COMPLETED**
 
-### 1.1 Dependencies Update - **COMPLETED**
+### 1.1 Unified Schema Design
 
-**File**: `src/AspireApp.PythonServices/requirements.txt`
+**Key Improvement**: Consolidated from 4+ tables to **2 tables** for clarity and maintainability.
 
-```txt
-# FastAPI web framework and ASGI server
-anyio
-fastapi
-uvicorn
-
-# Document processing
-docling
-docling-core
-docling-ibm-models
-
-# Database connections
-neo4j
-
-# Additional utilities
-pypdf2
-python-multipart
-pydantic
-aiofiles
-
-# Logging and utilities
-python-json-logger
-```
-
-**Status**: ? All dependencies added and configured
-
-### 1.2 SQLite Database Schema - **COMPLETED**
-
-**Expected Tables in `/database/data-resources.db`:**
+#### **files** table - Single Source of Truth
 
 ```sql
--- Original uploaded documents ? IMPLEMENTED
-CREATE TABLE IF NOT EXISTS documents (
+CREATE TABLE files (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
-    filename TEXT NOT NULL,
-    original_filename TEXT NOT NULL,
+    
+    -- Core file identification
+    file_name TEXT NOT NULL,
+    original_file_name TEXT NOT NULL,
     file_path TEXT NOT NULL,
-    file_size INTEGER,
+    file_hash TEXT NOT NULL DEFAULT '',
+    
+    -- File metadata
+    file_size INTEGER NOT NULL DEFAULT 0,
     mime_type TEXT,
-    upload_date DATETIME DEFAULT CURRENT_TIMESTAMP,
-    processed BOOLEAN DEFAULT FALSE,
-    processing_status TEXT DEFAULT 'pending'
-);
-
--- Document processing results ? IMPLEMENTED
-CREATE TABLE IF NOT EXISTS processed_documents (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    document_id INTEGER REFERENCES documents(id),
-    docling_document_path TEXT NOT NULL,
+    
+    -- Upload tracking
+    uploaded_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    
+    -- Processing lifecycle: uploaded ? processing ? processed | error
+    status TEXT NOT NULL DEFAULT 'uploaded',
+    processing_started_at DATETIME,
+    processing_completed_at DATETIME,
+    processing_error TEXT,
+    
+    -- Docling processing output
+    docling_document_path TEXT,
     total_pages INTEGER,
-    processing_date DATETIME DEFAULT CURRENT_TIMESTAMP,
-    processing_metadata TEXT,
-    neo4j_node_id TEXT
+    
+    -- Neo4j integration (Phase 4)
+    neo4j_document_node_id TEXT,
+    
+    -- Future extensibility
+    source_type TEXT NOT NULL DEFAULT 'upload',
+    source_url TEXT
 );
 
--- Individual document pages ? IMPLEMENTED
-CREATE TABLE IF NOT EXISTS document_pages (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    processed_document_id INTEGER REFERENCES processed_documents(id),
-    page_number INTEGER NOT NULL,
-    content TEXT NOT NULL,
-    page_metadata TEXT,
-    neo4j_node_id TEXT
-);
+-- Performance indexes
+CREATE INDEX idx_files_status ON files(status);
+CREATE INDEX idx_files_hash ON files(file_hash);
+CREATE INDEX idx_files_uploaded ON files(uploaded_at);
+CREATE INDEX idx_files_source_type ON files(source_type);
 ```
 
-**Status**: ? Database schema automatically created by DatabaseService
+#### **document_pages** table - Page-Level Content
+
+```sql
+CREATE TABLE document_pages (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    file_id INTEGER NOT NULL,
+    page_number INTEGER NOT NULL,
+    content TEXT NOT NULL,
+    page_metadata TEXT,  -- JSON
+    neo4j_page_node_id TEXT,
+    
+    FOREIGN KEY (file_id) REFERENCES files(id) ON DELETE CASCADE,
+    UNIQUE(file_id, page_number)
+);
+
+CREATE INDEX idx_pages_file_id ON document_pages(file_id);
+CREATE INDEX idx_pages_file_page ON document_pages(file_id, page_number);
+```
+
+**Status**: ? **SIMPLIFIED AND IMPLEMENTED**
+
+### 1.2 Status Lifecycle
+
+Clear, simple progression:
+
+```
+uploaded ? processing ? processed
+                      ? error
+```
+
+| Status | Description | Triggers |
+|--------|-------------|----------|
+| `uploaded` | File ready for processing | Blazor file upload |
+| `processing` | Being processed by docling | Python service starts processing |
+| `processed` | Successfully processed | Pages extracted, docling complete |
+| `error` | Processing failed | Exception during docling processing |
 
 ---
 
-## ? Phase 2: Document Processing Pipeline - **COMPLETED**
+## ? Phase 2: Document Processing Pipeline - **IMPLEMENTED**
 
-### 2.1 File Structure Organization - **COMPLETED**
+### 2.1 Workflow
 
-```
-/app/
-? database/
-   ? data-resources.db                # SQLite database
-? data/
-   ? processed/                       # Processed docling documents
-       ? documents/                   # Document-level files
-           ? {doc_id}/                # Per-document directory
-               ? document.json        # Full docling document
-               ? metadata.json        # Document metadata
-               ? pages/               # Individual pages
-                   ? page_001.json    # Page 1 content
-                   ? page_002.json    # Page 2 content
-                   ? ...
-   ? uploads/                         # Temporary upload storage
-? app/
-    ? fastapi.py                       # Main FastAPI app
-    ? models/                          # Pydantic models
-    ? services/                        # Business logic
-        ? database_service.py          # SQLite operations
-        ? docling_service.py          # Document processing
-        ? neo4j_service.py            # Graph operations
-    ? routers/                         # API endpoints
-        ? documents.py                 # Document management
-        ? processing.py                # Document processing
-        ? rag.py                      # RAG endpoints
+**Step 1: File Upload (Blazor)**
+```csharp
+var fileMetadata = new FileMetadata
+{
+    FileName = uniqueFileName,
+    OriginalFileName = originalFileName,
+    FilePath = uniqueFileName,
+    FileHash = sha256Hash,
+    FileSize = fileSize,
+    MimeType = contentType,
+    Status = "uploaded"
+};
+await _context.Files.AddAsync(fileMetadata);
+await _context.SaveChangesAsync();
 ```
 
-**Status**: ? Complete file structure implemented with all services
-
-### 2.2 Neo4j Graph Schema - **COMPLETED**
-
-**Node Types**: ? **IMPLEMENTED**
-- `Document`: Represents the original document
-- `Page`: Represents individual pages
-- `Chunk`: Represents semantic chunks within pages (ready for future enhancement)
-- `Entity`: Named entities extracted from content (ready for future enhancement)
-- `Topic`: Semantic topics/themes (ready for future enhancement)
-
-**Relationship Types**: ? **IMPLEMENTED**
-- `CONTAINS`: Document contains pages
-- `PRECEDES`: Sequential page/chunk relationships
-
-```cypher
-// ? IMPLEMENTED - Neo4j schema with constraints
-CREATE CONSTRAINT doc_id IF NOT EXISTS FOR (d:Document) REQUIRE d.id IS UNIQUE;
-CREATE CONSTRAINT page_id IF NOT EXISTS FOR (p:Page) REQUIRE p.id IS UNIQUE;
-CREATE CONSTRAINT chunk_id IF NOT EXISTS FOR (c:Chunk) REQUIRE c.id IS UNIQUE;
-
-// ? IMPLEMENTED - Example document structure
-(doc:Document {id: "doc_123", filename: "report.pdf", total_pages: 10})
--[:CONTAINS]->(page:Page {id: "page_123_1", page_number: 1, content: "..."})
+**Step 2: Detection (Python Service)**
+```python
+unprocessed = db_service.get_unprocessed_files()
+# Returns files where status='uploaded'
 ```
 
-**Status**: ? Graph schema implemented with automatic constraint creation
+**Step 3: Processing (Python Service)**
+```python
+# Mark as processing
+db_service.update_file_status(file_id, 'processing')
+
+# Process with docling
+result = docling_service.process_document(file)
+
+# Save results
+db_service.update_file_processing_results(
+    file_id=file_id,
+    docling_path=result['docling_path'],
+    total_pages=len(result['pages'])
+)
+
+# Save pages
+for page in result['pages']:
+    db_service.save_document_page(
+        file_id=file_id,
+        page_number=page['number'],
+        content=page['text'],
+        metadata=page.get('metadata')
+    )
+
+# Mark complete
+db_service.update_file_status(file_id, 'processed')
+```
+
+**Status**: ? **WORKFLOW IMPLEMENTED**
 
 ---
 
 ## ? Phase 3: FastAPI Implementation - **COMPLETED**
 
-### 3.1 Core Service Classes - **COMPLETED**
+### 3.1 Core Database Methods (Python)
 
-**Database Service** (`services/database_service.py`): ? **FULLY IMPLEMENTED**
 ```python
 class DatabaseService:
-    ? def get_document(self, doc_id: int) -> Document
-    ? def get_unprocessed_documents(self) -> List[Document]
-    ? def get_all_documents(self) -> List[Document]
-    ? def update_processing_status(self, doc_id: int, status: str)
-    ? def save_processed_document(self, processed_doc: ProcessedDocument)
-    ? def save_document_page(self, page: DocumentPage)
-    ? def get_processed_document(self, document_id: int)
-    ? def get_document_pages(self, processed_document_id: int)
-    ? def _ensure_database_schema(self) # Auto-creates tables
+    # File management
+    def get_file_by_id(file_id: int) -> Dict
+    def get_all_files() -> List[Dict]
+    def get_unprocessed_files() -> List[Dict]
+    def update_file_status(file_id: int, status: str, error: str = None)
+    def update_file_processing_results(file_id, docling_path, total_pages, neo4j_node_id)
+    
+    # Page management
+    def save_document_page(file_id, page_number, content, metadata, neo4j_node_id)
+    def get_document_pages(file_id: int) -> List[Dict]
+    def get_page_by_number(file_id: int, page_number: int) -> Dict
 ```
 
-**Docling Service** (`services/docling_service.py`): ? **FULLY IMPLEMENTED**
+**Status**: ? **FULLY IMPLEMENTED**
+
+### 3.2 API Endpoints
+
+**Document Management** (`routers/documents.py`):
 ```python
-class DoclingService:
-    ? def process_document(self, document: Document) -> tuple[ProcessedDocument, List[PageContent]]
-    ? def _extract_pages(self, docling_doc, pages_dir: Path) -> List[PageContent]
-    ? def get_document_path(self, doc_id: int) -> Path
-    ? def load_processed_document(self, doc_id: int)
-    ? def load_page_content(self, doc_id: int, page_number: int)
+? GET    /documents/                    # List all files
+? GET    /documents/unprocessed         # Get files ready for processing
+? GET    /documents/{file_id}           # Get specific file
+? GET    /documents/{file_id}/status    # Get processing status
+? GET    /documents/{file_id}/pages     # Get all pages for file
 ```
 
-**Neo4j Service** (`services/neo4j_service.py`): ? **FULLY IMPLEMENTED**
+**Document Processing** (`routers/processing.py`):
 ```python
-class Neo4jService:
-    ? def create_document_node(self, document: Document) -> str
-    ? def create_page_nodes(self, pages: List[PageContent], doc_node_id: str, document_id: int)
-    ? def create_relationships(self, doc_id: str, page_ids: List[str])
-    ? def create_sequential_relationships(self, page_node_ids: List[str])
-    ? def search_similar_content(self, query: str, limit: int = 10)
-    ? def get_document_context(self, document_id: int)
-    ? def get_page_content(self, document_id: int, page_number: int)
-    ? def get_surrounding_pages(self, document_id: int, page_number: int, context_range: int = 2)
-    ? def health_check(self) -> bool
+? POST   /processing/process-document/{file_id}  # Process specific file
+? GET    /processing/status/{file_id}           # Get processing status
+? POST   /processing/process-all                # Process all unprocessed
+? GET    /processing/processed-documents        # List processed files
 ```
 
-### 3.2 API Endpoints - **COMPLETED**
-
-**Document Management Endpoints** (`routers/documents.py`): ? **FULLY IMPLEMENTED**
+**RAG Endpoints** (`routers/rag.py`):
 ```python
-? @router.get("/", response_model=List[Document])
-   async def list_documents()
-
-? @router.get("/unprocessed", response_model=List[Document])
-   async def list_unprocessed_documents()
-
-? @router.get("/{document_id}", response_model=Document)
-   async def get_document(document_id: int)
-
-? @router.get("/{document_id}/status", response_model=ProcessingStatus)
-   async def get_document_status(document_id: int)
+? GET    /rag/search-documents              # Search document content
+? GET    /rag/document-context/{file_id}    # Get full document context
+? GET    /rag/page-content/{file_id}/{page} # Get specific page
+? POST   /rag/semantic-search               # Semantic search (future)
+? GET    /rag/health                        # Health check
 ```
 
-**Document Processing Endpoints** (`routers/processing.py`): ? **FULLY IMPLEMENTED**
+**Status**: ? **COMPLETE REST API**
+
+---
+
+## ? Phase 4: Neo4j Integration - **READY FOR IMPLEMENTATION**
+
+### 4.1 Graph Schema
+
+**Node Types**:
+- `Document`: Represents the file/document
+- `Page`: Represents individual pages
+
+**Relationship Types**:
+- `CONTAINS`: Document contains pages
+- `PRECEDES`: Sequential page relationships
+
+**Implementation**:
 ```python
-? @router.post("/process-document/{document_id}")
-   async def process_document(document_id: int)
-
-? @router.get("/status/{document_id}")
-   async def get_processing_status(document_id: int)
-
-? @router.post("/process-all")
-   async def process_all_documents()
-
-? @router.get("/processed-documents")
-   async def list_processed_documents()
-```
-
-**RAG Endpoints** (`routers/rag.py`): ? **FULLY IMPLEMENTED**
-```python
-? @router.get("/search-documents")
-   async def search_documents(query: str, limit: int = 10)
-
-? @router.get("/document-context/{document_id}")
-   async def get_document_context(document_id: int)
-
-? @router.get("/page-content/{document_id}/{page_number}")
-   async def get_page_content(document_id: int, page_number: int)
-
-? @router.get("/surrounding-pages/{document_id}/{page_number}")
-   async def get_surrounding_pages(document_id: int, page_number: int)
-
-? @router.post("/semantic-search")
-   async def semantic_search(query: SemanticQuery)
-
-? @router.get("/health")
-   async def rag_health_check()
-```
-
-**Status**: ? Complete REST API implemented with comprehensive endpoints
-
----
-
-## ? Phase 4: Neo4j Integration and Advanced RAG - **IMPLEMENTED**
-
-### 4.1 Graph-based Retrieval Strategies - **IMPLEMENTED**
-
-**Simple Text Search**: ? **IMPLEMENTED**
-```cypher
-// ? Find content containing search terms
-MATCH (p:Page)
-WHERE p.content CONTAINS $query
-MATCH (p)<-[:CONTAINS]-(d:Document)
-RETURN p.content as content, 
-       p.page_number as page_number, 
-       d.filename as filename,
-       d.id as document_id
-ORDER BY p.page_number
-LIMIT $limit
-```
-
-**Contextual Page Retrieval**: ? **IMPLEMENTED**
-```cypher
-// ? Get surrounding context for a specific page
-MATCH (d:Document {id: $document_id})-[:CONTAINS]->(p:Page)
-WHERE p.page_number >= $start_page AND p.page_number <= $end_page
-RETURN p.content as content,
-       p.page_number as page_number,
-       p.metadata as metadata
-ORDER BY p.page_number
-```
-
-**Document Context Retrieval**: ? **IMPLEMENTED**
-```cypher
-// ? Get full document with all pages
-MATCH (d:Document {id: $document_id})-[:CONTAINS]->(p:Page)
-RETURN d.filename as filename,
-       d.original_filename as original_filename,
-       d.upload_date as upload_date,
-       collect({
-           page_number: p.page_number,
-           content: p.content,
-           metadata: p.metadata
-       }) as pages
-ORDER BY p.page_number
-```
-
-**Future Enhancement Ready**:
-- ?? Vector Search (ready for embedding integration)
-- ?? Multi-hop Relationship Traversal (infrastructure ready)
-- ?? Entity-based relationships (schema ready)
-
-### 4.2 Why Neo4j Instead of /app/data/index - **VALIDATED**
-
-**Implemented Advantages**:
-1. ? **Complex Relationships**: Document-Page relationships with CONTAINS/PRECEDES
-2. ? **Real-time Updates**: Dynamic graph updates without rebuilding indices
-3. ? **Multi-hop Queries**: Infrastructure ready for relationship traversal
-4. ? **Scalability**: Performant queries as data grows
-5. ? **ACID Compliance**: Transactional consistency for concurrent operations
-6. ? **Rich Query Language**: Cypher queries for complex retrieval patterns
-7. ?? **Vector Search**: Ready for embedding integration
-8. ? **Flexible Schema**: Easy evolution as requirements change
-
----
-
-## ? Phase 5: Aspire Integration - **COMPLETED**
-
-### 5.1 AppHost Configuration - **COMPLETED**
-
-**Neo4j and Python Service Integration**: ? **IMPLEMENTED**
-```csharp
-// ? IMPLEMENTED in src/AspireApp.AppHost/AppHost.cs
-var neo4jDb = builder.AddDockerfile("graph-db", "../../src/AspireApp.Neo4jService/")
-    .WithHttpEndpoint(port: 7474, targetPort: 7474, name: "http")
-    .WithEndpoint(port: 7687, targetPort: 7687, name: "bolt")
-    .WithBindMount("../../database/neo4j/data", "/data")
-    .WithEnvironment("NEO4J_AUTH", $"{neo4jUser.Resource.Value}/{neo4jPass.Resource.Value}");
-
-var pythonServices = builder
-    .AddDockerfile("python-service", "../../src/AspireApp.PythonServices/")
-    .WithHttpEndpoint(port: 8000, targetPort: 8000, name: "http")
-    .WithBindMount("../../data", "/app/data")
-    .WithBindMount("../../database", "/app/database")
-    .WithEnvironment("NEO4J_URI", neo4jDb.GetEndpoint("bolt"))
-    .WithEnvironment("NEO4J_USER", neo4jUser.Resource)
-    .WithEnvironment("NEO4J_PASSWORD", neo4jPass.Resource)
-    .WithHttpHealthCheck("/health")
-    .WaitFor(neo4jDb);
-```
-
-### 5.2 Connection Configuration - **COMPLETED**
-
-**Environment variables for Python service**: ? **IMPLEMENTED**
-- ? `NEO4J_URI`: Connection string to Neo4j
-- ? `NEO4J_USER`: Username (default: neo4j)
-- ? `NEO4J_PASSWORD`: Password
-- ? `SQLITE_DB_PATH`: Path to SQLite database (implicit: /app/database/data-resources.db)
-
-**Status**: ? Complete Aspire integration with proper service dependencies
-
----
-
-## ?? Phase 6: Testing and Documentation - **COMPLETED**
-
-### 6.1 Testing Infrastructure - **IMPLEMENTED**
-
-**Demo Script**: ? **CREATED** - `demo_processing.py`
-- Complete workflow demonstration
-- Health checks and service validation
-- Document processing and retrieval examples
-
-**Service Tests**: ? **CREATED** - `test_services.py`
-- Individual service component testing
-- Connection validation
-- Error handling verification
-
-**Documentation**: ? **CREATED** - `README.md`
-- Complete API documentation
-- Usage examples and workflow
-- Architecture overview
-
-### 6.2 API Documentation - **AUTOMATED**
-- ? Interactive API docs available at `/docs`
-- ? OpenAPI specification auto-generated
-- ? Complete endpoint documentation with examples
-
----
-
-## ?? Current Implementation Status
-
-### ? **COMPLETED FEATURES**
-
-1. **Document Processing Pipeline**
-   - ? Automatic document detection from uploads
-   - ? Docling-based content extraction
-   - ? Page-level content segmentation
-   - ? Structured metadata preservation
-   - ? Background processing with status tracking
-
-2. **Database Integration**
-   - ? SQLite schema with automatic creation
-   - ? Document lifecycle management
-   - ? Processing status tracking
-   - ? Page-level storage and retrieval
-
-3. **Graph Database**
-   - ? Neo4j integration with health checks
-   - ? Document and page node creation
-   - ? Relationship modeling (CONTAINS, PRECEDES)
-   - ? Constraint management
-   - ? Basic search capabilities
-
-4. **REST API**
-   - ? Complete document management endpoints
-   - ? Processing control and monitoring
-   - ? RAG search and retrieval functionality
-   - ? Health checks and error handling
-   - ? Interactive documentation
-
-5. **Aspire Integration**
-   - ? Service orchestration
-   - ? Environment configuration
-   - ? Volume mounting for data persistence
-   - ? Service dependencies and health checks
-
-### ?? **READY FOR ENHANCEMENT**
-
-1. **Vector Embeddings**
-   - Infrastructure ready for embedding integration
-   - Neo4j prepared for vector similarity search
-   - Service architecture supports embedding pipelines
-
-2. **Entity Extraction**
-   - Graph schema ready for entity nodes
-   - Relationship types defined for entity linking
-   - Processing pipeline extensible for NLP integration
-
-3. **Advanced Graph Queries**
-   - Multi-hop relationship traversal ready
-   - Semantic relationship modeling prepared
-   - GraphRAG implementation foundation established
-
----
-
-## ?? Usage Instructions
-
-### 1. **Start the Application**
-```bash
-# Run the Aspire application
-dotnet run --project src/AspireApp.AppHost
-```
-
-### 2. **Upload Documents**
-- Use the existing Blazor frontend to upload documents
-- Documents are stored in `/data/uploads/` and tracked in SQLite
-
-### 3. **Process Documents**
-```bash
-# Process all unprocessed documents
-curl -X POST "http://localhost:8000/processing/process-all"
-
-# Process specific document
-curl -X POST "http://localhost:8000/processing/process-document/1"
-
-# Check processing status
-curl "http://localhost:8000/processing/status/1"
-```
-
-### 4. **Search and Retrieve**
-```bash
-# Search document content
-curl "http://localhost:8000/rag/search-documents?query=machine%20learning&limit=5"
-
-# Get document context
-curl "http://localhost:8000/rag/document-context/1"
-
-# Get specific page
-curl "http://localhost:8000/rag/page-content/1/2"
-```
-
-### 5. **Monitor Health**
-```bash
-# Check service health
-curl "http://localhost:8000/health"
-
-# Check RAG services health
-curl "http://localhost:8000/rag/health"
-```
-
----
-
-## ?? Next Phase Enhancements
-
-### Phase 7: Advanced RAG Features (Future)
-
-- **Vector Embeddings**: Add semantic similarity search with embeddings
-- **Entity Linking**: Connect entities across documents  
-- **GraphRAG**: Implement Microsoft's GraphRAG approach
-- **Hybrid Search**: Combine vector similarity with graph traversal
-- **Citation Networks**: Model document references and citations
-
-### Phase 8: Performance Optimizations (Future)
-
-- **Caching Layer**: Redis for frequently accessed content
-- **Batch Processing**: Parallel document processing
-- **Incremental Updates**: Only process changed content
-- **Query Optimization**: Index optimization for common query patterns
-
----
-
-## ? Summary
-
-**The RAG implementation is FULLY FUNCTIONAL with:**
-- Complete document processing pipeline using docling
-- Full REST API for document management and RAG functionality
-- Neo4j graph database integration for advanced querying
-- Aspire orchestration with proper service dependencies
-- Comprehensive testing and documentation
-
-**Ready for production use with document upload, processing, and intelligent retrieval capabilities.**
+# After docling processing completes
+neo4j_service = Neo4jService()
+
+# Create document node
+doc_node_id = neo4j_service.create_document_node(file_dict)
+db_service.update_file_processing_results(
+    file_id=file_id,
+    docling_path=docling_path,
+    total_pages=total_pages,
+    neo4j_node_id=doc_node_id  # ?? Link to graph
+)
+
+# Create page nodes
+for page in pages:
+    page_node_id = neo4j_service.create_page_node(
+        page_content=page['content'],
+        page_number=page['page_number'],
+        metadata=page.get('metadata')
+    )
+    
+    # Update document_pages with Neo4j node ID
+    # (store in neo4j_page_node_id column)

@@ -31,7 +31,7 @@ def wait_for_service(url: str = "http://localhost:8000", timeout: int = 60) -> b
     print(f"\n? Service not available after {timeout} seconds")
     return False
 
-def test_database_health(url: str = "http://localhost:8000") -> bool:
+def test_database_health(url: str = "http://localhost:8000/doc") -> bool:
     """Test database health specifically"""
     print("\n?? Testing Database Health")
     print("-" * 30)

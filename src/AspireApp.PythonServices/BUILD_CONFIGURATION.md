@@ -26,7 +26,7 @@ cd src/AspireApp.PythonServices
 python verify_service.py
 
 # 3. Check service capabilities
-curl http://localhost:8000/processing/service-info
+curl http://localhost:8000/docs
 ```
 
 ## Build Issues Resolution
