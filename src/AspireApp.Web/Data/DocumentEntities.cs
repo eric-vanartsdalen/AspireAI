@@ -104,6 +104,31 @@ namespace AspireApp.Web.Data
 
         // ==================== Computed Properties ====================
         
+        [NotMapped]
+        public int FileId => Id;
+
+        /// <summary>
+        /// Gets a formatted file size for display
+        /// </summary>
+        [NotMapped]
+        public string FileSizeFormatted
+        {
+            get
+            {
+                string[] sizes = { "B", "KB", "MB", "GB", "TB" };
+                int order = 0;
+                double size = FileSize;
+
+                while (size >= 1024 && order < sizes.Length - 1)
+                {
+                    order++;
+                    size /= 1024;
+                }
+
+                return $"{size:0.##} {sizes[order]}";
+            }
+        }
+        
         /// <summary>
         /// Gets a short representation of the file hash for display purposes
         /// </summary>

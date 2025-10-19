@@ -3,10 +3,6 @@
 @attribute [StreamRendering]
 @using AspireApp.Web.Data
 @using Microsoft.AspNetCore.Components.Forms
-@inject IHttpClientFactory ClientFactory
-@inject ILogger<UploadData> Logger
-@inject IJSRuntime JSRuntime
-@inject FileStorageService FileStorageService
 @implements IDisposable
 
 <PageTitle>Upload Data</PageTitle>
@@ -619,10 +615,56 @@
     .toast.show {
         opacity: 1;
     }
+
+    /* New styles for URL upload feature */
+    .upload-mode-toggle {
+        display: flex;
+        justify-content: flex-start;
+        margin-bottom: 1rem;
+    }
+
+    .btn-toggle {
+        background-color: var(--purple-medium);
+        color: #f5f5f0;
+        border: 2px solid rgba(255, 255, 255, 0.3);
+        padding: 0.5rem 1.5rem;
+        font-size: 0.9rem;
+        border-radius: 0.375rem;
+        transition: all 0.3s ease;
+        cursor: pointer;
+    }
+
+    .btn-toggle:hover:not(:disabled) {
+        background-color: #2a1540;
+        border-color: rgba(255, 255, 255, 0.5);
+        transform: translateY(-1px);
+    }
+
+    .btn-toggle:disabled {
+        background-color: #333;
+        border-color: #555;
+        color: #999;
+        cursor: not-allowed;
+    }
+
+    .url-input-group {
+        margin-bottom: 1rem;
+    }
+
+    .url-input-group label {
+        display: block;
+        margin-bottom: 0.5rem;
+        color: var(--main-text-color);
+        font-weight: 500;
+    }
+
+    .url-input-group .form-control {
+        width: 100%;
+    }
 </style>
 
 <div class="upload-container">
-	<h1><i class="bi bi-cloud-upload-fill"></i>Document Upload & Storage</h1>
+	<h1><i class="bi bi-cloud-upload-fill"></i> Document Upload & Storage</h1>
     
     <!-- Toast Notification for Duplicates -->
     @if (_showDuplicateToast)
@@ -650,167 +692,72 @@
             </div>
         </div>
     }
-    
-    <!-- Debug info (remove in production) -->
-    @if (false) // Set to false to hide debug info
-    {
-        <div style="position: fixed; bottom: 10px; left: 10px; background: rgba(0,0,0,0.8); color: white; padding: 10px; border-radius: 5px; font-family: monospace; font-size: 12px; z-index: 9999;">
-            <div>Toast Visible: @_showDuplicateToast</div>
-            <div>Duplicate Detected: @_isDuplicateDetected</div>
-            <div>Message Class: @MessageClass</div>
-            <div>Upload Message: @UploadMessage</div>
-        </div>
-    }
-    
-    <p>Select a file to upload for processing:</p>
 
-    <div class="simple-upload">
-        <input type="file" id="fileInput" accept=".pdf,.docx,.txt,.md" class="form-control" />
-        <button @onclick="UploadFile" class="btn btn-primary mt-3" disabled="@_isUploading">
-            @if (_isUploading)
-            {
-                <span class="spinner-border me-2" role="status"></span>
-                <text>Uploading...</text>
-            }
-            else
-            {
-                <i class="bi bi-upload"></i>
-                <text> Upload File</text>
-            }
-        </button>
-
-        <p class="upload-hint">
-            <i class="bi bi-info-circle"></i> Maximum file size: @FormatFileSize(MaxFileSize)
-            <br>Supported formats: PDF, DOCX, TXT, MD
-            <br><small>Files are automatically checked for duplicates using hash comparison</small>
-        </p>
-        
-        @if (_uploadProgress > 0 && _uploadProgress < 100)
-        {
-            <div class="upload-progress">
-                <div class="progress-bar">
-                    <div class="progress-fill" style="width: @(_uploadProgress)%"></div>
-                </div>
-                <small>Uploading: @_uploadProgress%</small>
-            </div>
-        }
+    <!-- Phase 1: File Upload -->
+    <div class="phase-info">
+        <h4><i class="bi bi-file-earmark-arrow-up"></i> Step 1: Upload Your Document</h4>
+        <p>Max size: 10MB. Accepted formats: .pdf, .docx, .xlsx</p>
     </div>
 
-    @if (!string.IsNullOrEmpty(UploadMessage))
-    {
-        <div class="alert alert-@MessageClass" role="alert">
-            @if (MessageClass == "warning" && _isDuplicateDetected)
-            {
-                <div class="duplicate-warning">
-                    <h5><i class="bi bi-exclamation-triangle-fill"></i> Duplicate File Detected!</h5>
-                    <p><strong>@UploadMessage</strong></p>
-                    @if (_duplicateFileInfo != null)
-                    {
-                        <div class="duplicate-details">
-                            <h6>Existing File Details:</h6>
-                            <ul>
-                                <li><strong>Original Name:</strong> @_duplicateFileInfo.FileName</li>
-                                <li><strong>Size:</strong> @FormatFileSize(_duplicateFileInfo.Size)</li>
-                                <li><strong>Uploaded:</strong> @_duplicateFileInfo.UploadedAt.ToLocalTime().ToString("yyyy-MM-dd HH:mm:ss")</li>
-                                <li><strong>File Hash:</strong> <code>@_duplicateFileInfo.FileHash</code></li>
-                            </ul>
-                            <small class="text-muted">
-                                <i class="bi bi-info-circle"></i> 
-                                Files are compared using SHA256 hash to detect identical content, even with different names.
-                            </small>
-                        </div>
-                    }
-                </div>
-            }
-            else
-            {
-                @UploadMessage
-            }
-            @if (MessageClass == "error" && UploadErrors != null && UploadErrors.Count > 0)
-            {
-                <ul class="error-list">
-                    @foreach (var err in UploadErrors)
-                    {
-                        <li>@err</li>
-                    }
-                </ul>
-            }
-        </div>
-    }
+    <InputFile OnChange="HandleFileSelected" accept=".pdf,.docx,.xlsx" class="form-control" id="fileInput" />
+    <div class="upload-hint">
+        <i class="bi bi-info-circle"></i> For best results, ensure your document is well-structured and contains identifiable data fields.
+    </div>
 
-    @if (_selectedFileName != null)
-    {
-        <div class="selected-file">
-            <strong><i class="bi bi-file-earmark"></i> Selected file:</strong> @_selectedFileName
+    <!-- URL Upload Section -->
+    <div class="url-upload-section">
+        <div class="url-input-group">
+            <label for="fileUrl">File URL</label>
+            <input type="text" id="fileUrl" @bind="_fileUrl" class="form-control" placeholder="Enter direct URL to your file" />
         </div>
-    }
+        <button class="btn btn-primary" @onclick="HandleUrlUpload">
+            <i class="bi bi-link-45deg"></i> Upload from URL
+        </button>
+        <div class="upload-hint">
+            <i class="bi bi-info-circle"></i> Ensure the URL is publicly accessible and points directly to the file.
+        </div>
+    </div>
 
-    <div class="uploaded-files mt-5">
-        <h2><i class="bi bi-folder-fill"></i> Uploaded Files</h2>
-        @if (_isLoading)
-        {
-            <div class="loading-indicator">
-                <div class="spinner-border" role="status"></div>
-                <span>Loading uploaded files...</span>
-            </div>
-        }
-        else if (_uploadedFiles == null || !_uploadedFiles.Any())
-        {
-            <div class="no-files-message">
-                <i class="bi bi-inbox"></i><br />
-                No files have been uploaded yet.
-            </div>
-        }
-        else
+    <button class="btn btn-primary btn-sm" @onclick="UploadFiles" disabled="@(!IsFileSelected)">
+        <i class="bi bi-upload"></i> Start Upload
+    </button>
+
+    <div class="uploaded-files">
+        @if (Files != null && Files.Count > 0)
         {
             <div class="table-wrapper">
                 <table class="file-table">
                     <thead>
                         <tr>
-                            <th><i class="bi bi-file-earmark"></i> File Name</th>
-                            <th><i class="bi bi-hdd"></i> Size</th>
-                            <th><i class="bi bi-flag"></i> Status</th>
-                            <th><i class="bi bi-shield-check"></i> Hash</th>
-                            <th><i class="bi bi-calendar"></i> Uploaded At</th>
-                            <th><i class="bi bi-gear"></i> Actions</th>
+                            <th>File Name</th>
+                            <th>Size</th>
+                            <th>Status</th>
+                            <th>Hash</th>
+                            <th>Uploaded At</th>
+                            <th>Actions</th>
                         </tr>
                     </thead>
                     <tbody>
-                        @foreach (var file in _uploadedFiles)
+                        @foreach (var file in Files)
                         {
                             <tr>
-                                <td class="file-name-cell" title="@file.FileName">
-                                    <i class="bi @GetFileIcon(file.FileName)"></i>
-                                    <span>@(file.FileName.Length > 40 ? file.FileName.Substring(0, 37) + "..." : file.FileName)</span>
-                                    @if (file.FileName.Length > 40)
-                                    {
-                                        <div class="file-name-full">@file.FileName</div>
-                                    }
+                                <td class="file-name-cell">
+                                    @file.FileName
+                                    <span class="file-name-full">@file.FileName</span>
                                 </td>
-                                <td class="file-size-cell">@FormatFileSize(file.FileSize)</td>
+                                <td class="file-size-cell">@file.FileSizeFormatted</td>
                                 <td class="status-cell">
-                                    <span class="status-badge @GetStatusClass(file.Status)">
-                                        @file.Status
-                                    </span>
+                                    <span class="status-badge @(GetStatusClass(file.Status.ToString()))">@file.Status</span>
                                 </td>
-                                <td class="file-hash-cell" title="@file.FileHash">
-                                    @if (!string.IsNullOrEmpty(file.FileHash))
-                                    {
-                                        <span>@file.FileHash.Substring(0, Math.Min(8, file.FileHash.Length))...</span>
-                                        <div class="file-hash-full">@file.FileHash</div>
-                                    }
-                                    else
-                                    {
-                                        <span class="text-muted">-</span>
-                                    }
+                                <td class="file-hash-cell">
+                                    @file.FileHash
+                                    <span class="file-hash-full">@file.FileHash</span>
                                 </td>
-                                <td class="upload-date-cell">@file.UploadedAt.ToLocalTime().ToString("g")</td>
-                                <td>
-                                    <div class="file-actions">
-                                        <button @onclick="() => DeleteFile(file.Id)" class="btn btn-danger btn-sm" disabled="@_isUploading">
-                                            <i class="bi bi-trash"></i> Delete
-                                        </button>
-                                    </div>
+                                <td class="upload-date-cell">@file.UploadedAt.ToLocalTime().ToString("MMM dd, yyyy HH:mm")</td>
+                                <td class="file-actions">
+                                    <button class="btn btn-danger btn-sm" @onclick="() => DeleteFile(file.FileId)">
+                                        <i class="bi bi-trash"></i> Delete
+                                    </button>
                                 </td>
                             </tr>
                         }
@@ -818,54 +765,11 @@
                 </table>
             </div>
         }
-    </div>
-
-    <div class="mt-5">
-        <h6><i class="bi bi-roadmap"></i> Next Steps (Future Phases):</h6>
-        <ul class="text-muted">
-            <li><strong>Phase 4:</strong> Document processing pipeline with chunking and embedding</li>
-            <li><strong>Phase 5:</strong> Vector storage and retrieval system</li>
-            <li><strong>Phase 6:</strong> RAG integration with chat interface</li>
-            <li><strong>Phase 7:</strong> Advanced retrieval strategies (GraphRAG)</li>
-        </ul>
+        else
+        {
+            <div class="no-files-message">
+                <i class="bi bi-folder-fill"></i> No files uploaded yet. Use the form above to upload your documents.
+            </div>
+        }
     </div>
 </div>
-
-@code {
-    // GetFileIcon and GetStatusClass methods used in the razor markup
-    private static string GetFileIcon(string fileName)
-    {
-        var extension = Path.GetExtension(fileName).ToLowerInvariant();
-        return extension switch
-        {
-            ".pdf" => "bi-file-earmark-pdf",
-            ".docx" => "bi-file-earmark-word",
-            ".doc" => "bi-file-earmark-word",
-            ".txt" => "bi-file-earmark-text",
-            ".md" => "bi-file-earmark-code",
-            ".json" => "bi-file-earmark-code",
-            ".xml" => "bi-file-earmark-code",
-            ".csv" => "bi-file-earmark-spreadsheet",
-            ".xlsx" => "bi-file-earmark-spreadsheet",
-            ".xls" => "bi-file-earmark-spreadsheet",
-            ".jpg" or ".jpeg" => "bi-file-earmark-image",
-            ".png" => "bi-file-earmark-image",
-            ".gif" => "bi-file-earmark-image",
-            ".zip" => "bi-file-earmark-zip",
-            ".rar" => "bi-file-earmark-zip",
-            _ => "bi-file-earmark"
-        };
-    }
-
-    private static string GetStatusClass(string status)
-    {
-        return status.ToLowerInvariant() switch
-        {
-            "uploaded" => "status-uploaded",
-            "pending" => "status-pending",
-            "processing" => "status-processing",
-            "error" => "status-error",
-            _ => "status-pending"
-        };
-    }
-}

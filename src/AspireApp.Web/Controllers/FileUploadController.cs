@@ -142,6 +142,82 @@ public class FileUploadController : ControllerBase
         }
     }
 
+    [HttpPost("url")]
+    public async Task<IActionResult> UploadUrl([FromBody] UrlUploadRequest request)
+    {
+        try
+        {
+            if (request == null || string.IsNullOrWhiteSpace(request.Url))
+            {
+                return BadRequest(new { success = false, error = "No URL provided." });
+            }
+
+            // Basic URL validation
+            if (!Uri.TryCreate(request.Url, UriKind.Absolute, out var uri) || 
+                (uri.Scheme != Uri.UriSchemeHttp && uri.Scheme != Uri.UriSchemeHttps))
+            {
+                return BadRequest(new { success = false, error = "Invalid URL format. URL must start with http:// or https://." });
+            }
+
+            // Ensure initialization
+            var initialized = await _fileStorageService.EnsureInitializedAsync();
+            if (!initialized)
+            {
+                return StatusCode(500, new { 
+                    success = false, 
+                    error = "File storage service initialization failed." 
+                });
+            }
+
+            // Check for duplicate URL
+            var existingUrl = await _fileStorageService.FindDuplicateByUrlAsync(request.Url);
+            if (existingUrl != null)
+            {
+                _logger.LogInformation("Duplicate URL detected: {Url} (ID: {Id})", request.Url, existingUrl.Id);
+
+                return Ok(new { 
+                    success = true, 
+                    isDuplicate = true,
+                    url = request.Url,
+                    existingFileId = existingUrl.Id,
+                    existingFileName = existingUrl.FileName,
+                    existingUploadedAt = existingUrl.UploadedAt,
+                    message = $"URL already exists (added on {existingUrl.UploadedAt:yyyy-MM-dd HH:mm:ss}). Duplicate not saved."
+                });
+            }
+
+            // Create a friendly name from URL
+            var fileName = GenerateFileNameFromUrl(uri);
+
+            // Add URL metadata to database
+            var fileMetadata = await _fileStorageService.AddUrlAsync(
+                fileName,
+                request.Url,
+                "uploaded");
+
+            _logger.LogInformation("URL added successfully: {Url}, ID: {Id}", request.Url, fileMetadata.Id);
+
+            return Ok(new { 
+                success = true, 
+                isDuplicate = false,
+                url = request.Url,
+                fileName = fileName,
+                id = fileMetadata.Id,
+                uploadedAt = fileMetadata.UploadedAt,
+                status = fileMetadata.Status,
+                message = "URL added successfully."
+            });
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error uploading URL: {Url}", request?.Url);
+            return StatusCode(500, new { 
+                success = false, 
+                error = $"An error occurred while adding the URL: {ex.Message}" 
+            });
+        }
+    }
+
     [HttpGet]
     public async Task<IActionResult> GetUploadedFiles()
     {
@@ -196,6 +272,25 @@ public class FileUploadController : ControllerBase
         return $"{nameWithoutExtension}_{timestamp}_{uniqueId}{extension}";
     }
 
+    private string GenerateFileNameFromUrl(Uri uri)
+    {
+        // Create a friendly name from the URL domain and path
+        var host = uri.Host.Replace("www.", "");
+        var pathPart = uri.AbsolutePath.Trim('/').Replace("/", "_");
+        
+        if (string.IsNullOrEmpty(pathPart))
+        {
+            pathPart = "index";
+        }
+        else if (pathPart.Length > 50)
+        {
+            pathPart = pathPart.Substring(0, 50);
+        }
+
+        var timestamp = DateTime.UtcNow.ToString("yyyyMMdd_HHmmss");
+        return $"{host}_{pathPart}_{timestamp}";
+    }
+
     private string GetDataDirectory()
     {
         var fileUploadDataDir = _configuration.GetValue<string>("FileUpload:DataDirectory");
@@ -207,4 +302,9 @@ public class FileUploadController : ControllerBase
         }
         return Path.Combine(Directory.GetCurrentDirectory(), "data");
     }
+}
+
+public class UrlUploadRequest
+{
+    public string Url { get; set; } = string.Empty;
 }

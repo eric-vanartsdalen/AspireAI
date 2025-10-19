@@ -269,4 +269,61 @@ public class FileStorageService
             throw;
         }
     }
+
+    /// <summary>
+    /// Checks if a URL already exists in the datasources
+    /// </summary>
+    public async Task<FileMetadata?> FindDuplicateByUrlAsync(string sourceUrl)
+    {
+        try
+        {
+            await EnsureInitializedAsync();
+            return await _context.Datasources
+                .FirstOrDefaultAsync(f => f.SourceUrl == sourceUrl && f.SourceType == "url");
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error checking for duplicate URL: {Url}", sourceUrl);
+            return null;
+        }
+    }
+
+    /// <summary>
+    /// Adds a URL datasource entry
+    /// </summary>
+    public async Task<FileMetadata> AddUrlAsync(string sourceName, string sourceUrl, string status = "uploaded")
+    {
+        try
+        {
+            // Ensure database is initialized before adding
+            await EnsureInitializedAsync();
+
+            var fileMetadata = new FileMetadata
+            {
+                FileName = sourceName,
+                OriginalFileName = sourceName,
+                FilePath = string.Empty, // No physical file path for URLs
+                FileSize = 0, // No file size for URLs initially
+                UploadedAt = DateTime.UtcNow,
+                Status = status,
+                FileHash = string.Empty, // No hash for URLs initially
+                SourceType = "url",
+                SourceUrl = sourceUrl,
+                MimeType = "text/html" // Default to HTML for web pages
+            };
+
+            _context.Datasources.Add(fileMetadata);
+            await _context.SaveChangesAsync();
+            
+            _logger.LogInformation("Added URL metadata to database: {SourceName}, URL: {Url}, Status: {Status}", 
+                sourceName, sourceUrl, status);
+
+            return fileMetadata;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error adding URL metadata to database");
+            throw;
+        }
+    }
 }

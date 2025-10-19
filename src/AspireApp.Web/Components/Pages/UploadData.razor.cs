@@ -1,5 +1,6 @@
 ﻿using AspireApp.Web.Data;
 using Microsoft.AspNetCore.Components;
+using Microsoft.AspNetCore.Components.Forms;
 using Microsoft.Extensions.Logging;
 using Microsoft.JSInterop;
 using System.Text.Json;
@@ -8,25 +9,43 @@ namespace AspireApp.Web.Components.Pages;
 
 public partial class UploadData : ComponentBase, IAsyncDisposable, IDisposable
 {
-    private string? UploadMessage;
-    private string MessageClass = "";
-    private string? _selectedFileName;
+    private string? _uploadMessage;
+    private string _messageClass = "";
+    private IBrowserFile? _selectedBrowserFile;
     private DotNetObjectReference<UploadData>? _objectReference;
-    private List<FileMetadata>? _uploadedFiles;
+    protected List<FileMetadata>? Files;
     private bool _isLoading = true;
     private bool _isUploading = false;
     private int _uploadProgress = 0;
-    private List<string> UploadErrors = new();
+    private List<string> _uploadErrors = new();
     
     // Duplicate detection tracking
-    private bool _isDuplicateDetected = false;
-    private DuplicateFileInfo? _duplicateFileInfo = null;
-    private bool _showDuplicateToast = false;
+    protected bool _isDuplicate;
+    protected DuplicateFileInfo? _duplicateFileInfo;
+    protected bool _showDuplicateToast;
+
+    // URL upload properties
+    private bool _isUrlMode;
+    private string _fileUrl = string.Empty;
 
     [Inject]
     public IConfiguration Configuration { get; set; } = default!;
 
+    [Inject]
+    public IHttpClientFactory ClientFactory { get; set; } = default!;
+
+    [Inject]
+    public ILogger<UploadData> Logger { get; set; } = default!;
+
+    [Inject]
+    public IJSRuntime JSRuntime { get; set; } = default!;
+
+    [Inject]
+    public FileStorageService FileStorageService { get; set; } = default!;
+
     private long MaxFileSize => Configuration.GetValue<long?>("FileUpload:MaxFileSize") ?? 10485760; // 10MB default
+
+    protected bool IsFileSelected => _selectedBrowserFile != null;
 
     protected override async Task OnInitializedAsync()
     {
@@ -43,28 +62,28 @@ public partial class UploadData : ComponentBase, IAsyncDisposable, IDisposable
             var initialized = await FileStorageService.EnsureInitializedAsync();
             if (!initialized)
             {
-                UploadMessage = "Database initialization failed. Please check the application logs.";
-                MessageClass = "error";
-                _uploadedFiles = new List<FileMetadata>();
+                _uploadMessage = "Database initialization failed. Please check the application logs.";
+                _messageClass = "error";
+                Files = new List<FileMetadata>();
                 return;
             }
 
-            _uploadedFiles = await FileStorageService.GetAllFilesAsync();
-            Logger.LogInformation("Loaded {Count} uploaded files", _uploadedFiles.Count);
+            Files = await FileStorageService.GetAllFilesAsync();
+            Logger.LogInformation("Loaded {Count} uploaded files", Files.Count);
             
             // Clear any previous error messages if loading succeeds
-            if (_uploadedFiles != null)
+            if (Files != null)
             {
-                UploadMessage = string.Empty;
-                MessageClass = "";
+                _uploadMessage = string.Empty;
+                _messageClass = "";
             }
         }
         catch (Exception ex)
         {
             Logger.LogError(ex, "Error loading uploaded files");
-            UploadMessage = $"Error loading files: {ex.Message}. The database may need to be initialized.";
-            MessageClass = "error";
-            _uploadedFiles = new List<FileMetadata>();
+            _uploadMessage = $"Error loading files: {ex.Message}. The database may need to be initialized.";
+            _messageClass = "error";
+            Files = new List<FileMetadata>();
         }
         finally
         {
@@ -77,81 +96,40 @@ public partial class UploadData : ComponentBase, IAsyncDisposable, IDisposable
         if (firstRender)
         {
             Logger.LogInformation("UploadData component rendered for the first time");
-            _objectReference = DotNetObjectReference.Create(this);
-            
-            // Wait for JavaScript to load and try multiple times
-            await InitializeJavaScriptWithRetry();
         }
     }
 
-    private async Task InitializeJavaScriptWithRetry()
+    protected async Task HandleFileSelected(InputFileChangeEventArgs e)
     {
-        const int maxRetries = 10;
-        const int delayMs = 500;
-        
-        for (int attempt = 1; attempt <= maxRetries; attempt++)
-        {
-            try
-            {
-                // Check if the JavaScript function exists
-                var functionExists = await JSRuntime.InvokeAsync<bool>("eval", 
-                    "typeof window.initializeFileUpload === 'function'");
-                
-                if (functionExists)
-                {
-                    await JSRuntime.InvokeVoidAsync("initializeFileUpload", "fileInput", _objectReference);
-                    Logger.LogInformation("File upload JavaScript initialized successfully on attempt {Attempt}", attempt);
-                    return;
-                }
-                else
-                {
-                    Logger.LogInformation("JavaScript function not yet available, attempt {Attempt}/{MaxRetries}", attempt, maxRetries);
-                }
-            }
-            catch (Exception ex)
-            {
-                Logger.LogWarning(ex, "JavaScript initialization attempt {Attempt}/{MaxRetries} failed", attempt, maxRetries);
-            }
-            
-            if (attempt < maxRetries)
-            {
-                await Task.Delay(delayMs);
-            }
-        }
-        
-        Logger.LogError("Failed to initialize JavaScript after {MaxRetries} attempts", maxRetries);
-        UploadMessage = "JavaScript initialization failed. Please refresh the page.";
-        MessageClass = "warning";
+        _selectedBrowserFile = e.GetMultipleFiles(1).FirstOrDefault();
+        _uploadMessage = string.Empty;
+        _messageClass = "";
+        _uploadErrors.Clear();
+        _isDuplicate = false;
+        _duplicateFileInfo = null;
+        _showDuplicateToast = false;
         StateHasChanged();
+        await Task.CompletedTask;
     }
 
-    private async Task UploadFile()
+    protected async Task UploadFiles()
     {
-        if (_isUploading) return;
+        if (_isUploading || _selectedBrowserFile == null) return;
 
         try
         {
             _isUploading = true;
             _uploadProgress = 0;
-            UploadMessage = "Starting upload...";
-            MessageClass = "info";
-            UploadErrors.Clear();
+            _uploadMessage = "Starting upload...";
+            _messageClass = "info";
+            _uploadErrors.Clear();
             
             // Clear previous duplicate detection state
-            _isDuplicateDetected = false;
+            _isDuplicate = false;
             _duplicateFileInfo = null;
             _showDuplicateToast = false;
             
             StateHasChanged();
-
-            // Check if JavaScript functions are available
-            var uploadFunctionExists = await JSRuntime.InvokeAsync<bool>("eval", 
-                "typeof window.uploadFile === 'function'");
-            
-            if (!uploadFunctionExists)
-            {
-                throw new InvalidOperationException("JavaScript upload function not available");
-            }
 
             // Simulate progress for user feedback
             for (int i = 10; i <= 30; i += 10)
@@ -161,10 +139,18 @@ public partial class UploadData : ComponentBase, IAsyncDisposable, IDisposable
                 await Task.Delay(100);
             }
 
-            var result = await JSRuntime.InvokeAsync<FileUploadResult>("uploadFile", "fileInput", "/api/FileUpload");
+            using var content = new MultipartFormDataContent();
+            var fileContent = new StreamContent(_selectedBrowserFile.OpenReadStream(MaxFileSize));
+            fileContent.Headers.ContentType = new System.Net.Http.Headers.MediaTypeHeaderValue(_selectedBrowserFile.ContentType);
+            content.Add(content: fileContent, name: "\"file\"", fileName: _selectedBrowserFile.Name);
+
+            var client = ClientFactory.CreateClient();
+            var response = await client.PostAsync("/api/FileUpload", content);
 
             _uploadProgress = 90;
             StateHasChanged();
+
+            var result = await response.Content.ReadFromJsonAsync<FileUploadResult>();
 
             Logger.LogInformation("Upload result received: Success={Success}, IsDuplicate={IsDuplicate}, FileName={FileName}", 
                 result.Success, result.IsDuplicate, result.FileName);
@@ -177,7 +163,7 @@ public partial class UploadData : ComponentBase, IAsyncDisposable, IDisposable
                 if (result.IsDuplicate)
                 {
                     Logger.LogInformation("Duplicate detected - showing toast notification");
-                    _isDuplicateDetected = true;
+                    _isDuplicate = true;
                     _showDuplicateToast = true;
                     _duplicateFileInfo = new DuplicateFileInfo
                     {
@@ -187,14 +173,14 @@ public partial class UploadData : ComponentBase, IAsyncDisposable, IDisposable
                         FileHash = result.FileHash ?? "Unknown"
                     };
                     
-                    UploadMessage = $"This file is identical to '{result.ExistingFileName}' and was not uploaded to prevent duplicates.";
-                    MessageClass = "warning";
+                    _uploadMessage = $"This file is identical to '{result.ExistingFileName}' and was not uploaded to prevent duplicates.";
+                    _messageClass = "warning";
                     
                     Logger.LogInformation("Duplicate file detected: {FileName}, Existing: {ExistingFile}, Hash: {Hash}", 
                         result.FileName, result.ExistingFileName, result.FileHash);
                         
                     Logger.LogInformation("Toast state: _showDuplicateToast={ShowToast}, _isDuplicateDetected={IsDuplicate}", 
-                        _showDuplicateToast, _isDuplicateDetected);
+                        _showDuplicateToast, _isDuplicate);
                         
                     // Auto-hide toast after 8 seconds
                     _ = Task.Delay(8000).ContinueWith(_ => 
@@ -209,15 +195,13 @@ public partial class UploadData : ComponentBase, IAsyncDisposable, IDisposable
                 else
                 {
                     Logger.LogInformation("File uploaded successfully - not a duplicate");
-                    UploadMessage = result.Message ?? $"File '{result.FileName}' uploaded successfully.";
-                    MessageClass = "success";
+                    _uploadMessage = result.Message ?? $"File '{result.FileName}' uploaded successfully.";
+                    _messageClass = "success";
                     Logger.LogInformation("File uploaded successfully: {FileName}, Size: {Size}, Hash: {Hash}", 
                         result.FileName, result.Size, result.FileHash);
                 }
 
-                // Clear the file input
-                await JSRuntime.InvokeVoidAsync("eval", "document.getElementById('fileInput').value = ''");
-                _selectedFileName = null;
+                _selectedBrowserFile = null;
 
                 // Reload the file list only if it wasn't a duplicate
                 if (!result.IsDuplicate)
@@ -228,9 +212,9 @@ public partial class UploadData : ComponentBase, IAsyncDisposable, IDisposable
             else
             {
                 _uploadProgress = 0;
-                UploadMessage = "Upload Failed.";
-                MessageClass = "error";
-                UploadErrors.Clear();
+                _uploadMessage = "Upload Failed.";
+                _messageClass = "error";
+                _uploadErrors.Clear();
                 Logger.LogError("Upload failed: {Error}", result.Error);
 
                 if (!string.IsNullOrWhiteSpace(result.Error))
@@ -241,7 +225,7 @@ public partial class UploadData : ComponentBase, IAsyncDisposable, IDisposable
                         using var doc = JsonDocument.Parse(result.Error);
                         if (doc.RootElement.TryGetProperty("error", out var errorProp))
                         {
-                            UploadErrors.Add(errorProp.GetString() ?? "Unknown error");
+                            _uploadErrors.Add(errorProp.GetString() ?? "Unknown error");
                         }
                         else if (doc.RootElement.TryGetProperty("errors", out var errorsProp))
                         {
@@ -249,46 +233,30 @@ public partial class UploadData : ComponentBase, IAsyncDisposable, IDisposable
                             {
                                 foreach (var msg in error.Value.EnumerateArray())
                                 {
-                                    UploadErrors.Add(msg.GetString() ?? "Unknown error");
+                                    _uploadErrors.Add(msg.GetString() ?? "Unknown error");
                                 }
                             }
                         }
                         else
                         {
-                            UploadErrors.Add(result.Error);
+                            _uploadErrors.Add(result.Error);
                         }
                     }
                     catch (JsonException)
                     {
                         // Not JSON, just show the error string
-                        UploadErrors.Add(result.Error);
+                        _uploadErrors.Add(result.Error);
                     }
                 }
             }
         }
-        catch (JSException ex) when (ex.Message.Contains("uploadFile") || ex.Message.Contains("not a function"))
-        {
-            Logger.LogError(ex, "JavaScript file upload function not available");
-            UploadMessage = "File upload functionality not available. Please refresh the page and try again.";
-            MessageClass = "error";
-            UploadErrors.Clear();
-            UploadErrors.Add("JavaScript file upload function not found. Try refreshing the page.");
-        }
-        catch (InvalidOperationException ex)
-        {
-            Logger.LogError(ex, "Upload function validation failed");
-            UploadMessage = "File upload functionality not ready. Please refresh the page and try again.";
-            MessageClass = "error";
-            UploadErrors.Clear();
-            UploadErrors.Add(ex.Message);
-        }
         catch (Exception ex)
         {
             Logger.LogError(ex, "Error in UploadFile");
-            UploadMessage = $"Error: {ex.Message}";
-            MessageClass = "error";
-            UploadErrors.Clear();
-            UploadErrors.Add(ex.Message);
+            _uploadMessage = $"Error: {ex.Message}";
+            _messageClass = "error";
+            _uploadErrors.Clear();
+            _uploadErrors.Add(ex.Message);
         }
         finally
         {
@@ -309,18 +277,18 @@ public partial class UploadData : ComponentBase, IAsyncDisposable, IDisposable
         }
     }
 
-    private async Task DeleteFile(int id)
+    protected async Task DeleteFile(int id)
     {
         try
         {
             var success = await FileStorageService.DeleteFileAsync(id);
             if (success)
             {
-                UploadMessage = "File deleted successfully.";
-                MessageClass = "success";
+                _uploadMessage = "File deleted successfully.";
+                _messageClass = "success";
                 
                 // Clear duplicate detection state when showing other messages
-                _isDuplicateDetected = false;
+                _isDuplicate = false;
                 _duplicateFileInfo = null;
                 _showDuplicateToast = false;
                 
@@ -328,32 +296,174 @@ public partial class UploadData : ComponentBase, IAsyncDisposable, IDisposable
             }
             else
             {
-                UploadMessage = "Failed to delete file. File may not exist.";
-                MessageClass = "error";
+                _uploadMessage = "Failed to delete file. File may not exist.";
+                _messageClass = "error";
             }
         }
         catch (Exception ex)
         {
             Logger.LogError(ex, "Error deleting file");
-            UploadMessage = $"Error deleting file: {ex.Message}";
-            MessageClass = "error";
+            _uploadMessage = $"Error deleting file: {ex.Message}";
+            _messageClass = "error";
         }
     }
 
-    [JSInvokable]
-    public void HandleFileSelected(FileInfo fileInfo)
+    protected async Task HandleUrlUpload()
     {
-        Logger.LogInformation("File selected: {FileName}, Size: {Size}", fileInfo.Name, fileInfo.Size);
-        _selectedFileName = fileInfo.Name;
-        
-        // Clear any previous messages when a new file is selected
-        UploadMessage = string.Empty;
-        MessageClass = "";
-        UploadErrors.Clear();
-        _isDuplicateDetected = false;
+        if (_isUploading) return;
+
+        try
+        {
+            _isUploading = true;
+            _uploadProgress = 0;
+            _uploadMessage = "Adding URL...";
+            _messageClass = "info";
+            _uploadErrors.Clear();
+            
+            // Clear previous duplicate detection state
+            _isDuplicate = false;
+            _duplicateFileInfo = null;
+            _showDuplicateToast = false;
+            
+            StateHasChanged();
+
+            // Validate URL
+            if (string.IsNullOrWhiteSpace(_fileUrl))
+            {
+                _uploadMessage = "Please enter a URL.";
+                _messageClass = "error";
+                _isUploading = false;
+                StateHasChanged();
+                return;
+            }
+
+            if (!Uri.TryCreate(_fileUrl, UriKind.Absolute, out var uri) || 
+                (uri.Scheme != Uri.UriSchemeHttp && uri.Scheme != Uri.UriSchemeHttps))
+            {
+                _uploadMessage = "Invalid URL format. URL must start with http:// or https://.";
+                _messageClass = "error";
+                _isUploading = false;
+                StateHasChanged();
+                return;
+            }
+
+            _uploadProgress = 30;
+            StateHasChanged();
+
+            // Call API to add URL
+            var client = ClientFactory.CreateClient();
+            var response = await client.PostAsJsonAsync("/api/FileUpload/url", new { Url = _fileUrl });
+
+            _uploadProgress = 90;
+            StateHasChanged();
+
+            if (response.IsSuccessStatusCode)
+            {
+                var result = await response.Content.ReadFromJsonAsync<UrlUploadResult>();
+                
+                _uploadProgress = 100;
+
+                if (result?.Success == true)
+                {
+                    // Handle duplicate detection
+                    if (result.IsDuplicate)
+                    {
+                        Logger.LogInformation("Duplicate URL detected - showing toast notification");
+                        _isDuplicate = true;
+                        _showDuplicateToast = true;
+                        _duplicateFileInfo = new DuplicateFileInfo
+                        {
+                            FileName = result.ExistingFileName ?? "Unknown",
+                            Size = 0,
+                            UploadedAt = result.ExistingUploadedAt ?? DateTime.Now,
+                            FileHash = string.Empty
+                        };
+                        
+                        _uploadMessage = $"This URL already exists and was not added to prevent duplicates.";
+                        _messageClass = "warning";
+                        
+                        // Auto-hide toast after 8 seconds
+                        _ = Task.Delay(8000).ContinueWith(_ => 
+                        {
+                            InvokeAsync(() =>
+                            {
+                                _showDuplicateToast = false;
+                                StateHasChanged();
+                            });
+                        });
+                    }
+                    else
+                    {
+                        _uploadMessage = result.Message ?? $"URL added successfully.";
+                        _messageClass = "success";
+                        Logger.LogInformation("URL added successfully: {Url}", _fileUrl);
+                    }
+
+                    // Clear the URL input
+                    _fileUrl = string.Empty;
+
+                    // Reload the file list only if it wasn't a duplicate
+                    if (!result.IsDuplicate)
+                    {
+                        await LoadUploadedFiles();
+                    }
+                }
+                else
+                {
+                    _uploadMessage = "Failed to add URL.";
+                    _messageClass = "error";
+                    if (!string.IsNullOrWhiteSpace(result?.Error))
+                    {
+                        _uploadErrors.Add(result.Error);
+                    }
+                }
+            }
+            else
+            {
+                var errorContent = await response.Content.ReadAsStringAsync();
+                _uploadMessage = "Failed to add URL.";
+                _messageClass = "error";
+                _uploadErrors.Add(errorContent);
+                Logger.LogError("URL upload failed with status {StatusCode}: {Error}", response.StatusCode, errorContent);
+            }
+        }
+        catch (Exception ex)
+        {
+            Logger.LogError(ex, "Error uploading URL: {Url}", _fileUrl);
+            _uploadMessage = $"Error: {ex.Message}";
+            _messageClass = "error";
+            _uploadErrors.Clear();
+            _uploadErrors.Add(ex.Message);
+        }
+        finally
+        {
+            _isUploading = false;
+            if (_uploadProgress != 100)
+            {
+                _uploadProgress = 0;
+            }
+            StateHasChanged();
+
+            // Clear progress after success message is shown
+            if (_uploadProgress == 100)
+            {
+                await Task.Delay(2000);
+                _uploadProgress = 0;
+                StateHasChanged();
+            }
+        }
+    }
+
+    private void ToggleUploadMode()
+    {
+        _isUrlMode = !_isUrlMode;
+        _uploadMessage = string.Empty;
+        _messageClass = "";
+        _uploadErrors.Clear();
+        _isDuplicate = false;
         _duplicateFileInfo = null;
         _showDuplicateToast = false;
-
+        _fileUrl = string.Empty;
         StateHasChanged();
     }
 
@@ -399,18 +509,47 @@ public partial class UploadData : ComponentBase, IAsyncDisposable, IDisposable
         return $"{size:0.##} {sizes[order]}";
     }
 
-    private void CloseDuplicateToast()
+    protected void CloseDuplicateToast()
     {
         _showDuplicateToast = false;
         StateHasChanged();
     }
 
-    public class FileInfo
+    // Helper methods for UI rendering
+    private static string GetFileIcon(string fileName)
     {
-        public string Name { get; set; } = string.Empty;
-        public long Size { get; set; }
-        public string ContentType { get; set; } = string.Empty;
-        public long LastModified { get; set; }
+        var extension = Path.GetExtension(fileName).ToLowerInvariant();
+        return extension switch
+        {
+            ".pdf" => "bi-file-earmark-pdf",
+            ".docx" => "bi-file-earmark-word",
+            ".doc" => "bi-file-earmark-word",
+            ".txt" => "bi-file-earmark-text",
+            ".md" => "bi-file-earmark-code",
+            ".json" => "bi-file-earmark-code",
+            ".xml" => "bi-file-earmark-code",
+            ".csv" => "bi-file-earmark-spreadsheet",
+            ".xlsx" => "bi-file-earmark-spreadsheet",
+            ".xls" => "bi-file-earmark-spreadsheet",
+            ".jpg" or ".jpeg" => "bi-file-earmark-image",
+            ".png" => "bi-file-earmark-image",
+            ".gif" => "bi-file-earmark-image",
+            ".zip" => "bi-file-earmark-zip",
+            ".rar" => "bi-file-earmark-zip",
+            _ => "bi-file-earmark"
+        };
+    }
+
+    private static string GetStatusClass(string status)
+    {
+        return status.ToLowerInvariant() switch
+        {
+            "uploaded" => "status-uploaded",
+            "pending" => "status-pending",
+            "processing" => "status-processing",
+            "error" => "status-error",
+            _ => "status-pending"
+        };
     }
 
     public class FileUploadResult
@@ -433,5 +572,18 @@ public partial class UploadData : ComponentBase, IAsyncDisposable, IDisposable
         public long Size { get; set; }
         public DateTime UploadedAt { get; set; }
         public string FileHash { get; set; } = string.Empty;
+    }
+
+    public class UrlUploadResult
+    {
+        public bool Success { get; set; }
+        public string? Url { get; set; }
+        public string? FileName { get; set; }
+        public string? Error { get; set; }
+        public bool IsDuplicate { get; set; }
+        public string? Message { get; set; }
+        public string? ExistingFileName { get; set; }
+        public int? ExistingFileId { get; set; }
+        public DateTime? ExistingUploadedAt { get; set; }
     }
 }
