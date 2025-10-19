@@ -1,5 +1,6 @@
 ﻿using Microsoft.EntityFrameworkCore;
 using System.Security.Cryptography;
+using System.Text;
 using AspireApp.Web.Data;
 
 namespace AspireApp.Web.Data;
@@ -73,6 +74,17 @@ public class FileStorageService
         using var fileStream = File.OpenRead(filePath);
         using var sha256 = SHA256.Create();
         var hashBytes = await Task.Run(() => sha256.ComputeHash(fileStream));
+        return Convert.ToHexString(hashBytes);
+    }
+
+    /// <summary>
+    /// Calculates SHA256 hash of a URL string for duplicate detection
+    /// </summary>
+    public static string CalculateUrlHash(string url)
+    {
+        using var sha256 = SHA256.Create();
+        var urlBytes = Encoding.UTF8.GetBytes(url.Trim().ToLowerInvariant());
+        var hashBytes = sha256.ComputeHash(urlBytes);
         return Convert.ToHexString(hashBytes);
     }
 
@@ -250,11 +262,15 @@ public class FileStorageService
             
             _logger.LogInformation("Deleted file metadata from database: {FileName}", fileName);
 
-            // Delete the physical file if it exists
-            if (File.Exists(filePath))
+            // Delete the physical file if it exists (only for uploaded files, not URLs)
+            if (file.SourceType == "upload" && File.Exists(filePath))
             {
                 File.Delete(filePath);
                 _logger.LogInformation("Deleted file from data directory: {FilePath}", filePath);
+            }
+            else if (file.SourceType == "url")
+            {
+                _logger.LogInformation("Deleted URL datasource: {Url}", file.SourceUrl);
             }
             else
             {
@@ -289,7 +305,7 @@ public class FileStorageService
     }
 
     /// <summary>
-    /// Adds a URL datasource entry
+    /// Adds a URL datasource entry with hash generation for consistent duplicate detection
     /// </summary>
     public async Task<FileMetadata> AddUrlAsync(string sourceName, string sourceUrl, string status = "uploaded")
     {
@@ -297,6 +313,9 @@ public class FileStorageService
         {
             // Ensure database is initialized before adding
             await EnsureInitializedAsync();
+
+            // Generate hash for the URL for consistent duplicate detection
+            var urlHash = CalculateUrlHash(sourceUrl);
 
             var fileMetadata = new FileMetadata
             {
@@ -306,7 +325,7 @@ public class FileStorageService
                 FileSize = 0, // No file size for URLs initially
                 UploadedAt = DateTime.UtcNow,
                 Status = status,
-                FileHash = string.Empty, // No hash for URLs initially
+                FileHash = urlHash, // Store URL hash for duplicate detection
                 SourceType = "url",
                 SourceUrl = sourceUrl,
                 MimeType = "text/html" // Default to HTML for web pages
@@ -315,8 +334,8 @@ public class FileStorageService
             _context.Datasources.Add(fileMetadata);
             await _context.SaveChangesAsync();
             
-            _logger.LogInformation("Added URL metadata to database: {SourceName}, URL: {Url}, Status: {Status}", 
-                sourceName, sourceUrl, status);
+            _logger.LogInformation("Added URL metadata to database: {SourceName}, URL: {Url}, Hash: {Hash}, Status: {Status}", 
+                sourceName, sourceUrl, urlHash, status);
 
             return fileMetadata;
         }

@@ -308,34 +308,39 @@
     }
 
     /* Column width allocation for fixed table layout */
-    .file-table th:nth-child(1), /* File Name */
+    .file-table th:nth-child(1), /* Source Name */
     .file-table td:nth-child(1) {
-        width: 35%;
+        width: 30%;
         max-width: 0; /* Required for text-overflow to work with table-layout: fixed */
     }
 
-    .file-table th:nth-child(2), /* Size */
+    .file-table th:nth-child(2), /* Type */
     .file-table td:nth-child(2) {
         width: 10%;
     }
 
-    .file-table th:nth-child(3), /* Status */
+    .file-table th:nth-child(3), /* Size/URL */
     .file-table td:nth-child(3) {
-        width: 12%;
-    }
-
-    .file-table th:nth-child(4), /* Hash */
-    .file-table td:nth-child(4) {
         width: 15%;
     }
 
-    .file-table th:nth-child(5), /* Uploaded At */
+    .file-table th:nth-child(4), /* Status */
+    .file-table td:nth-child(4) {
+        width: 12%;
+    }
+
+    .file-table th:nth-child(5), /* Hash */
     .file-table td:nth-child(5) {
+        width: 15%;
+    }
+
+    .file-table th:nth-child(6), /* Added At */
+    .file-table td:nth-child(6) {
         width: 18%;
     }
 
-    .file-table th:nth-child(6), /* Actions */
-    .file-table td:nth-child(6) {
+    .file-table th:nth-child(7), /* Actions */
+    .file-table td:nth-child(7) {
         width: 10%;
     }
 
@@ -402,6 +407,37 @@
 
     .file-size-cell {
         color: rgba(255, 255, 255, 0.8);
+    }
+
+    .url-cell {
+        color: rgba(173, 216, 230, 0.9);
+        font-size: 0.8rem;
+        font-family: monospace;
+        max-width: 200px;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+        position: relative;
+    }
+
+    .url-cell:hover .url-full {
+        display: block;
+        position: absolute;
+        background-color: var(--purple-dark);
+        border: 1px solid rgba(255, 255, 255, 0.3);
+        border-radius: 0.25rem;
+        padding: 0.5rem;
+        z-index: 1000;
+        max-width: 400px;
+        word-break: break-all;
+        top: 100%;
+        left: 0;
+        margin-top: 0.25rem;
+        box-shadow: 0 4px 6px rgba(0, 0, 0, 0.3);
+    }
+
+    .url-full {
+        display: none;
     }
 
     .upload-date-cell {
@@ -530,8 +566,8 @@
             padding: 1rem;
         }
         
-        .file-table th:nth-child(4),
-        .file-table td:nth-child(4) {
+        .file-table th:nth-child(5),
+        .file-table td:nth-child(5) {
             display: none; /* Hide hash column on mobile */
         }
     }
@@ -542,8 +578,8 @@
             padding: 0.75rem;
         }
         
-        .file-table th:nth-child(3),
-        .file-table td:nth-child(3) {
+        .file-table th:nth-child(4),
+        .file-table td:nth-child(4) {
             display: none; /* Hide status column on very small screens */
         }
     }
@@ -616,37 +652,6 @@
         opacity: 1;
     }
 
-    /* New styles for URL upload feature */
-    .upload-mode-toggle {
-        display: flex;
-        justify-content: flex-start;
-        margin-bottom: 1rem;
-    }
-
-    .btn-toggle {
-        background-color: var(--purple-medium);
-        color: #f5f5f0;
-        border: 2px solid rgba(255, 255, 255, 0.3);
-        padding: 0.5rem 1.5rem;
-        font-size: 0.9rem;
-        border-radius: 0.375rem;
-        transition: all 0.3s ease;
-        cursor: pointer;
-    }
-
-    .btn-toggle:hover:not(:disabled) {
-        background-color: #2a1540;
-        border-color: rgba(255, 255, 255, 0.5);
-        transform: translateY(-1px);
-    }
-
-    .btn-toggle:disabled {
-        background-color: #333;
-        border-color: #555;
-        color: #999;
-        cursor: not-allowed;
-    }
-
     .url-input-group {
         margin-bottom: 1rem;
     }
@@ -661,10 +666,57 @@
     .url-input-group .form-control {
         width: 100%;
     }
+
+    .source-type-badge {
+        display: inline-block;
+        padding: 0.2rem 0.5rem;
+        border-radius: 0.25rem;
+        font-size: 0.7rem;
+        font-weight: 500;
+        text-transform: uppercase;
+        margin-right: 0.5rem;
+    }
+
+    .source-type-upload {
+        background-color: rgba(72, 61, 139, 0.3);
+        color: #9b8ce8;
+        border: 1px solid rgba(72, 61, 139, 0.5);
+    }
+
+    .source-type-url {
+        background-color: rgba(23, 162, 184, 0.3);
+        color: #17a2b8;
+        border: 1px solid rgba(23, 162, 184, 0.5);
+    }
+
+    .divider {
+        margin: 2rem 0;
+        text-align: center;
+        position: relative;
+    }
+
+    .divider::before {
+        content: '';
+        position: absolute;
+        top: 50%;
+        left: 0;
+        right: 0;
+        height: 1px;
+        background: rgba(255, 255, 255, 0.3);
+    }
+
+    .divider span {
+        background: var(--main-bg-color);
+        padding: 0 1rem;
+        color: rgba(255, 255, 255, 0.7);
+        font-weight: 500;
+        text-transform: uppercase;
+        font-size: 0.8rem;
+    }
 </style>
 
 <div class="upload-container">
-	<h1><i class="bi bi-cloud-upload-fill"></i> Document Upload & Storage</h1>
+	<h1><i class="bi bi-cloud-upload-fill"></i> Document Upload & Data Source Management</h1>
     
     <!-- Toast Notification for Duplicates -->
     @if (_showDuplicateToast)
@@ -673,18 +725,18 @@
             <div class="toast show duplicate-toast" role="alert">
                 <div class="toast-header">
                     <i class="bi bi-exclamation-triangle-fill text-warning me-2"></i>
-                    <strong class="me-auto">Duplicate File Detected</strong>
+                    <strong class="me-auto">Duplicate Detected</strong>
                     <button type="button" class="btn-close" @onclick="CloseDuplicateToast" aria-label="Close"></button>
                 </div>
                 <div class="toast-body">
-                    <p><strong>File already exists!</strong></p>
-                    <p>The uploaded file is identical to an existing file and was not saved.</p>
+                    <p><strong>This data source already exists!</strong></p>
+                    <p>The item is identical to an existing entry and was not saved.</p>
                     @if (_duplicateFileInfo != null)
                     {
                         <div class="duplicate-toast-details">
                             <small>
-                                <strong>Existing file:</strong> @_duplicateFileInfo.FileName<br>
-                                <strong>Uploaded:</strong> @_duplicateFileInfo.UploadedAt.ToLocalTime().ToString("MMM dd, yyyy HH:mm")
+                                <strong>Existing entry:</strong> @_duplicateFileInfo.FileName<br>
+                                <strong>Added:</strong> @_duplicateFileInfo.UploadedAt.ToLocalTime().ToString("MMM dd, yyyy HH:mm")
                             </small>
                         </div>
                     }
@@ -693,10 +745,10 @@
         </div>
     }
 
-    <!-- Phase 1: File Upload -->
+    <!-- File Upload Section -->
     <div class="phase-info">
-        <h4><i class="bi bi-file-earmark-arrow-up"></i> Step 1: Upload Your Document</h4>
-        <p>Max size: 10MB. Accepted formats: .pdf, .docx, .xlsx</p>
+        <h4><i class="bi bi-file-earmark-arrow-up"></i> Upload Documents</h4>
+        <p>Upload documents for processing and analysis. Max size: 10MB. Accepted formats: .pdf, .docx, .xlsx</p>
     </div>
 
     <InputFile OnChange="HandleFileSelected" accept=".pdf,.docx,.xlsx" class="form-control" id="fileInput" />
@@ -704,36 +756,99 @@
         <i class="bi bi-info-circle"></i> For best results, ensure your document is well-structured and contains identifiable data fields.
     </div>
 
-    <!-- URL Upload Section -->
-    <div class="url-upload-section">
-        <div class="url-input-group">
-            <label for="fileUrl">File URL</label>
-            <input type="text" id="fileUrl" @bind="_fileUrl" class="form-control" placeholder="Enter direct URL to your file" />
-        </div>
-        <button class="btn btn-primary" @onclick="HandleUrlUpload">
-            <i class="bi bi-link-45deg"></i> Upload from URL
-        </button>
-        <div class="upload-hint">
-            <i class="bi bi-info-circle"></i> Ensure the URL is publicly accessible and points directly to the file.
-        </div>
-    </div>
-
-    <button class="btn btn-primary btn-sm" @onclick="UploadFiles" disabled="@(!IsFileSelected)">
-        <i class="bi bi-upload"></i> Start Upload
+    <button class="btn btn-primary btn-sm" @onclick="UploadFiles" disabled="@(!IsFileSelected || _isUploading)">
+        @if (_isUploading)
+        {
+            <span class="loading-indicator">
+                <span class="spinner-border" aria-hidden="true"></span>
+                Processing...
+            </span>
+        }
+        else
+        {
+            <i class="bi bi-upload"></i>
+            <span>Start Upload</span>
+        }
     </button>
 
+    <!-- Divider -->
+    <div class="divider">
+        <span>or</span>
+    </div>
+
+    <!-- Website URL Section -->
+    <div class="phase-info">
+        <h4><i class="bi bi-globe"></i> Add Website or Web Resource</h4>
+        <p>Add website URLs, web pages, or online resources as data sources. Content will be processed and analyzed later.</p>
+    </div>
+
+    <div class="url-input-group">
+        <label for="websiteUrl">Website URL or Web Resource</label>
+        <input type="text" id="websiteUrl" @bind="_websiteUrl" class="form-control" 
+               placeholder="https://example.com or https://example.com/document.pdf" 
+               disabled="@_isUploading" />
+    </div>
+    
+    <button class="btn btn-primary btn-sm" @onclick="HandleUrlUpload" disabled="@(string.IsNullOrWhiteSpace(_websiteUrl) || _isUploading)">
+        @if (_isUploading)
+        {
+            <span class="loading-indicator">
+                <span class="spinner-border" aria-hidden="true"></span>
+                Adding...
+            </span>
+        }
+        else
+        {
+            <i class="bi bi-link-45deg"></i>
+            <span>Add Website</span>
+        }
+    </button>
+    
+    <div class="upload-hint">
+        <i class="bi bi-info-circle"></i> Enter any website URL, web page, or online document. The URL will be saved as a data source for future processing.
+    </div>
+
+    <!-- Progress and Status Messages -->
+    @if (!string.IsNullOrEmpty(_uploadMessage))
+    {
+        <div class="alert alert-@_messageClass mt-3">
+            @_uploadMessage
+            @if (_uploadErrors.Any())
+            {
+                <ul class="error-list">
+                    @foreach (var error in _uploadErrors)
+                    {
+                        <li>@error</li>
+                    }
+                </ul>
+            }
+        </div>
+    }
+
+    @if (_uploadProgress > 0 && _uploadProgress < 100)
+    {
+        <div class="upload-progress">
+            <div class="progress-bar">
+                <div class="progress-fill" style="width: @(_uploadProgress)%"></div>
+            </div>
+        </div>
+    }
+
+    <!-- Data Sources List -->
     <div class="uploaded-files">
+        <h2><i class="bi bi-database"></i> Data Sources</h2>
         @if (Files != null && Files.Count > 0)
         {
             <div class="table-wrapper">
                 <table class="file-table">
                     <thead>
                         <tr>
-                            <th>File Name</th>
-                            <th>Size</th>
+                            <th>Source Name</th>
+                            <th>Type</th>
+                            <th>Size/URL</th>
                             <th>Status</th>
                             <th>Hash</th>
-                            <th>Uploaded At</th>
+                            <th>Added At</th>
                             <th>Actions</th>
                         </tr>
                     </thead>
@@ -742,16 +857,53 @@
                         {
                             <tr>
                                 <td class="file-name-cell">
+                                    <span class="source-type-badge @(file.SourceType == "url" ? "source-type-url" : "source-type-upload")">
+                                        @(file.SourceType == "url" ? "WEB" : "FILE")
+                                    </span>
                                     @file.FileName
                                     <span class="file-name-full">@file.FileName</span>
                                 </td>
-                                <td class="file-size-cell">@file.FileSizeFormatted</td>
+                                <td class="status-cell">
+                                    @if (file.SourceType == "url")
+                                    {
+                                        <i class="bi bi-globe" title="Website/Web Resource"></i>
+                                    }
+                                    else
+                                    {
+                                        <i class="bi bi-file-earmark" title="Uploaded File"></i>
+                                    }
+                                </td>
+                                <td class="@(file.SourceType == "url" ? "url-cell" : "file-size-cell")">
+                                    @if (file.SourceType == "url")
+                                    {
+                                        @if (!string.IsNullOrEmpty(file.SourceUrl))
+                                        {
+                                            <span>@file.SourceUrl</span>
+                                            <span class="url-full">@file.SourceUrl</span>
+                                        }
+                                        else
+                                        {
+                                            <span>-</span>
+                                        }
+                                    }
+                                    else
+                                    {
+                                        @file.FileSizeFormatted
+                                    }
+                                </td>
                                 <td class="status-cell">
                                     <span class="status-badge @(GetStatusClass(file.Status.ToString()))">@file.Status</span>
                                 </td>
                                 <td class="file-hash-cell">
-                                    @file.FileHash
-                                    <span class="file-hash-full">@file.FileHash</span>
+                                    @if (!string.IsNullOrEmpty(file.FileHash))
+                                    {
+                                        <span>@file.FileHash</span>
+                                        <span class="file-hash-full">@file.FileHash</span>
+                                    }
+                                    else
+                                    {
+                                        <span>-</span>
+                                    }
                                 </td>
                                 <td class="upload-date-cell">@file.UploadedAt.ToLocalTime().ToString("MMM dd, yyyy HH:mm")</td>
                                 <td class="file-actions">
@@ -765,10 +917,19 @@
                 </table>
             </div>
         }
+        else if (_isLoading)
+        {
+            <div class="no-files-message">
+                <span class="loading-indicator">
+                    <span class="spinner-border" aria-hidden="true"></span>
+                    Loading data sources...
+                </span>
+            </div>
+        }
         else
         {
             <div class="no-files-message">
-                <i class="bi bi-folder-fill"></i> No files uploaded yet. Use the form above to upload your documents.
+                <i class="bi bi-inbox"></i> No data sources added yet. Upload documents or add website URLs to get started.
             </div>
         }
     </div>

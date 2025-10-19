@@ -169,11 +169,17 @@ public class FileUploadController : ControllerBase
                 });
             }
 
-            // Check for duplicate URL
-            var existingUrl = await _fileStorageService.FindDuplicateByUrlAsync(request.Url);
+            // Generate URL hash for duplicate detection
+            var urlHash = FileStorageService.CalculateUrlHash(request.Url);
+            
+            _logger.LogInformation("Calculated URL hash: {Hash} for URL: {Url}", urlHash, request.Url);
+
+            // Check for duplicate URLs based on hash (more reliable than URL comparison)
+            var existingUrl = await _fileStorageService.FindDuplicateByHashAsync(urlHash);
             if (existingUrl != null)
             {
-                _logger.LogInformation("Duplicate URL detected: {Url} (ID: {Id})", request.Url, existingUrl.Id);
+                _logger.LogInformation("Duplicate URL detected. Original: {OriginalUrl} (ID: {Id}), New: {NewUrl}", 
+                    existingUrl.SourceUrl, existingUrl.Id, request.Url);
 
                 return Ok(new { 
                     success = true, 
@@ -182,20 +188,21 @@ public class FileUploadController : ControllerBase
                     existingFileId = existingUrl.Id,
                     existingFileName = existingUrl.FileName,
                     existingUploadedAt = existingUrl.UploadedAt,
-                    message = $"URL already exists (added on {existingUrl.UploadedAt:yyyy-MM-dd HH:mm:ss}). Duplicate not saved."
+                    message = $"URL already exists as '{existingUrl.FileName}' (added on {existingUrl.UploadedAt:yyyy-MM-dd HH:mm:ss}). Duplicate not saved."
                 });
             }
 
             // Create a friendly name from URL
             var fileName = GenerateFileNameFromUrl(uri);
 
-            // Add URL metadata to database
+            // Add URL metadata to database with hash
             var fileMetadata = await _fileStorageService.AddUrlAsync(
                 fileName,
                 request.Url,
                 "uploaded");
 
-            _logger.LogInformation("URL added successfully: {Url}, ID: {Id}", request.Url, fileMetadata.Id);
+            _logger.LogInformation("Website URL added successfully: {Url}, ID: {Id}, Hash: {Hash}", 
+                request.Url, fileMetadata.Id, urlHash);
 
             return Ok(new { 
                 success = true, 
@@ -205,15 +212,16 @@ public class FileUploadController : ControllerBase
                 id = fileMetadata.Id,
                 uploadedAt = fileMetadata.UploadedAt,
                 status = fileMetadata.Status,
-                message = "URL added successfully."
+                fileHash = urlHash,
+                message = "Website URL added successfully."
             });
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "Error uploading URL: {Url}", request?.Url);
+            _logger.LogError(ex, "Error adding website URL: {Url}", request?.Url);
             return StatusCode(500, new { 
                 success = false, 
-                error = $"An error occurred while adding the URL: {ex.Message}" 
+                error = $"An error occurred while adding the website URL: {ex.Message}" 
             });
         }
     }

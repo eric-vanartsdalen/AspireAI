@@ -24,9 +24,8 @@ public partial class UploadData : ComponentBase, IAsyncDisposable, IDisposable
     protected DuplicateFileInfo? _duplicateFileInfo;
     protected bool _showDuplicateToast;
 
-    // URL upload properties
-    private bool _isUrlMode;
-    private string _fileUrl = string.Empty;
+    // Website URL upload property
+    private string _websiteUrl = string.Empty;
 
     [Inject]
     public IConfiguration Configuration { get; set; } = default!;
@@ -42,6 +41,9 @@ public partial class UploadData : ComponentBase, IAsyncDisposable, IDisposable
 
     [Inject]
     public FileStorageService FileStorageService { get; set; } = default!;
+
+    [Inject]
+    public NavigationManager NavigationManager { get; set; } = default!;
 
     private long MaxFileSize => Configuration.GetValue<long?>("FileUpload:MaxFileSize") ?? 10485760; // 10MB default
 
@@ -145,7 +147,9 @@ public partial class UploadData : ComponentBase, IAsyncDisposable, IDisposable
             content.Add(content: fileContent, name: "\"file\"", fileName: _selectedBrowserFile.Name);
 
             var client = ClientFactory.CreateClient();
-            var response = await client.PostAsync("/api/FileUpload", content);
+            var baseUri = new Uri(NavigationManager.BaseUri);
+            var apiUri = new Uri(baseUri, "/api/FileUpload");
+            var response = await client.PostAsync(apiUri, content);
 
             _uploadProgress = 90;
             StateHasChanged();
@@ -316,7 +320,7 @@ public partial class UploadData : ComponentBase, IAsyncDisposable, IDisposable
         {
             _isUploading = true;
             _uploadProgress = 0;
-            _uploadMessage = "Adding URL...";
+            _uploadMessage = "Adding website URL...";
             _messageClass = "info";
             _uploadErrors.Clear();
             
@@ -328,16 +332,16 @@ public partial class UploadData : ComponentBase, IAsyncDisposable, IDisposable
             StateHasChanged();
 
             // Validate URL
-            if (string.IsNullOrWhiteSpace(_fileUrl))
+            if (string.IsNullOrWhiteSpace(_websiteUrl))
             {
-                _uploadMessage = "Please enter a URL.";
+                _uploadMessage = "Please enter a website URL.";
                 _messageClass = "error";
                 _isUploading = false;
                 StateHasChanged();
                 return;
             }
 
-            if (!Uri.TryCreate(_fileUrl, UriKind.Absolute, out var uri) || 
+            if (!Uri.TryCreate(_websiteUrl, UriKind.Absolute, out var uri) || 
                 (uri.Scheme != Uri.UriSchemeHttp && uri.Scheme != Uri.UriSchemeHttps))
             {
                 _uploadMessage = "Invalid URL format. URL must start with http:// or https://.";
@@ -352,7 +356,9 @@ public partial class UploadData : ComponentBase, IAsyncDisposable, IDisposable
 
             // Call API to add URL
             var client = ClientFactory.CreateClient();
-            var response = await client.PostAsJsonAsync("/api/FileUpload/url", new { Url = _fileUrl });
+            var baseUri = new Uri(NavigationManager.BaseUri);
+            var apiUri = new Uri(baseUri, "/api/FileUpload/url");
+            var response = await client.PostAsJsonAsync(apiUri, new { Url = _websiteUrl });
 
             _uploadProgress = 90;
             StateHasChanged();
@@ -368,7 +374,7 @@ public partial class UploadData : ComponentBase, IAsyncDisposable, IDisposable
                     // Handle duplicate detection
                     if (result.IsDuplicate)
                     {
-                        Logger.LogInformation("Duplicate URL detected - showing toast notification");
+                        Logger.LogInformation("Duplicate website URL detected - showing toast notification");
                         _isDuplicate = true;
                         _showDuplicateToast = true;
                         _duplicateFileInfo = new DuplicateFileInfo
@@ -379,7 +385,7 @@ public partial class UploadData : ComponentBase, IAsyncDisposable, IDisposable
                             FileHash = string.Empty
                         };
                         
-                        _uploadMessage = $"This URL already exists and was not added to prevent duplicates.";
+                        _uploadMessage = $"This website URL already exists and was not added to prevent duplicates.";
                         _messageClass = "warning";
                         
                         // Auto-hide toast after 8 seconds
@@ -394,13 +400,13 @@ public partial class UploadData : ComponentBase, IAsyncDisposable, IDisposable
                     }
                     else
                     {
-                        _uploadMessage = result.Message ?? $"URL added successfully.";
+                        _uploadMessage = result.Message ?? $"Website URL added successfully.";
                         _messageClass = "success";
-                        Logger.LogInformation("URL added successfully: {Url}", _fileUrl);
+                        Logger.LogInformation("Website URL added successfully: {Url}", _websiteUrl);
                     }
 
                     // Clear the URL input
-                    _fileUrl = string.Empty;
+                    _websiteUrl = string.Empty;
 
                     // Reload the file list only if it wasn't a duplicate
                     if (!result.IsDuplicate)
@@ -410,7 +416,7 @@ public partial class UploadData : ComponentBase, IAsyncDisposable, IDisposable
                 }
                 else
                 {
-                    _uploadMessage = "Failed to add URL.";
+                    _uploadMessage = "Failed to add website URL.";
                     _messageClass = "error";
                     if (!string.IsNullOrWhiteSpace(result?.Error))
                     {
@@ -421,15 +427,15 @@ public partial class UploadData : ComponentBase, IAsyncDisposable, IDisposable
             else
             {
                 var errorContent = await response.Content.ReadAsStringAsync();
-                _uploadMessage = "Failed to add URL.";
+                _uploadMessage = "Failed to add website URL.";
                 _messageClass = "error";
                 _uploadErrors.Add(errorContent);
-                Logger.LogError("URL upload failed with status {StatusCode}: {Error}", response.StatusCode, errorContent);
+                Logger.LogError("Website URL upload failed with status {StatusCode}: {Error}", response.StatusCode, errorContent);
             }
         }
         catch (Exception ex)
         {
-            Logger.LogError(ex, "Error uploading URL: {Url}", _fileUrl);
+            Logger.LogError(ex, "Error uploading website URL: {Url}", _websiteUrl);
             _uploadMessage = $"Error: {ex.Message}";
             _messageClass = "error";
             _uploadErrors.Clear();
@@ -452,19 +458,6 @@ public partial class UploadData : ComponentBase, IAsyncDisposable, IDisposable
                 StateHasChanged();
             }
         }
-    }
-
-    private void ToggleUploadMode()
-    {
-        _isUrlMode = !_isUrlMode;
-        _uploadMessage = string.Empty;
-        _messageClass = "";
-        _uploadErrors.Clear();
-        _isDuplicate = false;
-        _duplicateFileInfo = null;
-        _showDuplicateToast = false;
-        _fileUrl = string.Empty;
-        StateHasChanged();
     }
 
     public async ValueTask DisposeAsync()
