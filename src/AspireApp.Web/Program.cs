@@ -1,8 +1,8 @@
-using AspireApp.Web;
+﻿using AspireApp.Web;
 using AspireApp.Web.Components;
 using AspireApp.Web.Components.Pages;
 using AspireApp.Web.Components.Shared;
-using AspireApp.Web.Data;
+using AspireApp.Web.Shared;
 using Microsoft.EntityFrameworkCore;
 
 var builder = WebApplication.CreateBuilder(args);
@@ -138,7 +138,7 @@ static async Task InitializeDatabaseAsync(IServiceProvider services, string conn
         var canConnect = await context.Database.CanConnectAsync();
         if (canConnect)
         {
-            Console.WriteLine("? Database connection test successful");
+            Console.WriteLine("✓ Database connection test successful");
             
             // Show current database stats
             var fileCount = await context.Datasources.CountAsync();
@@ -150,7 +150,7 @@ static async Task InitializeDatabaseAsync(IServiceProvider services, string conn
         }
         else
         {
-            Console.WriteLine("? Warning: Database connection test failed");
+            Console.WriteLine("⚠ Warning: Database connection test failed");
         }
     }
     catch (Exception ex)

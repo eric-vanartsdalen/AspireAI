@@ -1,11 +1,11 @@
-using System.ComponentModel.DataAnnotations;
+﻿using System.ComponentModel.DataAnnotations;
 using System.ComponentModel.DataAnnotations.Schema;
 
 namespace AspireApp.Web.Data
 {
     /// <summary>
     /// Unified datasource entity that tracks the complete lifecycle:
-    /// Upload ? Docling Processing ? Page Extraction ? Neo4j Integration
+    /// Upload → Docling Processing → Page Extraction → Neo4j Integration
     /// 
     /// Replaces the previous Files/Documents dual-table design with a single source of truth.
     /// </summary>
@@ -100,7 +100,7 @@ namespace AspireApp.Web.Data
 
         // ==================== Navigation Properties ====================
         
-        public virtual ICollection<DocumentPage> Pages { get; set; } = new List<DocumentPage>();
+        public virtual ICollection<DocumentPage> Pages { get; set; } = [];
 
         // ==================== Computed Properties ====================
         
@@ -115,7 +115,7 @@ namespace AspireApp.Web.Data
         {
             get
             {
-                string[] sizes = { "B", "KB", "MB", "GB", "TB" };
+                string[] sizes = [ "B", "KB", "MB", "GB", "TB" ];
                 int order = 0;
                 double size = FileSize;
 
@@ -133,7 +133,7 @@ namespace AspireApp.Web.Data
         /// Gets a short representation of the file hash for display purposes
         /// </summary>
         [NotMapped]
-        public string ShortHash => string.IsNullOrEmpty(FileHash) ? "-" : FileHash.Substring(0, Math.Min(8, FileHash.Length));
+        public string ShortHash => string.IsNullOrEmpty(FileHash) ? "-" : FileHash[..Math.Min(8, FileHash.Length)];
 
         /// <summary>
         /// Checks if this file has a valid hash
@@ -249,7 +249,7 @@ namespace AspireApp.Web.Data
         [MaxLength(50)]
         public string ProcessingStatus { get; set; } = "pending";
 
-        public virtual ICollection<ProcessedDocument> ProcessedDocuments { get; set; } = new List<ProcessedDocument>();
+        public virtual ICollection<ProcessedDocument> ProcessedDocuments { get; set; } = [];
     }
 
     [Table("processed_documents")]
@@ -283,6 +283,6 @@ namespace AspireApp.Web.Data
         [ForeignKey("DocumentId")]
         public virtual Document Document { get; set; } = null!;
 
-        public virtual ICollection<DocumentPage> DocumentPages { get; set; } = new List<DocumentPage>();
+        public virtual ICollection<DocumentPage> DocumentPages { get; set; } = [];
     }
 }

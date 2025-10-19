@@ -1,15 +1,14 @@
-﻿using Microsoft.EntityFrameworkCore;
+﻿using AspireApp.Web.Data;
+using Microsoft.EntityFrameworkCore;
 using System.ComponentModel.DataAnnotations;
 using System.ComponentModel.DataAnnotations.Schema;
 
-namespace AspireApp.Web.Data
+namespace AspireApp.Web.Shared
 {
-	public class UploadDbContext : DbContext
+	public class UploadDbContext(DbContextOptions<UploadDbContext> options) : DbContext(options)
     {
-        public UploadDbContext(DbContextOptions<UploadDbContext> options) : base(options) { }
-        
         // ==================== Primary Schema ====================
-        
+
         /// <summary>
         /// Unified datasources table - single source of truth for datasource lifecycle
         /// </summary>
@@ -110,7 +109,6 @@ namespace AspireApp.Web.Data
             // ==================== Legacy Schema Configuration (Backward Compatibility) ====================
 
             // Configure legacy Documents entity
-#pragma warning disable CS0618 // Legacy Document entity is kept for backward compatibility
             modelBuilder.Entity<Document>(entity =>
             {
                 entity.ToTable("documents");
@@ -150,7 +148,6 @@ namespace AspireApp.Web.Data
                 // Legacy indexes
                 entity.HasIndex(e => e.DocumentId).HasDatabaseName("idx_processed_documents_document_id");
             });
-#pragma warning restore CS0618
         }
     }
 }

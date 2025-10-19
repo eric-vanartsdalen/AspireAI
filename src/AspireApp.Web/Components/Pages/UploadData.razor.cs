@@ -1,4 +1,5 @@
 ﻿using AspireApp.Web.Data;
+using AspireApp.Web.Shared;
 using Microsoft.AspNetCore.Components;
 using Microsoft.AspNetCore.Components.Forms;
 using Microsoft.Extensions.Logging;
@@ -17,7 +18,7 @@ public partial class UploadData : ComponentBase, IAsyncDisposable, IDisposable
     private bool _isLoading = true;
     protected bool _isUploading = false;
     private int _uploadProgress = 0;
-    private List<string> _uploadErrors = new();
+    private readonly List<string> _uploadErrors = [];
     
     // Duplicate detection tracking
     protected bool _isDuplicate;
@@ -53,53 +54,65 @@ public partial class UploadData : ComponentBase, IAsyncDisposable, IDisposable
     protected IReadOnlyDictionary<string, object> UploadButtonAttributes =>
         (!IsFileSelected || _isUploading)
             ? new Dictionary<string, object> { { "disabled", true } }
-            : new Dictionary<string, object>();
+            : [];
 
     protected IReadOnlyDictionary<string, object> UrlInputAttributes =>
         (_isUploading)
             ? new Dictionary<string, object> { { "disabled", true } }
-            : new Dictionary<string, object>();
+            : [];
 
     protected IReadOnlyDictionary<string, object> AddWebsiteButtonAttributes =>
         (string.IsNullOrWhiteSpace(_websiteUrl) || _isUploading)
             ? new Dictionary<string, object> { { "disabled", true } }
-            : new Dictionary<string, object>();
+            : [];
 
     protected override async Task OnInitializedAsync()
     {
-        Logger.LogInformation("UploadData component initialized");
-        // Initialize object reference for potential JS interop usage
+        if (Logger.IsEnabled(LogLevel.Information))
+        {
+            Logger.LogInformation("UploadData component initialized");
+        }
         try
         {
             _objectReference = DotNetObjectReference.Create(this);
         }
         catch (Exception ex)
         {
-            Logger.LogDebug(ex, "Unable to create DotNetObjectReference");
+            if (Logger.IsEnabled(LogLevel.Debug))
+            {
+                Logger.LogDebug(ex, "Unable to create DotNetObjectReference");
+            }
         }
 
-        await LoadUploadedFiles();
+        await LoadUploadedFiles().ConfigureAwait(false);
     }
 
-    private async Task LoadUploadedFiles()
+    private Task LoadUploadedFiles()
+    {
+        return LoadUploadedFiles(Logger);
+    }
+
+    private async Task LoadUploadedFiles(ILogger logger)
     {
         _isLoading = true;
         try
         {
-            // Ensure the file storage service is properly initialized
-            var initialized = await FileStorageService.EnsureInitializedAsync();
+            var initialized = await FileStorageService.EnsureInitializedAsync().ConfigureAwait(false);
             if (!initialized)
             {
                 _uploadMessage = "Database initialization failed. Please check the application logs.";
                 _messageClass = "error";
-                Files = new List<FileMetadata>();
+                Files = [];
                 return;
             }
 
-            Files = await FileStorageService.GetAllFilesAsync();
-            Logger.LogInformation("Loaded {Count} uploaded files", Files?.Count ?? 0);
-            
-            // Clear any previous error messages if loading succeeds
+            Files = await FileStorageService.GetAllFilesAsync().ConfigureAwait(false);
+            if (logger.IsEnabled(LogLevel.Information))
+            {
+                var count = Files?.Count ?? 0;
+                logger.LogInformation("Loaded {Count} uploaded files", count);
+            }
+
             if (Files != null)
             {
                 _uploadMessage = string.Empty;
@@ -108,10 +121,13 @@ public partial class UploadData : ComponentBase, IAsyncDisposable, IDisposable
         }
         catch (Exception ex)
         {
-            Logger.LogError(ex, "Error loading uploaded files");
+            if (Logger.IsEnabled(LogLevel.Error))
+            {
+                Logger.LogError(ex, "Error loading uploaded files");
+            }
             _uploadMessage = $"Error loading files: {ex.Message}. The database may need to be initialized.";
             _messageClass = "error";
-            Files = new List<FileMetadata>();
+            Files = [];
         }
         finally
         {
@@ -121,7 +137,7 @@ public partial class UploadData : ComponentBase, IAsyncDisposable, IDisposable
 
     protected override async Task OnAfterRenderAsync(bool firstRender)
     {
-        if (firstRender)
+        if (firstRender && Logger.IsEnabled(LogLevel.Information))
         {
             Logger.LogInformation("UploadData component rendered for the first time");
         }
@@ -129,7 +145,8 @@ public partial class UploadData : ComponentBase, IAsyncDisposable, IDisposable
 
     protected async Task HandleFileSelected(InputFileChangeEventArgs e)
     {
-        _selectedBrowserFile = e.GetMultipleFiles(1).FirstOrDefault();
+        var files = e.GetMultipleFiles(1);
+        _selectedBrowserFile = files.Count > 0 ? files[0] : null;
         _uploadMessage = string.Empty;
         _messageClass = "";
         _uploadErrors.Clear();
@@ -137,7 +154,7 @@ public partial class UploadData : ComponentBase, IAsyncDisposable, IDisposable
         _duplicateFileInfo = null;
         _showDuplicateToast = false;
         StateHasChanged();
-        await Task.CompletedTask;
+        await Task.CompletedTask.ConfigureAwait(false);
     }
 
     protected async Task UploadFiles()
@@ -151,20 +168,18 @@ public partial class UploadData : ComponentBase, IAsyncDisposable, IDisposable
             _uploadMessage = "Starting upload...";
             _messageClass = "info";
             _uploadErrors.Clear();
-            
-            // Clear previous duplicate detection state
+
             _isDuplicate = false;
             _duplicateFileInfo = null;
             _showDuplicateToast = false;
-            
+
             StateHasChanged();
 
-            // Simulate progress for user feedback
             for (int i = 10; i <= 30; i += 10)
             {
                 _uploadProgress = i;
                 StateHasChanged();
-                await Task.Delay(100);
+                await Task.Delay(100).ConfigureAwait(false);
             }
 
             using var content = new MultipartFormDataContent();
@@ -175,33 +190,41 @@ public partial class UploadData : ComponentBase, IAsyncDisposable, IDisposable
             var client = ClientFactory.CreateClient();
             var baseUri = new Uri(NavigationManager.BaseUri);
             var apiUri = new Uri(baseUri, "/api/FileUpload");
-            var response = await client.PostAsync(apiUri, content);
+            var response = await client.PostAsync(apiUri, content).ConfigureAwait(false);
 
             _uploadProgress = 90;
             StateHasChanged();
 
-            var result = await response.Content.ReadFromJsonAsync<FileUploadResult>();
+            var result = await response.Content.ReadFromJsonAsync<FileUploadResult>().ConfigureAwait(false);
 
             if (result == null)
             {
-                Logger.LogError("Upload returned an empty or invalid response.");
+                if (Logger.IsEnabled(LogLevel.Error))
+                {
+                    Logger.LogError("Upload returned an empty or invalid response.");
+                }
                 _uploadProgress = 0;
                 _uploadMessage = "Upload failed: invalid server response.";
                 _messageClass = "error";
                 return;
             }
 
-            Logger.LogInformation("Upload result received: Success={Success}, IsDuplicate={IsDuplicate}, FileName={FileName}", 
-                result.Success, result.IsDuplicate, result.FileName);
+            if (Logger.IsEnabled(LogLevel.Information))
+            {
+                Logger.LogInformation("Upload result received: Success={Success}, IsDuplicate={IsDuplicate}, FileName={FileName}",
+                    result.Success, result.IsDuplicate, result.FileName);
+            }
 
             if (result.Success)
             {
                 _uploadProgress = 100;
-                
-                // Handle duplicate detection
+
                 if (result.IsDuplicate)
                 {
-                    Logger.LogInformation("Duplicate detected - showing toast notification");
+                    if (Logger.IsEnabled(LogLevel.Information))
+                    {
+                        Logger.LogInformation("Duplicate detected - showing toast notification");
+                    }
                     _isDuplicate = true;
                     _showDuplicateToast = true;
                     _duplicateFileInfo = new DuplicateFileInfo
@@ -211,18 +234,20 @@ public partial class UploadData : ComponentBase, IAsyncDisposable, IDisposable
                         UploadedAt = result.ExistingUploadedAt ?? DateTime.Now,
                         FileHash = result.FileHash ?? "Unknown"
                     };
-                    
+
                     _uploadMessage = $"This file is identical to '{result.ExistingFileName}' and was not uploaded to prevent duplicates.";
                     _messageClass = "warning";
-                    
-                    Logger.LogInformation("Duplicate file detected: {FileName}, Existing: {ExistingFile}, Hash: {Hash}", 
-                        result.FileName, result.ExistingFileName, result.FileHash);
-                        
-                    Logger.LogInformation("Toast state: _showDuplicateToast={ShowToast}, _isDuplicateDetected={IsDuplicate}", 
-                        _showDuplicateToast, _isDuplicate);
-                        
-                    // Auto-hide toast after 8 seconds
-                    _ = Task.Delay(8000).ContinueWith(_ => 
+
+                    if (Logger.IsEnabled(LogLevel.Information))
+                    {
+                        Logger.LogInformation("Duplicate file detected: {FileName}, Existing: {ExistingFile}, Hash: {Hash}",
+                            result.FileName, result.ExistingFileName, result.FileHash);
+
+                        Logger.LogInformation("Toast state: _showDuplicateToast={ShowToast}, _isDuplicateDetected={IsDuplicate}",
+                            _showDuplicateToast, _isDuplicate);
+                    }
+
+                    _ = Task.Delay(8000).ContinueWith(_ =>
                     {
                         InvokeAsync(() =>
                         {
@@ -233,19 +258,21 @@ public partial class UploadData : ComponentBase, IAsyncDisposable, IDisposable
                 }
                 else
                 {
-                    Logger.LogInformation("File uploaded successfully - not a duplicate");
+                    if (Logger.IsEnabled(LogLevel.Information))
+                    {
+                        Logger.LogInformation("File uploaded successfully - not a duplicate");
+                        Logger.LogInformation("File uploaded successfully: {FileName}, Size: {Size}, Hash: {Hash}",
+                            result.FileName, result.Size, result.FileHash);
+                    }
                     _uploadMessage = result.Message ?? $"File '{result.FileName}' uploaded successfully.";
                     _messageClass = "success";
-                    Logger.LogInformation("File uploaded successfully: {FileName}, Size: {Size}, Hash: {Hash}", 
-                        result.FileName, result.Size, result.FileHash);
                 }
 
                 _selectedBrowserFile = null;
 
-                // Reload the file list only if it wasn't a duplicate
                 if (!result.IsDuplicate)
                 {
-                    await LoadUploadedFiles();
+                    await LoadUploadedFiles().ConfigureAwait(false);
                 }
             }
             else
@@ -254,13 +281,15 @@ public partial class UploadData : ComponentBase, IAsyncDisposable, IDisposable
                 _uploadMessage = "Upload Failed.";
                 _messageClass = "error";
                 _uploadErrors.Clear();
-                Logger.LogError("Upload failed: {Error}", result.Error);
+                if (Logger.IsEnabled(LogLevel.Error))
+                {
+                    Logger.LogError("Upload failed: {Error}", result.Error);
+                }
 
                 if (!string.IsNullOrWhiteSpace(result.Error))
                 {
                     try
                     {
-                        // Try to parse error as JSON first
                         using var doc = JsonDocument.Parse(result.Error);
                         if (doc.RootElement.TryGetProperty("error", out var errorProp))
                         {
@@ -283,7 +312,6 @@ public partial class UploadData : ComponentBase, IAsyncDisposable, IDisposable
                     }
                     catch (JsonException)
                     {
-                        // Not JSON, just show the error string
                         _uploadErrors.Add(result.Error);
                     }
                 }
@@ -291,7 +319,10 @@ public partial class UploadData : ComponentBase, IAsyncDisposable, IDisposable
         }
         catch (Exception ex)
         {
-            Logger.LogError(ex, "Error in UploadFile");
+            if (Logger.IsEnabled(LogLevel.Error))
+            {
+                Logger.LogError(ex, "Error in UploadFile");
+            }
             _uploadMessage = $"Error: {ex.Message}";
             _messageClass = "error";
             _uploadErrors.Clear();
@@ -306,10 +337,9 @@ public partial class UploadData : ComponentBase, IAsyncDisposable, IDisposable
             }
             StateHasChanged();
 
-            // Clear progress after success message is shown
             if (_uploadProgress == 100)
             {
-                await Task.Delay(2000);
+                await Task.Delay(2000).ConfigureAwait(false);
                 _uploadProgress = 0;
                 StateHasChanged();
             }
@@ -320,18 +350,17 @@ public partial class UploadData : ComponentBase, IAsyncDisposable, IDisposable
     {
         try
         {
-            var success = await FileStorageService.DeleteFileAsync(id);
+            var success = await FileStorageService.DeleteFileAsync(id).ConfigureAwait(false);
             if (success)
             {
                 _uploadMessage = "File deleted successfully.";
                 _messageClass = "success";
-                
-                // Clear duplicate detection state when showing other messages
+
                 _isDuplicate = false;
                 _duplicateFileInfo = null;
                 _showDuplicateToast = false;
-                
-                await LoadUploadedFiles();
+
+                await LoadUploadedFiles().ConfigureAwait(false);
             }
             else
             {
@@ -341,7 +370,10 @@ public partial class UploadData : ComponentBase, IAsyncDisposable, IDisposable
         }
         catch (Exception ex)
         {
-            Logger.LogError(ex, "Error deleting file");
+            if (Logger.IsEnabled(LogLevel.Error))
+            {
+                Logger.LogError(ex, "Error deleting file");
+            }
             _uploadMessage = $"Error deleting file: {ex.Message}";
             _messageClass = "error";
         }
@@ -359,14 +391,12 @@ public partial class UploadData : ComponentBase, IAsyncDisposable, IDisposable
             _messageClass = "info";
             _uploadErrors.Clear();
             
-            // Clear previous duplicate detection state
             _isDuplicate = false;
             _duplicateFileInfo = null;
             _showDuplicateToast = false;
             
             StateHasChanged();
 
-            // Validate URL
             if (string.IsNullOrWhiteSpace(_websiteUrl))
             {
                 _uploadMessage = "Please enter a website URL.";
@@ -389,22 +419,24 @@ public partial class UploadData : ComponentBase, IAsyncDisposable, IDisposable
             _uploadProgress = 30;
             StateHasChanged();
 
-            // Call API to add URL
             var client = ClientFactory.CreateClient();
             var baseUri = new Uri(NavigationManager.BaseUri);
             var apiUri = new Uri(baseUri, "/api/FileUpload/url");
-            var response = await client.PostAsJsonAsync(apiUri, new { Url = _websiteUrl });
+            var response = await client.PostAsJsonAsync(apiUri, new { Url = _websiteUrl }).ConfigureAwait(false);
 
             _uploadProgress = 90;
             StateHasChanged();
 
             if (response.IsSuccessStatusCode)
             {
-                var result = await response.Content.ReadFromJsonAsync<UrlUploadResult>();
+                var result = await response.Content.ReadFromJsonAsync<UrlUploadResult>().ConfigureAwait(false);
                 
                 if (result == null)
                 {
-                    Logger.LogError("URL upload returned an empty or invalid response.");
+                    if (Logger.IsEnabled(LogLevel.Error))
+                    {
+                        Logger.LogError("URL upload returned an empty or invalid response.");
+                    }
                     _uploadProgress = 0;
                     _uploadMessage = "Failed to add website URL: invalid server response.";
                     _messageClass = "error";
@@ -415,10 +447,12 @@ public partial class UploadData : ComponentBase, IAsyncDisposable, IDisposable
 
                 if (result.Success)
                 {
-                    // Handle duplicate detection
                     if (result.IsDuplicate)
                     {
-                        Logger.LogInformation("Duplicate website URL detected - showing toast notification");
+                        if (Logger.IsEnabled(LogLevel.Information))
+                        {
+                            Logger.LogInformation("Duplicate website URL detected - showing toast notification");
+                        }
                         _isDuplicate = true;
                         _showDuplicateToast = true;
                         _duplicateFileInfo = new DuplicateFileInfo
@@ -432,7 +466,6 @@ public partial class UploadData : ComponentBase, IAsyncDisposable, IDisposable
                         _uploadMessage = $"This website URL already exists and was not added to prevent duplicates.";
                         _messageClass = "warning";
                         
-                        // Auto-hide toast after 8 seconds
                         _ = Task.Delay(8000).ContinueWith(_ => 
                         {
                             InvokeAsync(() =>
@@ -446,16 +479,17 @@ public partial class UploadData : ComponentBase, IAsyncDisposable, IDisposable
                     {
                         _uploadMessage = result.Message ?? $"Website URL added successfully.";
                         _messageClass = "success";
-                        Logger.LogInformation("Website URL added successfully: {Url}", _websiteUrl);
+                        if (Logger.IsEnabled(LogLevel.Information))
+                        {
+                            Logger.LogInformation("Website URL added successfully: {Url}", _websiteUrl);
+                        }
                     }
 
-                    // Clear the URL input
                     _websiteUrl = string.Empty;
 
-                    // Reload the file list only if it wasn't a duplicate
                     if (!result.IsDuplicate)
                     {
-                        await LoadUploadedFiles();
+                        await LoadUploadedFiles().ConfigureAwait(false);
                     }
                 }
                 else
@@ -470,16 +504,22 @@ public partial class UploadData : ComponentBase, IAsyncDisposable, IDisposable
             }
             else
             {
-                var errorContent = await response.Content.ReadAsStringAsync();
+                var errorContent = await response.Content.ReadAsStringAsync().ConfigureAwait(false);
                 _uploadMessage = "Failed to add website URL.";
                 _messageClass = "error";
                 _uploadErrors.Add(errorContent);
-                Logger.LogError("Website URL upload failed with status {StatusCode}: {Error}", response.StatusCode, errorContent);
+                if (Logger.IsEnabled(LogLevel.Error))
+                {
+                    Logger.LogError("Website URL upload failed with status {StatusCode}: {Error}", response.StatusCode, errorContent);
+                }
             }
         }
         catch (Exception ex)
         {
-            Logger.LogError(ex, "Error uploading website URL: {Url}", _websiteUrl);
+            if (Logger.IsEnabled(LogLevel.Error))
+            {
+                Logger.LogError(ex, "Error uploading website URL: {Url}", _websiteUrl);
+            }
             _uploadMessage = $"Error: {ex.Message}";
             _messageClass = "error";
             _uploadErrors.Clear();
@@ -494,10 +534,9 @@ public partial class UploadData : ComponentBase, IAsyncDisposable, IDisposable
             }
             StateHasChanged();
 
-            // Clear progress after success message is shown
             if (_uploadProgress == 100)
             {
-                await Task.Delay(2000);
+                await Task.Delay(2000).ConfigureAwait(false);
                 _uploadProgress = 0;
                 StateHasChanged();
             }
@@ -515,6 +554,7 @@ public partial class UploadData : ComponentBase, IAsyncDisposable, IDisposable
         {
             Logger.LogWarning(ex, "Error during component disposal");
         }
+        GC.SuppressFinalize(this);
         await Task.CompletedTask;
     }
 
@@ -529,18 +569,19 @@ public partial class UploadData : ComponentBase, IAsyncDisposable, IDisposable
         {
             Logger.LogWarning(ex, "Error during component disposal");
         }
+        GC.SuppressFinalize(this);
     }
 
     private static string FormatFileSize(long bytes)
     {
-        string[] sizes = { "B", "KB", "MB", "GB", "TB" };
+        string[] sizes = ["B", "KB", "MB", "GB", "TB"];
         int order = 0;
         double size = bytes;
 
         while (size >= 1024 && order < sizes.Length - 1)
         {
             order++;
-            size = size / 1024;
+            size /= 1024;
         }
 
         return $"{size:0.##} {sizes[order]}";

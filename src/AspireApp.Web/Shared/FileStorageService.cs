@@ -3,23 +3,16 @@ using System.Security.Cryptography;
 using System.Text;
 using AspireApp.Web.Data;
 
-namespace AspireApp.Web.Data;
+namespace AspireApp.Web.Shared;
 
-public class FileStorageService
+public class FileStorageService(
+    UploadDbContext context,
+    ILogger<FileStorageService> logger,
+    string dataDirectory)
 {
-    private readonly UploadDbContext _context;
-    private readonly ILogger<FileStorageService> _logger;
-    private readonly string _dataDirectory;
-
-    public FileStorageService(
-        UploadDbContext context, 
-        ILogger<FileStorageService> logger, 
-        string dataDirectory)
-    {
-        _context = context;
-        _logger = logger;
-        _dataDirectory = dataDirectory;
-    }
+    private readonly UploadDbContext _context = context;
+    private readonly ILogger<FileStorageService> _logger = logger;
+    private readonly string _dataDirectory = dataDirectory;
 
     /// <summary>
     /// Ensures the database and data directory are properly initialized
@@ -32,26 +25,38 @@ public class FileStorageService
             if (!Directory.Exists(_dataDirectory))
             {
                 Directory.CreateDirectory(_dataDirectory);
-                _logger.LogInformation("Created data directory: {DataDirectory}", _dataDirectory);
+                if (_logger.IsEnabled(LogLevel.Information))
+                {
+                    _logger.LogInformation("Created data directory: {DataDirectory}", _dataDirectory);
+                }
             }
 
             // Ensure database can be accessed
             var canConnect = await _context.Database.CanConnectAsync();
             if (!canConnect)
             {
-                _logger.LogError("Cannot connect to database");
+                if (_logger.IsEnabled(LogLevel.Error))
+                {
+                    _logger.LogError("Cannot connect to database");
+                }
                 return false;
             }
 
             // Ensure database schema is created (EF Core handles this)
             await _context.Database.EnsureCreatedAsync();
 
-            _logger.LogInformation("Database and directory initialized successfully");
+            if (_logger.IsEnabled(LogLevel.Information))
+            {
+                _logger.LogInformation("Database and directory initialized successfully");
+            }
             return true;
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "Error ensuring database and directory initialization");
+            if (_logger.IsEnabled(LogLevel.Error))
+            {
+                _logger.LogError(ex, "Error ensuring database and directory initialization");
+            }
             return false;
         }
     }
@@ -61,8 +66,7 @@ public class FileStorageService
     /// </summary>
     public static string CalculateFileHash(Stream fileStream)
     {
-        using var sha256 = SHA256.Create();
-        var hashBytes = sha256.ComputeHash(fileStream);
+        var hashBytes = SHA256.HashData(fileStream);
         return Convert.ToHexString(hashBytes);
     }
 
@@ -72,8 +76,7 @@ public class FileStorageService
     public static async Task<string> CalculateFileHashAsync(string filePath)
     {
         using var fileStream = File.OpenRead(filePath);
-        using var sha256 = SHA256.Create();
-        var hashBytes = await Task.Run(() => sha256.ComputeHash(fileStream));
+        var hashBytes = await Task.Run(() => SHA256.HashData(fileStream));
         return Convert.ToHexString(hashBytes);
     }
 
@@ -82,9 +85,8 @@ public class FileStorageService
     /// </summary>
     public static string CalculateUrlHash(string url)
     {
-        using var sha256 = SHA256.Create();
         var urlBytes = Encoding.UTF8.GetBytes(url.Trim().ToLowerInvariant());
-        var hashBytes = sha256.ComputeHash(urlBytes);
+        var hashBytes = SHA256.HashData(urlBytes);
         return Convert.ToHexString(hashBytes);
     }
 
@@ -101,7 +103,10 @@ public class FileStorageService
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "Error checking for duplicate files with hash: {FileHash}", fileHash);
+            if (_logger.IsEnabled(LogLevel.Error))
+            {
+                _logger.LogError(ex, "Error checking for duplicate files with hash: {FileHash}", fileHash);
+            }
             return null;
         }
     }
@@ -130,15 +135,21 @@ public class FileStorageService
 
             _context.Datasources.Add(fileMetadata);
             await _context.SaveChangesAsync();
-            
-            _logger.LogInformation("Added file metadata to database: {FileName}, Size: {Size}, Hash: {Hash}, Status: {Status}", 
-                fileName, size, fileHash, status);
+
+            if (_logger.IsEnabled(LogLevel.Information))
+            {
+                _logger.LogInformation("Added file metadata to database: {FileName}, Size: {Size}, Hash: {Hash}, Status: {Status}",
+                    fileName, size, fileHash, status);
+            }
 
             return fileMetadata;
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "Error adding file metadata to database");
+            if (_logger.IsEnabled(LogLevel.Error))
+            {
+                _logger.LogError(ex, "Error adding file metadata to database");
+            }
             throw;
         }
     }
@@ -159,7 +170,7 @@ public class FileStorageService
         try
         {
             await EnsureInitializedAsync();
-            
+
             var file = await _context.Datasources.FindAsync(fileId);
             if (file == null)
             {
@@ -167,7 +178,7 @@ public class FileStorageService
             }
 
             file.Status = status;
-            
+
             // Update timestamp fields based on status
             if (status == "processing")
             {
@@ -177,15 +188,21 @@ public class FileStorageService
             {
                 file.ProcessingCompletedAt = DateTime.UtcNow;
             }
-            
+
             await _context.SaveChangesAsync();
-            
-            _logger.LogInformation("Updated file status: {FileId}, Status: {Status}", fileId, status);
+
+            if (_logger.IsEnabled(LogLevel.Information))
+            {
+                _logger.LogInformation("Updated file status: {FileId}, Status: {Status}", fileId, status);
+            }
             return true;
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "Error updating file status for file ID: {FileId}", fileId);
+            if (_logger.IsEnabled(LogLevel.Error))
+            {
+                _logger.LogError(ex, "Error updating file status for file ID: {FileId}", fileId);
+            }
             throw;
         }
     }
@@ -198,7 +215,7 @@ public class FileStorageService
         try
         {
             await EnsureInitializedAsync();
-            
+
             var file = await _context.Datasources.FindAsync(fileId);
             if (file == null)
             {
@@ -207,13 +224,19 @@ public class FileStorageService
 
             file.FileHash = fileHash;
             await _context.SaveChangesAsync();
-            
-            _logger.LogInformation("Updated file hash: {FileId}, Hash: {Hash}", fileId, fileHash);
+
+            if (_logger.IsEnabled(LogLevel.Information))
+            {
+                _logger.LogInformation("Updated file hash: {FileId}, Hash: {Hash}", fileId, fileHash);
+            }
             return true;
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "Error updating file hash for file ID: {FileId}", fileId);
+            if (_logger.IsEnabled(LogLevel.Error))
+            {
+                _logger.LogError(ex, "Error updating file hash for file ID: {FileId}", fileId);
+            }
             throw;
         }
     }
@@ -226,17 +249,23 @@ public class FileStorageService
             var initialized = await EnsureInitializedAsync();
             if (!initialized)
             {
-                _logger.LogWarning("Database initialization failed, returning empty list");
-                return new List<FileMetadata>();
+                if (_logger.IsEnabled(LogLevel.Warning))
+                {
+                    _logger.LogWarning("Database initialization failed, returning empty list");
+                }
+                return [];
             }
 
             return await _context.Datasources.OrderByDescending(f => f.UploadedAt).ToListAsync();
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "Error retrieving files from database");
+            if (_logger.IsEnabled(LogLevel.Error))
+            {
+                _logger.LogError(ex, "Error retrieving files from database");
+            }
             // Return empty list instead of throwing to allow UI to function
-            return new List<FileMetadata>();
+            return [];
         }
     }
 
@@ -252,36 +281,51 @@ public class FileStorageService
             {
                 return false;
             }
-            
+
             var fileName = file.FileName;
             var filePath = Path.Combine(_dataDirectory, fileName);
 
             // EF Core will cascade delete related datasource_pages records
             _context.Datasources.Remove(file);
             await _context.SaveChangesAsync();
-            
-            _logger.LogInformation("Deleted file metadata from database: {FileName}", fileName);
+
+            if (_logger.IsEnabled(LogLevel.Information))
+            {
+                _logger.LogInformation("Deleted file metadata from database: {FileName}", fileName);
+            }
 
             // Delete the physical file if it exists (only for uploaded files, not URLs)
             if (file.SourceType == "upload" && File.Exists(filePath))
             {
                 File.Delete(filePath);
-                _logger.LogInformation("Deleted file from data directory: {FilePath}", filePath);
+                if (_logger.IsEnabled(LogLevel.Information))
+                {
+                    _logger.LogInformation("Deleted file from data directory: {FilePath}", filePath);
+                }
             }
             else if (file.SourceType == "url")
             {
-                _logger.LogInformation("Deleted URL datasource: {Url}", file.SourceUrl);
+                if (_logger.IsEnabled(LogLevel.Information))
+                {
+                    _logger.LogInformation("Deleted URL datasource: {Url}", file.SourceUrl);
+                }
             }
             else
             {
-                _logger.LogWarning("File not found in data directory for deletion: {FilePath}", filePath);
+                if (_logger.IsEnabled(LogLevel.Warning))
+                {
+                    _logger.LogWarning("File not found in data directory for deletion: {FilePath}", filePath);
+                }
             }
-            
+
             return true;
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "Error deleting file metadata or file from data directory");
+            if (_logger.IsEnabled(LogLevel.Error))
+            {
+                _logger.LogError(ex, "Error deleting file metadata or file from data directory");
+            }
             throw;
         }
     }
@@ -299,7 +343,10 @@ public class FileStorageService
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "Error checking for duplicate URL: {Url}", sourceUrl);
+            if (_logger.IsEnabled(LogLevel.Error))
+            {
+                _logger.LogError(ex, "Error checking for duplicate URL: {Url}", sourceUrl);
+            }
             return null;
         }
     }
@@ -333,15 +380,21 @@ public class FileStorageService
 
             _context.Datasources.Add(fileMetadata);
             await _context.SaveChangesAsync();
-            
-            _logger.LogInformation("Added URL metadata to database: {SourceName}, URL: {Url}, Hash: {Hash}, Status: {Status}", 
-                sourceName, sourceUrl, urlHash, status);
+
+            if (_logger.IsEnabled(LogLevel.Information))
+            {
+                _logger.LogInformation("Added URL metadata to database: {SourceName}, URL: {Url}, Hash: {Hash}, Status: {Status}",
+                    sourceName, sourceUrl, urlHash, status);
+            }
 
             return fileMetadata;
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "Error adding URL metadata to database");
+            if (_logger.IsEnabled(LogLevel.Error))
+            {
+                _logger.LogError(ex, "Error adding URL metadata to database");
+            }
             throw;
         }
     }
