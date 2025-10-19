@@ -15,7 +15,7 @@ public partial class UploadData : ComponentBase, IAsyncDisposable, IDisposable
     private DotNetObjectReference<UploadData>? _objectReference;
     protected List<FileMetadata>? Files;
     private bool _isLoading = true;
-    private bool _isUploading = false;
+    protected bool _isUploading = false;
     private int _uploadProgress = 0;
     private List<string> _uploadErrors = new();
     
@@ -49,9 +49,35 @@ public partial class UploadData : ComponentBase, IAsyncDisposable, IDisposable
 
     protected bool IsFileSelected => _selectedBrowserFile != null;
 
+    // Attribute dictionaries for conditional disabled attributes (used for attribute splatting)
+    protected IReadOnlyDictionary<string, object> UploadButtonAttributes =>
+        (!IsFileSelected || _isUploading)
+            ? new Dictionary<string, object> { { "disabled", true } }
+            : new Dictionary<string, object>();
+
+    protected IReadOnlyDictionary<string, object> UrlInputAttributes =>
+        (_isUploading)
+            ? new Dictionary<string, object> { { "disabled", true } }
+            : new Dictionary<string, object>();
+
+    protected IReadOnlyDictionary<string, object> AddWebsiteButtonAttributes =>
+        (string.IsNullOrWhiteSpace(_websiteUrl) || _isUploading)
+            ? new Dictionary<string, object> { { "disabled", true } }
+            : new Dictionary<string, object>();
+
     protected override async Task OnInitializedAsync()
     {
         Logger.LogInformation("UploadData component initialized");
+        // Initialize object reference for potential JS interop usage
+        try
+        {
+            _objectReference = DotNetObjectReference.Create(this);
+        }
+        catch (Exception ex)
+        {
+            Logger.LogDebug(ex, "Unable to create DotNetObjectReference");
+        }
+
         await LoadUploadedFiles();
     }
 
@@ -71,7 +97,7 @@ public partial class UploadData : ComponentBase, IAsyncDisposable, IDisposable
             }
 
             Files = await FileStorageService.GetAllFilesAsync();
-            Logger.LogInformation("Loaded {Count} uploaded files", Files.Count);
+            Logger.LogInformation("Loaded {Count} uploaded files", Files?.Count ?? 0);
             
             // Clear any previous error messages if loading succeeds
             if (Files != null)
@@ -155,6 +181,15 @@ public partial class UploadData : ComponentBase, IAsyncDisposable, IDisposable
             StateHasChanged();
 
             var result = await response.Content.ReadFromJsonAsync<FileUploadResult>();
+
+            if (result == null)
+            {
+                Logger.LogError("Upload returned an empty or invalid response.");
+                _uploadProgress = 0;
+                _uploadMessage = "Upload failed: invalid server response.";
+                _messageClass = "error";
+                return;
+            }
 
             Logger.LogInformation("Upload result received: Success={Success}, IsDuplicate={IsDuplicate}, FileName={FileName}", 
                 result.Success, result.IsDuplicate, result.FileName);
@@ -367,9 +402,18 @@ public partial class UploadData : ComponentBase, IAsyncDisposable, IDisposable
             {
                 var result = await response.Content.ReadFromJsonAsync<UrlUploadResult>();
                 
+                if (result == null)
+                {
+                    Logger.LogError("URL upload returned an empty or invalid response.");
+                    _uploadProgress = 0;
+                    _uploadMessage = "Failed to add website URL: invalid server response.";
+                    _messageClass = "error";
+                    return;
+                }
+
                 _uploadProgress = 100;
 
-                if (result?.Success == true)
+                if (result.Success)
                 {
                     // Handle duplicate detection
                     if (result.IsDuplicate)
@@ -418,7 +462,7 @@ public partial class UploadData : ComponentBase, IAsyncDisposable, IDisposable
                 {
                     _uploadMessage = "Failed to add website URL.";
                     _messageClass = "error";
-                    if (!string.IsNullOrWhiteSpace(result?.Error))
+                    if (!string.IsNullOrWhiteSpace(result.Error))
                     {
                         _uploadErrors.Add(result.Error);
                     }

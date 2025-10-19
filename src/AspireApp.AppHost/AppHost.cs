@@ -1,3 +1,5 @@
+using System.Threading;
+
 // ASPIRE LOCAL SETUP
 var builder = DistributedApplication.CreateBuilder(args);
 
@@ -21,6 +23,10 @@ var appmodel = ollama.AddModel("chat", modelName);
 var neo4jUser = builder.AddParameter("neo4j-user", "neo4j"); 
 var neo4jPass = builder.AddParameter("neo4j-pass", "neo4j@secret");
 
+// Retrieve parameter values asynchronously to avoid using obsolete .Value
+var neo4jUserValue = await neo4jUser.Resource.GetValueAsync(CancellationToken.None);
+var neo4jPassValue = await neo4jPass.Resource.GetValueAsync(CancellationToken.None);
+
 // Configure Neo4j build options
 var useLightweightBuild = builder.Configuration["USE_LIGHTWEIGHT_PYTHON"] ?? "false";
 var useLightweightNeo4j = builder.Configuration["USE_LIGHTWEIGHT_NEO4J"] ?? "false";
@@ -36,7 +42,7 @@ var neo4jDb = builder.AddDockerfile("graph-db", "../../src/AspireApp.Neo4jServic
     .WithVolume("neo4j-conf", "/conf")                            // Configuration persistence
     .WithVolume("neo4j-import", "/import")                        // Import cache for bulk operations
     .WithBindMount("../../database/neo4j/backup", "/backup")       // Backup directory (optional)
-    .WithEnvironment("NEO4J_AUTH", $"{neo4jUser.Resource.Value}/{neo4jPass.Resource.Value}")
+    .WithEnvironment("NEO4J_AUTH", $"{neo4jUserValue}/{neo4jPassValue}")
     .WithEnvironment("NEO4J_ACCEPT_LICENSE_AGREEMENT", "yes")
     .WithEnvironment("DOCKER_BUILDKIT", "1")                      // Enable BuildKit for Neo4j too
     .WithHttpHealthCheck("/");
@@ -72,7 +78,7 @@ builder.AddProject<Projects.AspireApp_Web>("webfrontend")
     .WithEnvironment("AI-Model", aiModel.Resource)
     .WithEnvironment("NEO4J_HTTP_URL", neo4jDb.GetEndpoint("http"))      // Neo4j browser endpoint
     .WithEnvironment("NEO4J_BOLT_URL", neo4jDb.GetEndpoint("bolt"))      // Neo4j bolt endpoint
-    .WithEnvironment("NEO4J_AUTH", $"neo4j/{neo4jPass.Resource.Value}")  // Neo4j credentials
+    .WithEnvironment("NEO4J_AUTH", $"neo4j/{neo4jPassValue}")  // Neo4j credentials
     .WithEnvironment("PYTHON_SERVICE_URL", pythonServices.GetEndpoint("http")) // Get Python service endpoint
     .WaitFor(ollama)
     .WaitFor(appmodel)

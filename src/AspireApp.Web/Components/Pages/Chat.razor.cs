@@ -415,6 +415,17 @@ namespace AspireApp.Web.Components.Pages
             return IsSpeaking && CurrentlySpeakingMessage == message;
         }
 
+        // Helper properties for HTML attributes to avoid complex Razor expressions
+        private bool IsTtsMessageButtonDisabled(string message)
+        {
+            return IsSpeaking && !IsMessageBeingSpoken(message);
+        }
+
+        private bool IsTtsButtonDisabled()
+        {
+            return string.IsNullOrEmpty(AIResponse);
+        }
+
         private string ConvertMarkdownToPlainText(string markdown)
         {
             if (string.IsNullOrWhiteSpace(markdown))
@@ -439,6 +450,8 @@ namespace AspireApp.Web.Components.Pages
                 return markdown;
             }
         }
+
+        // Other existing methods...
 
         protected override async Task OnAfterRenderAsync(bool firstRender)
         {

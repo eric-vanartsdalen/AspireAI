@@ -756,20 +756,40 @@
         <i class="bi bi-info-circle"></i> For best results, ensure your document is well-structured and contains identifiable data fields.
     </div>
 
-    <button class="btn btn-primary btn-sm" @onclick="UploadFiles" disabled="@(!IsFileSelected || _isUploading)">
-        @if (_isUploading)
-        {
-            <span class="loading-indicator">
-                <span class="spinner-border" aria-hidden="true"></span>
-                Processing...
-            </span>
-        }
-        else
-        {
-            <i class="bi bi-upload"></i>
-            <span>Start Upload</span>
-        }
-    </button>
+    @if (!IsFileSelected || _isUploading)
+    {
+        <button class="btn btn-primary btn-sm" @onclick="UploadFiles" disabled>
+            @if (_isUploading)
+            {
+                <span class="loading-indicator">
+                    <span class="spinner-border" aria-hidden="true"></span>
+                    Processing...
+                </span>
+            }
+            else
+            {
+                <i class="bi bi-upload"></i>
+                <span>Start Upload</span>
+            }
+        </button>
+    }
+    else
+    {
+        <button class="btn btn-primary btn-sm" @onclick="UploadFiles">
+            @if (_isUploading)
+            {
+                <span class="loading-indicator">
+                    <span class="spinner-border" aria-hidden="true"></span>
+                    Processing...
+                </span>
+            }
+            else
+            {
+                <i class="bi bi-upload"></i>
+                <span>Start Upload</span>
+            }
+        </button>
+    }
 
     <!-- Divider -->
     <div class="divider">
@@ -784,26 +804,53 @@
 
     <div class="url-input-group">
         <label for="websiteUrl">Website URL or Web Resource</label>
-        <input type="text" id="websiteUrl" @bind="_websiteUrl" class="form-control" 
-               placeholder="https://example.com or https://example.com/document.pdf" 
-               disabled="@_isUploading" />
-    </div>
-    
-    <button class="btn btn-primary btn-sm" @onclick="HandleUrlUpload" disabled="@(string.IsNullOrWhiteSpace(_websiteUrl) || _isUploading)">
         @if (_isUploading)
         {
-            <span class="loading-indicator">
-                <span class="spinner-border" aria-hidden="true"></span>
-                Adding...
-            </span>
+            <input type="text" id="websiteUrl" @bind="_websiteUrl" class="form-control" 
+                   placeholder="https://example.com or https://example.com/document.pdf" disabled />
         }
         else
         {
-            <i class="bi bi-link-45deg"></i>
-            <span>Add Website</span>
+            <input type="text" id="websiteUrl" @bind="_websiteUrl" class="form-control" 
+                   placeholder="https://example.com or https://example.com/document.pdf" />
         }
-    </button>
+    </div>
     
+    @if (string.IsNullOrWhiteSpace(_websiteUrl) || _isUploading)
+    {
+        <button class="btn btn-primary btn-sm" @onclick="HandleUrlUpload" disabled>
+            @if (_isUploading)
+            {
+                <span class="loading-indicator">
+                    <span class="spinner-border" aria-hidden="true"></span>
+                    Adding...
+                </span>
+            }
+            else
+            {
+                <i class="bi bi-link-45deg"></i>
+                <span>Add Website</span>
+            }
+        </button>
+    }
+    else
+    {
+        <button class="btn btn-primary btn-sm" @onclick="HandleUrlUpload">
+            @if (_isUploading)
+            {
+                <span class="loading-indicator">
+                    <span class="spinner-border" aria-hidden="true"></span>
+                    Adding...
+                </span>
+            }
+            else
+            {
+                <i class="bi bi-link-45deg"></i>
+                <span>Add Website</span>
+            }
+        </button>
+    }
+
     <div class="upload-hint">
         <i class="bi bi-info-circle"></i> Enter any website URL, web page, or online document. The URL will be saved as a data source for future processing.
     </div>
@@ -829,7 +876,7 @@
     {
         <div class="upload-progress">
             <div class="progress-bar">
-                <div class="progress-fill" style="width: @(_uploadProgress)%"></div>
+                <div class="progress-fill" style="width: @($"{_uploadProgress}%")"></div>
             </div>
         </div>
     }

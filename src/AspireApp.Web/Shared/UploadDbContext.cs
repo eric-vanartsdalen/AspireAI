@@ -110,6 +110,7 @@ namespace AspireApp.Web.Data
             // ==================== Legacy Schema Configuration (Backward Compatibility) ====================
 
             // Configure legacy Documents entity
+#pragma warning disable CS0618 // Legacy Document entity is kept for backward compatibility
             modelBuilder.Entity<Document>(entity =>
             {
                 entity.ToTable("documents");
@@ -149,6 +150,7 @@ namespace AspireApp.Web.Data
                 // Legacy indexes
                 entity.HasIndex(e => e.DocumentId).HasDatabaseName("idx_processed_documents_document_id");
             });
+#pragma warning restore CS0618
         }
     }
 }

@@ -210,7 +210,6 @@ namespace AspireApp.Web.Data
     // These entities are maintained for backward compatibility during migration
     // TODO: Remove after all code is updated to use FileMetadata directly
 
-    [Obsolete("Use FileMetadata instead. This entity exists only for backward compatibility.")]
     [Table("documents")]
     public class Document
     {
@@ -253,7 +252,6 @@ namespace AspireApp.Web.Data
         public virtual ICollection<ProcessedDocument> ProcessedDocuments { get; set; } = new List<ProcessedDocument>();
     }
 
-    [Obsolete("Use FileMetadata.DoclingDocumentPath instead. This entity exists only for backward compatibility.")]
     [Table("processed_documents")]
     public class ProcessedDocument
     {
