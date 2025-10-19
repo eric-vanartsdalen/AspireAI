@@ -8,7 +8,7 @@ Follow the instructions below carefully.
 
 ---
 
-## 1) What this repo is
+## 1) This repo details
 
 This repository hosts a **.NET Aspire AppHost** orchestration used as a learning/demo platform:
 

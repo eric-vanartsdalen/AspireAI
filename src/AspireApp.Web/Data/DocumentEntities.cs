@@ -4,12 +4,12 @@ using System.ComponentModel.DataAnnotations.Schema;
 namespace AspireApp.Web.Data
 {
     /// <summary>
-    /// Unified file entity that tracks the complete lifecycle:
+    /// Unified datasource entity that tracks the complete lifecycle:
     /// Upload ? Docling Processing ? Page Extraction ? Neo4j Integration
     /// 
     /// Replaces the previous Files/Documents dual-table design with a single source of truth.
     /// </summary>
-    [Table("files")]
+    [Table("datasources")]
     public class FileMetadata
     {
         [Key]
@@ -19,27 +19,27 @@ namespace AspireApp.Web.Data
         // ==================== Core File Identification ====================
         
         [Required]
-        [Column("file_name")]
+        [Column("source_name")]
         [MaxLength(255)]
         public string FileName { get; set; } = string.Empty;
 
         [Required]
-        [Column("original_file_name")]
+        [Column("original_source_name")]
         [MaxLength(255)]
         public string OriginalFileName { get; set; } = string.Empty;
 
         [Required]
-        [Column("file_path")]
+        [Column("source_path")]
         [MaxLength(500)]
         public string FilePath { get; set; } = string.Empty;
 
-        [Column("file_hash")]
+        [Column("source_hash")]
         [MaxLength(64)]
         public string FileHash { get; set; } = string.Empty;
 
         // ==================== File Metadata ====================
         
-        [Column("file_size")]
+        [Column("source_size")]
         public long FileSize { get; set; } = 0;
 
         [Column("mime_type")]
@@ -48,7 +48,7 @@ namespace AspireApp.Web.Data
 
         // ==================== Upload Tracking ====================
         
-        [Column("uploaded_at")]
+        [Column("ingested_at")]
         public DateTime UploadedAt { get; set; } = DateTime.UtcNow;
 
         // ==================== Processing Lifecycle ====================
@@ -151,14 +151,14 @@ namespace AspireApp.Web.Data
     /// Document page entity for storing page-level content extracted by docling.
     /// Enables page-by-page RAG retrieval and Neo4j graph integration.
     /// </summary>
-    [Table("document_pages")]
+    [Table("datasource_pages")]
     public class DocumentPage
     {
         [Key]
         [Column("id")]
         public int Id { get; set; }
 
-        [Column("file_id")]
+        [Column("datasource_id")]
         public int FileId { get; set; }
 
         [Column("page_number")]

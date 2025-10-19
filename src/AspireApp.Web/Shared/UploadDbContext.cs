@@ -11,27 +11,31 @@ namespace AspireApp.Web.Data
         // ==================== Primary Schema ====================
         
         /// <summary>
-        /// Unified files table - single source of truth for file lifecycle
+        /// Unified datasources table - single source of truth for datasource lifecycle
         /// </summary>
-        public DbSet<FileMetadata> Files => Set<FileMetadata>();
+        public DbSet<FileMetadata> Datasources => Set<FileMetadata>();
         
         /// <summary>
-        /// Document pages for RAG retrieval
+        /// Datasource pages for RAG retrieval
         /// </summary>
-        public DbSet<DocumentPage> DocumentPages => Set<DocumentPage>();
+        public DbSet<DocumentPage> DatasourcePages => Set<DocumentPage>();
+
+        // Backward compatibility alias
+        [Obsolete("Use Datasources DbSet instead")]
+        public DbSet<FileMetadata> Files => Set<FileMetadata>();
 
         // ==================== Legacy Schema (Backward Compatibility) ====================
         
         /// <summary>
-        /// Legacy documents table - marked obsolete, use Files instead
+        /// Legacy documents table - marked obsolete, use Datasources instead
         /// </summary>
-        [Obsolete("Use Files DbSet instead")]
+        [Obsolete("Use Datasources DbSet instead")]
         public DbSet<Document> Documents => Set<Document>();
         
         /// <summary>
         /// Legacy processed documents table - marked obsolete
         /// </summary>
-        [Obsolete("Use Files.DoclingDocumentPath instead")]
+        [Obsolete("Use Datasources.DoclingDocumentPath instead")]
         public DbSet<ProcessedDocument> ProcessedDocuments => Set<ProcessedDocument>();
 
         protected override void OnModelCreating(ModelBuilder modelBuilder)
@@ -40,25 +44,25 @@ namespace AspireApp.Web.Data
 
             // ==================== Primary Schema Configuration ====================
 
-            // Configure Files entity
+            // Configure Datasources entity
             modelBuilder.Entity<FileMetadata>(entity =>
             {
-                entity.ToTable("files");
+                entity.ToTable("datasources");
                 entity.HasKey(e => e.Id);
                 entity.Property(e => e.Id).ValueGeneratedOnAdd();
                 
                 // Core identification
-                entity.Property(e => e.FileName).IsRequired().HasMaxLength(255);
-                entity.Property(e => e.OriginalFileName).IsRequired().HasMaxLength(255);
-                entity.Property(e => e.FilePath).IsRequired().HasMaxLength(500);
-                entity.Property(e => e.FileHash).HasMaxLength(64).HasDefaultValue(string.Empty);
+                entity.Property(e => e.FileName).IsRequired().HasMaxLength(255).HasColumnName("source_name");
+                entity.Property(e => e.OriginalFileName).IsRequired().HasMaxLength(255).HasColumnName("original_source_name");
+                entity.Property(e => e.FilePath).IsRequired().HasMaxLength(500).HasColumnName("source_path");
+                entity.Property(e => e.FileHash).HasMaxLength(64).HasDefaultValue(string.Empty).HasColumnName("source_hash");
                 
                 // Metadata
-                entity.Property(e => e.FileSize).HasDefaultValue(0);
+                entity.Property(e => e.FileSize).HasDefaultValue(0).HasColumnName("source_size");
                 entity.Property(e => e.MimeType).HasMaxLength(100);
                 
                 // Lifecycle tracking
-                entity.Property(e => e.UploadedAt).HasDefaultValueSql("CURRENT_TIMESTAMP");
+                entity.Property(e => e.UploadedAt).HasDefaultValueSql("CURRENT_TIMESTAMP").HasColumnName("ingested_at");
                 entity.Property(e => e.Status).IsRequired().HasMaxLength(50).HasDefaultValue("uploaded");
                 
                 // Docling output
@@ -72,10 +76,10 @@ namespace AspireApp.Web.Data
                 entity.Property(e => e.SourceUrl).HasMaxLength(500);
 
                 // Indexes for performance
-                entity.HasIndex(e => e.Status).HasDatabaseName("idx_files_status");
-                entity.HasIndex(e => e.FileHash).HasDatabaseName("idx_files_hash");
-                entity.HasIndex(e => e.UploadedAt).HasDatabaseName("idx_files_uploaded");
-                entity.HasIndex(e => e.SourceType).HasDatabaseName("idx_files_source_type");
+                entity.HasIndex(e => e.Status).HasDatabaseName("idx_datasources_status");
+                entity.HasIndex(e => e.FileHash).HasDatabaseName("idx_datasources_hash");
+                entity.HasIndex(e => e.UploadedAt).HasDatabaseName("idx_datasources_ingested");
+                entity.HasIndex(e => e.SourceType).HasDatabaseName("idx_datasources_type");
 
                 // Relationships
                 entity.HasMany(e => e.Pages)
@@ -84,22 +88,23 @@ namespace AspireApp.Web.Data
                       .OnDelete(DeleteBehavior.Cascade);
             });
 
-            // Configure DocumentPages entity
+            // Configure DatasourcePages entity
             modelBuilder.Entity<DocumentPage>(entity =>
             {
-                entity.ToTable("document_pages");
+                entity.ToTable("datasource_pages");
                 entity.HasKey(e => e.Id);
                 entity.Property(e => e.Id).ValueGeneratedOnAdd();
+                entity.Property(e => e.FileId).HasColumnName("datasource_id");
                 entity.Property(e => e.Content).IsRequired();
                 entity.Property(e => e.Neo4jPageNodeId).HasMaxLength(100);
 
-                // Unique constraint on file_id + page_number
+                // Unique constraint on datasource_id + page_number
                 entity.HasIndex(e => new { e.FileId, e.PageNumber })
                       .IsUnique()
-                      .HasDatabaseName("idx_pages_file_page");
+                      .HasDatabaseName("idx_pages_datasource_page");
 
                 // Indexes for performance
-                entity.HasIndex(e => e.FileId).HasDatabaseName("idx_pages_file_id");
+                entity.HasIndex(e => e.FileId).HasDatabaseName("idx_pages_datasource_id");
             });
 
             // ==================== Legacy Schema Configuration (Backward Compatibility) ====================

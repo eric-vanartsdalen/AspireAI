@@ -138,19 +138,19 @@ static async Task InitializeDatabaseAsync(IServiceProvider services, string conn
         var canConnect = await context.Database.CanConnectAsync();
         if (canConnect)
         {
-            Console.WriteLine("Database connection test successful");
+            Console.WriteLine("? Database connection test successful");
             
             // Show current database stats
-            var fileCount = await context.Files.CountAsync();
-            var pageCount = await context.DocumentPages.CountAsync();
+            var fileCount = await context.Datasources.CountAsync();
+            var pageCount = await context.DatasourcePages.CountAsync();
             
             Console.WriteLine($"Database initialized with:");
-            Console.WriteLine($"  - {fileCount} files in files table");
-            Console.WriteLine($"  - {pageCount} document pages");
+            Console.WriteLine($"  - {fileCount} datasources in datasources table");
+            Console.WriteLine($"  - {pageCount} datasource pages");
         }
         else
         {
-            Console.WriteLine("Warning: Database connection test failed");
+            Console.WriteLine("? Warning: Database connection test failed");
         }
     }
     catch (Exception ex)

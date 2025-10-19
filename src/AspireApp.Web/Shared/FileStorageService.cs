@@ -84,7 +84,7 @@ public class FileStorageService
         try
         {
             await EnsureInitializedAsync();
-            return await _context.Files
+            return await _context.Datasources
                 .FirstOrDefaultAsync(f => f.FileHash == fileHash);
         }
         catch (Exception ex)
@@ -116,7 +116,7 @@ public class FileStorageService
                 SourceType = "upload"
             };
 
-            _context.Files.Add(fileMetadata);
+            _context.Datasources.Add(fileMetadata);
             await _context.SaveChangesAsync();
             
             _logger.LogInformation("Added file metadata to database: {FileName}, Size: {Size}, Hash: {Hash}, Status: {Status}", 
@@ -148,7 +148,7 @@ public class FileStorageService
         {
             await EnsureInitializedAsync();
             
-            var file = await _context.Files.FindAsync(fileId);
+            var file = await _context.Datasources.FindAsync(fileId);
             if (file == null)
             {
                 return false;
@@ -187,7 +187,7 @@ public class FileStorageService
         {
             await EnsureInitializedAsync();
             
-            var file = await _context.Files.FindAsync(fileId);
+            var file = await _context.Datasources.FindAsync(fileId);
             if (file == null)
             {
                 return false;
@@ -218,7 +218,7 @@ public class FileStorageService
                 return new List<FileMetadata>();
             }
 
-            return await _context.Files.OrderByDescending(f => f.UploadedAt).ToListAsync();
+            return await _context.Datasources.OrderByDescending(f => f.UploadedAt).ToListAsync();
         }
         catch (Exception ex)
         {
@@ -235,7 +235,7 @@ public class FileStorageService
             // Ensure database is initialized before deleting
             await EnsureInitializedAsync();
 
-            var file = await _context.Files.FindAsync(id);
+            var file = await _context.Datasources.FindAsync(id);
             if (file == null)
             {
                 return false;
@@ -244,8 +244,8 @@ public class FileStorageService
             var fileName = file.FileName;
             var filePath = Path.Combine(_dataDirectory, fileName);
 
-            // EF Core will cascade delete related document_pages records
-            _context.Files.Remove(file);
+            // EF Core will cascade delete related datasource_pages records
+            _context.Datasources.Remove(file);
             await _context.SaveChangesAsync();
             
             _logger.LogInformation("Deleted file metadata from database: {FileName}", fileName);
