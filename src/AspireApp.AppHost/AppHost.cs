@@ -1,3 +1,5 @@
+using Aspire.Hosting;
+using Aspire.Hosting.ApplicationModel;
 using System.Threading;
 
 // ASPIRE LOCAL SETUP
@@ -14,9 +16,9 @@ var apiService = builder.AddProject<Projects.AspireApp_ApiService>("apiservice")
 // SETUP OLLAMA & MODEL CONTAINERS
 var modelName = builder.Configuration["AI-Model"] ?? "phi4-mini:latest";
 var ollama = builder.AddOllama("ollama")
-    .WithAnnotation(new ContainerImageAnnotation { Image = "ollama/ollama", Tag = "latest" })
-    .WithDataVolume()
-    .WithContainerRuntimeArgs("--gpus", "all");
+	.WithAnnotation(new ContainerImageAnnotation { Image = "ollama/ollama", Tag = "latest" })
+	.WithDataVolume()
+	.WithContainerRuntimeArgs("--gpus", "all");
 var appmodel = ollama.AddModel("chat", modelName);
 
 // Add a NEO4J container for graph database with caching optimizations

@@ -84,7 +84,7 @@ public partial class UploadData : ComponentBase, IAsyncDisposable, IDisposable
             }
         }
 
-        await LoadUploadedFiles().ConfigureAwait(false);
+        await LoadUploadedFiles();
     }
 
     private Task LoadUploadedFiles()
@@ -97,7 +97,7 @@ public partial class UploadData : ComponentBase, IAsyncDisposable, IDisposable
         _isLoading = true;
         try
         {
-            var initialized = await FileStorageService.EnsureInitializedAsync().ConfigureAwait(false);
+            var initialized = await FileStorageService.EnsureInitializedAsync();
             if (!initialized)
             {
                 _uploadMessage = "Database initialization failed. Please check the application logs.";
@@ -106,7 +106,7 @@ public partial class UploadData : ComponentBase, IAsyncDisposable, IDisposable
                 return;
             }
 
-            Files = await FileStorageService.GetAllFilesAsync().ConfigureAwait(false);
+            Files = await FileStorageService.GetAllFilesAsync();
             if (logger.IsEnabled(LogLevel.Information))
             {
                 var count = Files?.Count ?? 0;
@@ -154,7 +154,7 @@ public partial class UploadData : ComponentBase, IAsyncDisposable, IDisposable
         _duplicateFileInfo = null;
         _showDuplicateToast = false;
         StateHasChanged();
-        await Task.CompletedTask.ConfigureAwait(false);
+        await Task.CompletedTask;
     }
 
     protected async Task UploadFiles()
@@ -179,7 +179,7 @@ public partial class UploadData : ComponentBase, IAsyncDisposable, IDisposable
             {
                 _uploadProgress = i;
                 StateHasChanged();
-                await Task.Delay(100).ConfigureAwait(false);
+                await Task.Delay(100);
             }
 
             using var content = new MultipartFormDataContent();
@@ -190,12 +190,12 @@ public partial class UploadData : ComponentBase, IAsyncDisposable, IDisposable
             var client = ClientFactory.CreateClient();
             var baseUri = new Uri(NavigationManager.BaseUri);
             var apiUri = new Uri(baseUri, "/api/FileUpload");
-            var response = await client.PostAsync(apiUri, content).ConfigureAwait(false);
+            var response = await client.PostAsync(apiUri, content);
 
             _uploadProgress = 90;
             StateHasChanged();
 
-            var result = await response.Content.ReadFromJsonAsync<FileUploadResult>().ConfigureAwait(false);
+            var result = await response.Content.ReadFromJsonAsync<FileUploadResult>();
 
             if (result == null)
             {
@@ -272,7 +272,7 @@ public partial class UploadData : ComponentBase, IAsyncDisposable, IDisposable
 
                 if (!result.IsDuplicate)
                 {
-                    await LoadUploadedFiles().ConfigureAwait(false);
+                    await LoadUploadedFiles();
                 }
             }
             else
@@ -335,13 +335,13 @@ public partial class UploadData : ComponentBase, IAsyncDisposable, IDisposable
             {
                 _uploadProgress = 0;
             }
-            StateHasChanged();
+            await InvokeAsync(StateHasChanged);
 
             if (_uploadProgress == 100)
             {
-                await Task.Delay(2000).ConfigureAwait(false);
+                await Task.Delay(2000);
                 _uploadProgress = 0;
-                StateHasChanged();
+                await InvokeAsync(StateHasChanged);
             }
         }
     }
@@ -350,7 +350,7 @@ public partial class UploadData : ComponentBase, IAsyncDisposable, IDisposable
     {
         try
         {
-            var success = await FileStorageService.DeleteFileAsync(id).ConfigureAwait(false);
+            var success = await FileStorageService.DeleteFileAsync(id);
             if (success)
             {
                 _uploadMessage = "File deleted successfully.";
@@ -360,7 +360,7 @@ public partial class UploadData : ComponentBase, IAsyncDisposable, IDisposable
                 _duplicateFileInfo = null;
                 _showDuplicateToast = false;
 
-                await LoadUploadedFiles().ConfigureAwait(false);
+                await LoadUploadedFiles();
             }
             else
             {
@@ -422,14 +422,14 @@ public partial class UploadData : ComponentBase, IAsyncDisposable, IDisposable
             var client = ClientFactory.CreateClient();
             var baseUri = new Uri(NavigationManager.BaseUri);
             var apiUri = new Uri(baseUri, "/api/FileUpload/url");
-            var response = await client.PostAsJsonAsync(apiUri, new { Url = _websiteUrl }).ConfigureAwait(false);
+            var response = await client.PostAsJsonAsync(apiUri, new { Url = _websiteUrl });
 
             _uploadProgress = 90;
             StateHasChanged();
 
             if (response.IsSuccessStatusCode)
             {
-                var result = await response.Content.ReadFromJsonAsync<UrlUploadResult>().ConfigureAwait(false);
+                var result = await response.Content.ReadFromJsonAsync<UrlUploadResult>();
                 
                 if (result == null)
                 {
@@ -489,7 +489,7 @@ public partial class UploadData : ComponentBase, IAsyncDisposable, IDisposable
 
                     if (!result.IsDuplicate)
                     {
-                        await LoadUploadedFiles().ConfigureAwait(false);
+                        await LoadUploadedFiles();
                     }
                 }
                 else
@@ -504,7 +504,7 @@ public partial class UploadData : ComponentBase, IAsyncDisposable, IDisposable
             }
             else
             {
-                var errorContent = await response.Content.ReadAsStringAsync().ConfigureAwait(false);
+                var errorContent = await response.Content.ReadAsStringAsync();
                 _uploadMessage = "Failed to add website URL.";
                 _messageClass = "error";
                 _uploadErrors.Add(errorContent);
@@ -532,13 +532,13 @@ public partial class UploadData : ComponentBase, IAsyncDisposable, IDisposable
             {
                 _uploadProgress = 0;
             }
-            StateHasChanged();
+            await InvokeAsync(StateHasChanged);
 
             if (_uploadProgress == 100)
             {
-                await Task.Delay(2000).ConfigureAwait(false);
+                await Task.Delay(2000);
                 _uploadProgress = 0;
-                StateHasChanged();
+                await InvokeAsync(StateHasChanged);
             }
         }
     }
