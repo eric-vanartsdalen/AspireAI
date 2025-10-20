@@ -902,7 +902,7 @@
                     <tbody>
                         @foreach (var file in Files)
                         {
-                            <tr>
+                            <tr style="width:max()">
                                 <td class="file-name-cell">
                                     <span class="source-type-badge @(file.SourceType == "url" ? "source-type-url" : "source-type-upload")">
                                         @(file.SourceType == "url" ? "WEB" : "FILE")
@@ -953,7 +953,7 @@
                                     }
                                 </td>
                                 <td class="upload-date-cell">@file.UploadedAt.ToLocalTime().ToString("MMM dd, yyyy HH:mm")</td>
-                                <td class="file-actions">
+								<td>
                                     <button class="btn btn-danger btn-sm" @onclick="() => DeleteFile(file.FileId)">
                                         <i class="bi bi-trash"></i> Delete
                                     </button>
