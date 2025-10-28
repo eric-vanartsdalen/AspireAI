@@ -1,8 +1,13 @@
+---
+description: 'Copilot agent instructions for the AspireApp project'
+applyTo: '**'
+---
+
 # Copilot Agent Instructions — AspireApp
 
 You are a brilliant coding expert assistant in 
-Python, C#, Blazor, javascript and SQL
-including architectual and database designs.
+Python, C#, Blazor, JavaScript and SQL
+including architectural and database designs.
 You write direct, concise and readable code.
 Follow the instructions below carefully.
 
@@ -30,7 +35,7 @@ Primary goals: iterate on RAG document flows, maintain modular/configurable serv
 * **Orchestration**: Aspire AppHost (`src/AspireApp.AppHost/AppHost.cs`) — startup project must be `AspireApp.AppHost`, not individual services
 * **Size**: Small-to-medium learning project (multiple .NET projects + Python service + Dockerfiles)
 
-**Critical**: Always run via `AspireApp.AppHost` project (F5 in Visual Studio or `dotnet run --project src/AspireApp.AppHost`). Do NOT run individual services directly unless debugging specific issues.
+**Critical**: Always run via `AspireApp.AppHost` project (F5 in Visual Studio or `dotnet run --project src/AspireApp.AppHost`). Do NOT run individual services directly unless debugging specific service issues.
 
 ---
 
@@ -70,14 +75,14 @@ These are the canonical steps the agent should follow for any PR change:
   * Visual Studio: Set `AspireApp.AppHost` as startup project ? F5
   * CLI: `dotnet run --project src/AspireApp.AppHost`
   * This launches Aspire Dashboard and orchestrates all services (Blazor UI, API, Python, Ollama, Neo4j)
-* **Individual service debugging**: Only run individual projects directly when troubleshooting specific service issues
+* **Individual service debugging**: Only run individual projects directly when troubleshooting specific service issues (e.g., isolated testing or performance profiling)
 
-**Test & Validation** *(future: currently in development)*
-* Unit/integration tests: `dotnet test` (run from solution root)
-* Python API tests: `pytest` from `src/AspireApp.PythonServices/` (when implemented)
-* UI tests: Playwright tests (when implemented)
+**Test & Validation** *(not yet implemented)*
+* Unit/integration tests: `dotnet test` (run from solution root) *(when implemented)*
+* Python API tests: `pytest` from `src/AspireApp.PythonServices/` *(when implemented)*
+* UI tests: Playwright tests *(when implemented)*
 
-**Linting / Static analysis** *(aspirational: not yet configured)*
+**Linting / Static analysis** *(not yet configured)*
 * .NET: `dotnet format` (if `.editorconfig` configured)
 * Python: `ruff check .` or `flake8 .` (if linting configured in requirements.txt)
 
@@ -101,11 +106,38 @@ These are the canonical steps the agent should follow for any PR change:
 
 ---
 
-## 6) Project layout guidance (where to look first)
+## 6) Version Control Best Practices
+
+* **Branching Strategy**: Use feature branches (`feature/<description>`) for new work. Merge via pull requests after local validation.
+* **Commit Messages**: Write clear, concise messages (e.g., "Add user authentication logic"). Use imperative mood.
+* **Pull Requests**: Include description of changes, validation steps, and any breaking changes. Request reviews from team members.
+* **Reverting Changes**: Use `git revert <commit>` for safe rollbacks. For uncommitted changes, use `git reset` or `git stash` as needed.
+
+---
+
+## 7) Error Handling and Rollback Procedures
+
+* **Build Failures**: Check output for errors; run `dotnet build` with verbose logging (`--verbosity detailed`). Fix compilation issues before proceeding.
+* **Runtime Errors**: Use Aspire Dashboard logs for service-specific errors. For individual services, run directly with debugging enabled.
+* **Rollback for Failed Runs**: If a deployment or run fails, revert to last stable commit (`git reset --hard <commit>`). For database changes, use migrations rollback if applicable.
+* **Health Checks**: Monitor service health via dashboard; restart containers if needed (`docker restart <container>`).
+
+---
+
+## 8) Security Considerations
+
+* **Secrets Management**: Never commit secrets; use `.env.example` for templates. Configure sensitive values via environment variables or Azure Key Vault in production.
+* **API Security**: Validate inputs, use HTTPS, and implement authentication/authorization as needed.
+* **Container Security**: Keep Docker images updated; avoid running as root. Scan for vulnerabilities with tools like Trivy.
+* **Code Security**: Follow OWASP guidelines; avoid hardcoding credentials. Use secure coding practices in C#, Python, and JavaScript.
+
+---
+
+## 9) Project layout guidance (where to look first)
 
 **Key directories and files**:
 * `README.md` — Project overview, prerequisites, troubleshooting
-* `src/AspireApp.AppHost/` — **Aspire orchestration** (AppHost.cs defines all services) **?? MUST be startup project**
+* `src/AspireApp.AppHost/` — **Aspire orchestration** (AppHost.cs defines all services) **Critical: MUST be startup project**
 * `src/AspireApp.Web/` — **Blazor frontend** (Razor components, chat UI, file upload)
 * `src/AspireApp.ApiService/` — .NET minimal API service
 * `src/AspireApp.ServiceDefaults/` — Shared Aspire service configurations
@@ -134,7 +166,7 @@ These are the canonical steps the agent should follow for any PR change:
 
 ---
 
-## 7) Agent behaviour rules & PR hygiene (must follow)
+## 10) Agent behaviour rules & PR hygiene (must follow)
 
 * **Always** run full build and validation locally before proposing a PR
 * Keep changes focused and well-scoped
@@ -149,7 +181,7 @@ These are the canonical steps the agent should follow for any PR change:
 
 ---
 
-## 8) Troubleshooting common failures (quick reference)
+## 11) Troubleshooting common failures (quick reference)
 
 * **Wrong startup project**: Verify `AspireApp.AppHost` is set as startup project (bold in Solution Explorer). If Visual Studio defaults to `AspireApp.ApiService`, right-click `AspireApp.AppHost` ? "Set as Startup Project"
 
@@ -171,7 +203,7 @@ These are the canonical steps the agent should follow for any PR change:
 
 ---
 
-## 9) When to search the repo (and when not to)
+## 12) When to search the repo (and when not to)
 
 * Trust this file for standard processes. Only run a repo-wide search when:
   * A required file referenced here is missing
@@ -186,6 +218,8 @@ These are the canonical steps the agent should follow for any PR change:
 * Git: `.github/workflows`
 
 ---
+
+*Version: 1.1 | Last Updated: 2024-10-01 | Changelog: See .github/changelog.md (create if needed)*
 
 *If you find any of the above is inaccurate for this repository, update this file and add a brief note at the top. Otherwise, trust these instructions first and only search the repo when you need a precise path or configuration name.*
 

@@ -1,6 +1,6 @@
 Microsoft Visual Studio Solution File, Format Version 12.00
-# Visual Studio Version 18
-VisualStudioVersion = 18.0.11018.127
+# Visual Studio Version 17
+VisualStudioVersion = 17.14.36616.10 d17.14
 MinimumVisualStudioVersion = 10.0.40219.1
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "AspireApp.ApiService", "src\AspireApp.ApiService\AspireApp.ApiService.csproj", "{76AA9717-B3AA-1C85-D576-19AF5ADACF66}"
 EndProject
@@ -13,6 +13,7 @@ EndProject
 Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "roadmap", "roadmap", "{02EA681E-C7D8-13C7-8484-4AC65E1B71E8}"
 	ProjectSection(SolutionItems) = preProject
 		roadmap\Roadmap.md = roadmap\Roadmap.md
+		roadmap\Tasks.md = roadmap\Tasks.md
 	EndProjectSection
 EndProject
 Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "docs", "docs", "{FBE155A9-2F55-417C-851F-620540B898B6}"
@@ -57,6 +58,7 @@ EndProject
 Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "instructions", "instructions", "{A278D685-967B-49C5-9CFF-726B1CBF259C}"
 	ProjectSection(SolutionItems) = preProject
 		.github\instructions\blazor.instructions.md = .github\instructions\blazor.instructions.md
+		.github\instructions\code-generation.instructions.md = .github\instructions\code-generation.instructions.md
 		.github\instructions\csharp.instructions.md = .github\instructions\csharp.instructions.md
 		.github\instructions\dotnet-architecture-good-practices.instructions.md = .github\instructions\dotnet-architecture-good-practices.instructions.md
 		.github\instructions\dotnet-framework.instructions.md = .github\instructions\dotnet-framework.instructions.md
@@ -66,8 +68,11 @@ Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "instructions", "instruction
 		.github\instructions\sql-sp-generation.instructions.md = .github\instructions\sql-sp-generation.instructions.md
 		.github\instructions\taming-copilot.instructions.md = .github\instructions\taming-copilot.instructions.md
 		.github\instructions\task-implementation.instructions.md = .github\instructions\task-implementation.instructions.md
+		.github\instructions\task-management.instructions.md = .github\instructions\task-management.instructions.md
 		.github\instructions\tasksync.instructions.md = .github\instructions\tasksync.instructions.md
 	EndProjectSection
+EndProject
+Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "tasks", "tasks", "{E60B2D87-6FA8-44E5-8DF3-546E463ECE34}"
 EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
@@ -104,9 +109,10 @@ Global
 	GlobalSection(NestedProjects) = preSolution
 		{D7078045-A923-47B9-9543-4D92F2C16E57} = {6C3EA053-9755-4CBA-9D1E-A8AED60F6099}
 		{A278D685-967B-49C5-9CFF-726B1CBF259C} = {6C3EA053-9755-4CBA-9D1E-A8AED60F6099}
+		{E60B2D87-6FA8-44E5-8DF3-546E463ECE34} = {6C3EA053-9755-4CBA-9D1E-A8AED60F6099}
 	EndGlobalSection
 	GlobalSection(ExtensibilityGlobals) = postSolution
-		StartupProject = {CE4A7D9A-E58D-B782-7CBC-051C53AF10B1}
 		SolutionGuid = {CBD3E3C3-D6AB-4EE7-A317-B47493A7C9F2}
+		StartupProject = {CE4A7D9A-E58D-B782-7CBC-051C53AF10B1}
 	EndGlobalSection
 EndGlobal
