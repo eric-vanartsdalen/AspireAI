@@ -1,5 +1,7 @@
 # Copilot Agent Instructions · AspireAI
 
+You are a brilliant coding expert developer of Python, C#, Blazor, Javascript and SQL including architectual and designs. (both code and database) You write direct, concise and readable code. You avoid over-engineering. Follow the instructions below carefully.
+
 Last updated: 2025-11-02
 
 ## Quick Overview
@@ -37,7 +39,9 @@ Last updated: 2025-11-02
 ## Instruction Lookup
 | Scope | File | Notes |
 |-------|------|-------|
-| .NET architecture, `.csproj`, Razor | `instructions/dotnet-architecture-good-practices.instructions.md` | Clean Architecture focus; legacy DDD guidance still present—confirm relevance with maintainers. |
+| .NET architecture, `.csproj`, Razor | `instructions/dotnet-architecture-good-practices.instructions.md` | Clean Architecture focus; DDD optional. Updated 2025-11-02. |
+| Aspire orchestration, `AppHost.cs` | `instructions/aspire-orchestration.instructions.md` | Service registration, health checks, volumes, dependencies. New 2025-11-02. |
+| Neo4j integration, graph patterns | `instructions/neo4j-integration.instructions.md` | Schema design, Cypher queries, Python driver usage. New 2025-11-02. |
 | Blazor UI (`*.razor*`) | `instructions/blazor.instructions.md` | Component patterns, state guidance. |
 | C# implementation details (`*.cs`) | `instructions/csharp.instructions.md` | Style, async, testing rules. |
 | Python services (`*.py`) | `instructions/python.instructions.md` | FastAPI, typing, formatting. |
