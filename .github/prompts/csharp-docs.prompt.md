@@ -1,8 +1,16 @@
----
-mode: 'agent'
-tools: ['changes', 'codebase', 'editFiles', 'problems']
+agent: 'agent'
+tools: ['read_file', 'grep_search', 'apply_patch', 'run_in_terminal']
 description: 'Ensure that C# types are documented with XML comments and follow best practices for documentation.'
----
+owner: '@eric-vanartsdalen'
+audience: 'C# Maintainers'
+dependencies: ['.NET 9 SDK']
+last_reviewed: '2025-11-02'
+
+## Metadata
+- **Use Cases**: Documenting C# code with XML comments, ensuring public and internal members are properly described, following Microsoft documentation standards.
+- **Dependencies**: C# code files, XML documentation generation tools.
+- **Sample Inputs**: C# code snippets or files (classes, methods, properties) needing documentation.
+- **Related Instructions**: See `../instructions/csharp.instructions.md` for documentation standards and `../instructions/dotnet-architecture-good-practices.instructions.md` for architecture consistency.
 
 # C# Documentation Best Practices
 

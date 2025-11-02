@@ -1,52 +1,28 @@
 ---
-description: 'Documentation and content creation standards'
+description: 'Markdown documentation guidance for AspireAI'
 applyTo: '**/*.md'
 ---
 
-## Markdown Content Rules
+# AspireAI Markdown Guidance
 
-The following markdown content rules are enforced in the validators:
+## Scope
+- Applies to repository documentation, notes, and planning files. Blog-style front matter is optional and used only when the target hosting system requires it.
 
-1. **Headings**: Use appropriate heading levels (H2, H3, etc.) to structure your content. Do not use an H1 heading, as this will be generated based on the title.
-2. **Lists**: Use bullet points or numbered lists for lists. Ensure proper indentation and spacing.
-3. **Code Blocks**: Use fenced code blocks for code snippets. Specify the language for syntax highlighting.
-4. **Links**: Use proper markdown syntax for links. Ensure that links are valid and accessible.
-5. **Images**: Use proper markdown syntax for images. Include alt text for accessibility.
-6. **Tables**: Use markdown tables for tabular data. Ensure proper formatting and alignment.
-7. **Line Length**: Limit line length to 400 characters for readability.
-8. **Whitespace**: Use appropriate whitespace to separate sections and improve readability.
-9. **Front Matter**: Include YAML front matter at the beginning of the file with required metadata fields.
+## Essentials
+- Start files with a single `#` heading unless the surrounding system (e.g., GitHub README) already injects one.
+- Keep paragraphs short and use bullet lists for sequences or checklists.
+- Use fenced code blocks with language hints (```csharp, ```powershell) when showing commands or code.
+- Prefer relative links to files within the repo; verify external URLs before committing.
+- Provide alt text for images and clarify diagrams or screenshots in nearby text.
 
-## Formatting and Structure
+## Formatting Tips
+- Wrap lines naturally; hard wrapping is optional but keep lines below 200 characters for readability.
+- Tables should remain simple—limit column count and keep cell content concise.
+- Use callouts (e.g., `> Note`) sparingly to highlight warnings or prerequisites.
+- Document decisions with dated bullet entries when recording design discussions.
 
-Follow these guidelines for formatting and structuring your markdown content:
-
-- **Headings**: Use `##` for H2 and `###` for H3. Ensure that headings are used in a hierarchical manner. Recommend restructuring if content includes H4, and more strongly recommend for H5.
-- **Lists**: Use `-` for bullet points and `1.` for numbered lists. Indent nested lists with two spaces.
-- **Code Blocks**: Use triple backticks (`) to create fenced code blocks. Specify the language after the opening backticks for syntax highlighting (e.g., `csharp).
-- **Links**: Use `[link text](URL)` for links. Ensure that the link text is descriptive and the URL is valid.
-- **Images**: Use `![alt text](image URL)` for images. Include a brief description of the image in the alt text.
-- **Tables**: Use `|` to create tables. Ensure that columns are properly aligned and headers are included.
-- **Line Length**: Break lines at 80 characters to improve readability. Use soft line breaks for long paragraphs.
-- **Whitespace**: Use blank lines to separate sections and improve readability. Avoid excessive whitespace.
-
-## Validation Requirements
-
-Ensure compliance with the following validation requirements:
-
-- **Front Matter**: Include the following fields in the YAML front matter:
-
-  - `post_title`: The title of the post.
-  - `author1`: The primary author of the post.
-  - `post_slug`: The URL slug for the post.
-  - `microsoft_alias`: The Microsoft alias of the author.
-  - `featured_image`: The URL of the featured image.
-  - `categories`: The categories for the post. These categories must be from the list in /categories.txt.
-  - `tags`: The tags for the post.
-  - `ai_note`: Indicate if AI was used in the creation of the post.
-  - `summary`: A brief summary of the post. Recommend a summary based on the content when possible.
-  - `post_date`: The publication date of the post.
-
-- **Content Rules**: Ensure that the content follows the markdown content rules specified above.
-- **Formatting**: Ensure that the content is properly formatted and structured according to the guidelines.
-- **Validation**: Run the validation tools to check for compliance with the rules and guidelines.
+## Quality Checklist
+- Does the document explain why the change or process matters?
+- Are steps actionable with the correct command syntax for Windows PowerShell when needed?
+- Have you removed stale references to files or folders that no longer exist?
+- If the file will be rendered outside GitHub, confirm the destination supports the Markdown features you used.

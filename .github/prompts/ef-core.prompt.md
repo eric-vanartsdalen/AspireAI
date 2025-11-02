@@ -1,8 +1,16 @@
----
-mode: 'agent'
-tools: ['changes', 'codebase', 'editFiles', 'problems', 'runCommands']
 description: 'Get best practices for Entity Framework Core'
----
+agent: 'agent'
+tools: ['read_file', 'grep_search', 'apply_patch', 'run_in_terminal']
+owner: '@eric-vanartsdalen'
+audience: 'C# Maintainers'
+dependencies: ['.NET 9 SDK', 'Entity Framework Core CLI']
+last_reviewed: '2025-11-02'
+
+## Metadata
+- **Use Cases**: Reviewing EF Core code, designing DbContext and entities, optimizing queries, managing migrations.
+- **Dependencies**: EF Core NuGet packages, .NET framework, database providers (SQL Server, SQLite).
+- **Sample Inputs**: EF Core code snippets (e.g., DbContext setup, LINQ queries, migration issues).
+- **Related Instructions**: See `../instructions/dotnet-architecture-good-practices.instructions.md` for data access patterns.
 
 # Entity Framework Core Best Practices
 

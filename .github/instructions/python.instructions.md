@@ -1,56 +1,33 @@
 ---
-description: 'Python coding conventions and guidelines'
+description: 'Python coding conventions for AspireAI services'
 applyTo: '**/*.py'
 ---
 
-# Python Coding Conventions
+# AspireAI Python Practices
 
-## Python Instructions
+## Scope
+- Applies to FastAPI services, ingestion scripts, and tooling located in `src/AspireApp.PythonServices`.
+- Align with repo-wide decisions first; follow maintainer guidance if conflicts arise.
 
-- Write clear and concise comments for each function.
-- Ensure functions have descriptive names and include type hints.
-- Provide docstrings following PEP 257 conventions.
-- Use the `typing` module for type annotations (e.g., `List[str]`, `Dict[str, int]`).
-- Break down complex functions into smaller, more manageable functions.
+## Style & Documentation
+- Follow PEP 8 formatting via `ruff format` or `black` (79/88 character wrap guidelines are suggestions, not hard limits).
+- Annotate public functions and FastAPI route handlers with type hints; include docstrings when behavior is not obvious.
+- Prefer descriptive function names over comments explaining intent.
 
-## General Instructions
+## Structure & Dependencies
+- Keep FastAPI routers modular—group related endpoints in the same module and register via `include_router`.
+- Encapsulate database or Neo4j interactions behind dedicated helper modules to prevent incidental coupling.
+- Use environment variables (surfaced by Aspire) for secrets and connection details; centralize loading in a settings module.
 
-- Always prioritize readability and clarity.
-- For algorithm-related code, include explanations of the approach used.
-- Write code with good maintainability practices, including comments on why certain design decisions were made.
-- Handle edge cases and write clear exception handling.
-- For libraries or external dependencies, mention their usage and purpose in comments.
-- Use consistent naming conventions and follow language-specific best practices.
-- Write concise, efficient, and idiomatic code that is also easily understandable.
+## Error Handling & Logging
+- Raise `HTTPException` with meaningful status codes for API errors.
+- Log operational failures using the project logging helper; include document IDs or request identifiers where possible.
+- Avoid bare `except` clauses; catch specific exceptions and rethrow with additional context only when needed.
 
-## Code Style and Formatting
+## Testing Guidance
+- Place pytest tests under `src/AspireApp.PythonServices/tests` (existing pattern); mirror module names for clarity.
+- Cover happy path, validation errors, and integration with external services (mocked where necessary).
+- Use `pytest-asyncio` for async route/unit testing.
 
-- Follow the **PEP 8** style guide for Python.
-- Maintain proper indentation (use 4 spaces for each level of indentation).
-- Ensure lines do not exceed 79 characters.
-- Place function and class docstrings immediately after the `def` or `class` keyword.
-- Use blank lines to separate functions, classes, and code blocks where appropriate.
-
-## Edge Cases and Testing
-
-- Always include test cases for critical paths of the application.
-- Account for common edge cases like empty inputs, invalid data types, and large datasets.
-- Include comments for edge cases and the expected behavior in those cases.
-- Write unit tests for functions and document them with docstrings explaining the test cases.
-
-## Example of Proper Documentation
-
-```python
-def calculate_area(radius: float) -> float:
-    """
-    Calculate the area of a circle given the radius.
-    
-    Parameters:
-    radius (float): The radius of the circle.
-    
-    Returns:
-    float: The area of the circle, calculated as π * radius^2.
-    """
-    import math
-    return math.pi * radius ** 2
-```
+## Decision Log
+- Pending maintainer choice on preferred SQL/graph client abstractions; keep Neo4j helpers lightweight until confirmed.

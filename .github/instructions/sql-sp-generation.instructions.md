@@ -1,9 +1,13 @@
 ---
-description: 'Guidelines for generating SQL statements and stored procedures'
+description: 'SQL guidance (rarely used in AspireAI)'
 applyTo: '**/*.sql'
 ---
 
-# SQL Development
+# SQL Development (Limited Use)
+
+## Scope
+- AspireAI primarily uses Neo4j and document stores; SQL artefacts appear only in experiments or migration tooling.
+- Apply these rules when creating `.sql` files for relational prototypes or reporting jobs. Confirm with maintainers before introducing new SQL dependencies.
 
 ## Database schema generation
 - all table names should be in singular form
