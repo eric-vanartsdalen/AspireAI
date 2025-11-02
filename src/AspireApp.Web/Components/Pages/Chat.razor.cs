@@ -559,39 +559,45 @@ namespace AspireApp.Web.Components.Pages
                     _cancellationTokenSource.Token
                 );
 
-                // Initialize empty response
-                AIResponse = string.Empty;
-
-                // Buffer updates to reduce UI thrashing
+                // Highly responsive streaming with minimal buffering
                 var updateBuffer = new System.Text.StringBuilder();
                 var lastUpdateTime = DateTime.UtcNow;
-                const int updateIntervalMs = 100; // Update UI every 100ms max
+                var lastScrollTime = DateTime.UtcNow;
+                const int updateIntervalMs = 20; // Update UI every 20ms for very responsive feel
+                const int earlyTokenThreshold = 10; // First 10 tokens update immediately
+                int tokenCount = 0;
 
                 await foreach (var message in stream)
                 {
                     updateBuffer.Append(message.Content);
+                    tokenCount++;
                     
-                    // Only update UI if enough time has passed to reduce thrashing
                     var now = DateTime.UtcNow;
-                    if ((now - lastUpdateTime).TotalMilliseconds >= updateIntervalMs)
-                    {
-                        AIResponse = updateBuffer.ToString();
-                        StateHasChanged();
-                        lastUpdateTime = now;
-                        
-                        // Auto-scroll during AI response
-                        try
-                        {
-                            // Small delay to ensure the DOM updates before scrolling
-                            await Task.Delay(10);
-                            await JSRuntime.InvokeVoidAsync("scrollChatToBottom");
-                        }
-                        catch (Exception ex)
-                        {
-                            Console.WriteLine($"Error scrolling during stream: {ex.Message}");
-                        }
-                    }
-                }
+                    // Update immediately for first 10 tokens, then batch every 20ms
+                    bool shouldUpdate = tokenCount <= earlyTokenThreshold || 
+       (now - lastUpdateTime).TotalMilliseconds >= updateIntervalMs;
+    
+      if (shouldUpdate)
+          {
+    AIResponse = updateBuffer.ToString();
+          StateHasChanged();
+              lastUpdateTime = now;
+               
+         // Auto-scroll during AI response (throttled to every 150ms to reduce overhead)
+            if ((now - lastScrollTime).TotalMilliseconds >= 150)
+       {
+                 try
+    {
+          await JSRuntime.InvokeVoidAsync("scrollChatToBottom");
+    lastScrollTime = now;
+     }
+            catch (Exception ex)
+      {
+       Console.WriteLine($"Error scrolling during stream: {ex.Message}");
+     }
+            }
+          }
+      }
                 
                 // Final update to ensure all content is displayed
                 AIResponse = updateBuffer.ToString();

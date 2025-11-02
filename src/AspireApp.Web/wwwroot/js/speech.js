@@ -113,9 +113,26 @@ class SpeechManager {
         if (this.synthesis.getVoices().length === 0) {
             this.synthesis.addEventListener('voiceschanged', () => {
                 this.loadVoices();
+                this.primeSpeechSynthesis();
             });
         } else {
             this.loadVoices();
+            this.primeSpeechSynthesis();
+        }
+    }
+    
+    primeSpeechSynthesis() {
+        // Prime the speech synthesis engine with a silent utterance
+        // This prevents the first word from being clipped when actually speaking
+        try {
+            const primeUtterance = new SpeechSynthesisUtterance(' ');
+            primeUtterance.volume = 0; // Silent
+            primeUtterance.rate = 10; // Fast
+            primeUtterance.pitch = 0; // Low
+            this.synthesis.speak(primeUtterance);
+            console.log('Speech synthesis primed successfully');
+        } catch (error) {
+            console.warn('Could not prime speech synthesis:', error);
         }
     }
     
@@ -175,37 +192,41 @@ class SpeechManager {
         // Stop any ongoing speech
         this.synthesis.cancel();
         
-        const utterance = new SpeechSynthesisUtterance(text);
+        // Small delay to ensure synthesis is ready after cancellation
+        setTimeout(() => {
+            const utterance = new SpeechSynthesisUtterance(text);
+            
+            // Apply configuration
+            utterance.voice = options.voice || this.ttsConfig.voice;
+            utterance.rate = options.rate || this.ttsConfig.rate;
+            utterance.pitch = options.pitch || this.ttsConfig.pitch;
+            utterance.volume = options.volume || this.ttsConfig.volume;
+            
+            // Event handlers
+            utterance.onstart = () => {
+                console.log('Speech synthesis started');
+                if (this.dotNetRef) {
+                    this.dotNetRef.invokeMethodAsync('OnTextToSpeechStart');
+                }
+            };
+            
+            utterance.onend = () => {
+                console.log('Speech synthesis ended');
+                if (this.dotNetRef) {
+                    this.dotNetRef.invokeMethodAsync('OnTextToSpeechEnd');
+                }
+            };
         
-        // Apply configuration
-        utterance.voice = options.voice || this.ttsConfig.voice;
-        utterance.rate = options.rate || this.ttsConfig.rate;
-        utterance.pitch = options.pitch || this.ttsConfig.pitch;
-        utterance.volume = options.volume || this.ttsConfig.volume;
+            utterance.onerror = (event) => {
+                console.error('Speech synthesis error:', event.error);
+                if (this.dotNetRef) {
+                    this.dotNetRef.invokeMethodAsync('OnTextToSpeechError', event.error);
+                }
+            };
+    
+            this.synthesis.speak(utterance);
+        }, 500); // ms delay to ensure engine readiness
         
-        // Event handlers
-        utterance.onstart = () => {
-            console.log('Speech synthesis started');
-            if (this.dotNetRef) {
-                this.dotNetRef.invokeMethodAsync('OnTextToSpeechStart');
-            }
-        };
-        
-        utterance.onend = () => {
-            console.log('Speech synthesis ended');
-            if (this.dotNetRef) {
-                this.dotNetRef.invokeMethodAsync('OnTextToSpeechEnd');
-            }
-        };
-        
-        utterance.onerror = (event) => {
-            console.error('Speech synthesis error:', event.error);
-            if (this.dotNetRef) {
-                this.dotNetRef.invokeMethodAsync('OnTextToSpeechError', event.error);
-            }
-        };
-        
-        this.synthesis.speak(utterance);
         return true;
     }
     

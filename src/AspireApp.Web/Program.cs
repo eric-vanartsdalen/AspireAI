@@ -62,6 +62,9 @@ builder.Services.AddSingleton<AiInfoStateService>();
 // Register Speech service
 builder.Services.AddScoped<SpeechService>();
 
+// Register Ollama warmup background service
+builder.Services.AddHostedService<AspireApp.Web.Services.OllamaWarmupService>();
+
 // Initialize configurations early
 HomeConfigurations.PullConfigure();
 
