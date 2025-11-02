@@ -46,8 +46,10 @@ Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "prompts", "prompts", "{D707
 		.github\prompts\ai-evaluation-scripts.prompt.md = .github\prompts\ai-evaluation-scripts.prompt.md
 		.github\prompts\architecture-blueprint-generator.prompt.md = .github\prompts\architecture-blueprint-generator.prompt.md
 		.github\prompts\aspire-dashboard-troubleshooting.prompt.md = .github\prompts\aspire-dashboard-troubleshooting.prompt.md
+		.github\prompts\cross-service-contract-sync.prompt.md = .github\prompts\cross-service-contract-sync.prompt.md
 		.github\prompts\csharp-async.prompt.md = .github\prompts\csharp-async.prompt.md
 		.github\prompts\csharp-docs.prompt.md = .github\prompts\csharp-docs.prompt.md
+		.github\prompts\dependency-update-workflow.prompt.md = .github\prompts\dependency-update-workflow.prompt.md
 		.github\prompts\ef-core.prompt.md = .github\prompts\ef-core.prompt.md
 		.github\prompts\neo4j-cypher-prototyping.prompt.md = .github\prompts\neo4j-cypher-prototyping.prompt.md
 		.github\prompts\playwright-automation-fill-in-form.prompt.md = .github\prompts\playwright-automation-fill-in-form.prompt.md
@@ -61,15 +63,20 @@ Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "prompts", "prompts", "{D707
 EndProject
 Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "instructions", "instructions", "{A278D685-967B-49C5-9CFF-726B1CBF259C}"
 	ProjectSection(SolutionItems) = preProject
+		.github\instructions\aspire-orchestration.instructions.md = .github\instructions\aspire-orchestration.instructions.md
 		.github\instructions\blazor.instructions.md = .github\instructions\blazor.instructions.md
+		.github\instructions\cross-service-contracts.instructions.md = .github\instructions\cross-service-contracts.instructions.md
 		.github\instructions\csharp.instructions.md = .github\instructions\csharp.instructions.md
+		.github\instructions\dependency-management.instructions.md = .github\instructions\dependency-management.instructions.md
 		.github\instructions\dotnet-architecture-good-practices.instructions.md = .github\instructions\dotnet-architecture-good-practices.instructions.md
 		.github\instructions\dotnet-framework.instructions.md = .github\instructions\dotnet-framework.instructions.md
 		.github\instructions\markdown.instructions.md = .github\instructions\markdown.instructions.md
 		.github\instructions\memory-recall.instructions.md = .github\instructions\memory-recall.instructions.md
+		.github\instructions\neo4j-integration.instructions.md = .github\instructions\neo4j-integration.instructions.md
 		.github\instructions\python.instructions.md = .github\instructions\python.instructions.md
 		.github\instructions\sql-sp-generation.instructions.md = .github\instructions\sql-sp-generation.instructions.md
 		.github\instructions\tasksync.instructions.md = .github\instructions\tasksync.instructions.md
+		.github\instructions\testing.instructions.md = .github\instructions\testing.instructions.md
 	EndProjectSection
 EndProject
 Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "tasks", "tasks", "{AC6C25AA-3B4E-4D32-99F3-94841EE241A8}"

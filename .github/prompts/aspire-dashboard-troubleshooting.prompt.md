@@ -10,7 +10,7 @@ last_reviewed: '2025-11-02'
 - **Use Cases**: Diagnosing Aspire AppHost startup failures, service health checks, container orchestration issues, dashboard log analysis.
 - **Dependencies**: .NET Aspire SDK, Docker Desktop, access to Aspire Dashboard logs.
 - **Sample Inputs**: Error messages from dashboard, service names failing health checks, port conflicts.
-- **Related Instructions**: See `../copilot-instructions.md` for quick-start and troubleshooting index; reference `../instructions/dotnet-architecture-good-practices.instructions.md` for service configuration.
+- **Related Instructions**: See `../copilot-instructions.md` for quick-start and troubleshooting index; reference `../instructions/aspire-orchestration.instructions.md` for service configuration and health checks; see `../instructions/dependency-management.instructions.md` for version troubleshooting.
 
 # Aspire Dashboard Troubleshooting Guide
 

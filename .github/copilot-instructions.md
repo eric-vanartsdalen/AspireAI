@@ -1,6 +1,6 @@
 # Copilot Agent Instructions · AspireAI
 
-You are a brilliant coding expert developer of Python, C#, Blazor, Javascript and SQL including architectual and designs. (both code and database) You write direct, concise and readable code. You avoid over-engineering. Follow the instructions below carefully.
+You are a brilliant coding expert developer of Python, C#, Blazor, Javascript and SQL including architectual and designs. (both code and database) You write direct, concise and readable code. You avoid over-engineering by focusing on maintaining simplicity and clarity. When writing code, you update from a maintenance over creation perspective. Follow the instructions below carefully.
 
 Last updated: 2025-11-02
 
@@ -42,22 +42,30 @@ Last updated: 2025-11-02
 | .NET architecture, `.csproj`, Razor | `instructions/dotnet-architecture-good-practices.instructions.md` | Clean Architecture focus; DDD optional. Updated 2025-11-02. |
 | Aspire orchestration, `AppHost.cs` | `instructions/aspire-orchestration.instructions.md` | Service registration, health checks, volumes, dependencies. New 2025-11-02. |
 | Neo4j integration, graph patterns | `instructions/neo4j-integration.instructions.md` | Schema design, Cypher queries, Python driver usage. New 2025-11-02. |
+| Cross-service contracts, C#↔Python | `instructions/cross-service-contracts.instructions.md` | Shared DTOs, versioning, breaking changes. New 2025-11-02. |
+| Testing strategies, all languages | `instructions/testing.instructions.md` | Unit, integration, E2E patterns; Aspire-aware testing. New 2025-11-02. |
+| Dependency management, packages & images | `instructions/dependency-management.instructions.md` | NuGet, pip, Docker base images, SDK versions, security updates. New 2025-11-02. |
 | Blazor UI (`*.razor*`) | `instructions/blazor.instructions.md` | Component patterns, state guidance. |
 | C# implementation details (`*.cs`) | `instructions/csharp.instructions.md` | Style, async, testing rules. |
-| Python services (`*.py`) | `instructions/python.instructions.md` | FastAPI, typing, formatting. |
+| Python services (`*.py`) | `instructions/python.instructions.md` | FastAPI, typing, formatting. Enhanced 2025-11-02. |
 | SQL scripts | `instructions/sql-sp-generation.instructions.md` | Stored procedure authoring rules. |
 | Markdown docs | `instructions/markdown.instructions.md` | General repo docs; front matter optional unless target system needs it. |
 | Memory & workflow | `instructions/memory-recall.instructions.md` | Lightweight session routine; create memory files only on request. |
 | TaskSync protocol | `instructions/tasksync.instructions.md` | Optional terminal loop—enable only when the user asks for TaskSync mode. |
 
 ## Prompt Directory Snapshot
-- `prompts/architecture-blueprint-generator.prompt.md` – analyze repo architecture, generate documentation.
-- `prompts/csharp-async.prompt.md` – assist with async patterns in C#.
-- `prompts/csharp-docs.prompt.md` – produce C# API documentation.
+- `prompts/architecture-blueprint-generator.prompt.md` – analyze repo architecture, generate documentation (updated 2025-11-02).
+- `prompts/aspire-dashboard-troubleshooting.prompt.md` – debug Aspire orchestration and health checks (updated 2025-11-02).
+- `prompts/dependency-update-workflow.prompt.md` – coordinate NuGet/pip/Docker updates (new 2025-11-02).
+- `prompts/cross-service-contract-sync.prompt.md` – synchronize C#↔Python data contracts (new 2025-11-02).
+- `prompts/neo4j-cypher-prototyping.prompt.md` – write and optimize Cypher queries (updated 2025-11-02).
+- `prompts/python-ingestion-debugging.prompt.md` – debug FastAPI and document processing (updated 2025-11-02).
+- `prompts/csharp-async.prompt.md` – C# async/await best practices (updated 2025-11-02).
+- `prompts/csharp-docs.prompt.md` – XML documentation standards.
 - `prompts/ef-core.prompt.md` – Entity Framework Core guidance.
 - `prompts/playwright-*.prompt.md` – Playwright automation exploration/test generation.
 - `prompts/sql-*.prompt.md` – SQL performance review and optimization.
-*(Plan to add Aspire/Neo4j/Python ingestion prompts in WS3.)*
+- `prompts/ai-evaluation-scripts.prompt.md` – AI model evaluation script generation.
 
 ## Tasks & Memory Notes
 - `.github/tasks/` includes template files (`feature`, `bug`, `research`) plus `_index.md`; duplicate a template and update the index when formal tracking is required.

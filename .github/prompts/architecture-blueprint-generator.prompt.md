@@ -11,7 +11,7 @@ last_reviewed: '2025-11-02'
 - **Use Cases**: Produce an architectural overview for AspireAI or similar solutions, capture service boundaries, and highlight extension points for new contributors.
 - **Prerequisites**: Repo cloned, `dotnet restore` completed, familiarity with Aspire AppHost orchestration.
 - **Sample Inputs**: `PROJECT_TYPE=.NET`, `ARCHITECTURE_PATTERN=Clean Architecture`, `DETAIL_LEVEL=Detailed`.
-- **Related Instructions**: `../instructions/dotnet-architecture-good-practices.instructions.md`, `../instructions/blazor.instructions.md`, `../instructions/python.instructions.md`.
+- **Related Instructions**: `../instructions/dotnet-architecture-good-practices.instructions.md`, `../instructions/aspire-orchestration.instructions.md`, `../instructions/neo4j-integration.instructions.md`, `../instructions/blazor.instructions.md`, `../instructions/python.instructions.md`, `../instructions/cross-service-contracts.instructions.md`.
 
 ## Configuration Flags
 ```

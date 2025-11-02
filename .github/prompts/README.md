@@ -50,6 +50,42 @@ last_reviewed: '2025-11-02'
 (Body content here)
 ```
 
+## Available Prompts
+
+### Architecture & Design
+- **architecture-blueprint-generator.prompt.md** - Generate comprehensive architectural documentation with service boundaries and extension points
+- **ai-evaluation-scripts.prompt.md** - Create evaluation scripts for AI model performance
+
+### .NET Development
+- **csharp-async.prompt.md** - Best practices for C# async/await patterns
+- **csharp-docs.prompt.md** - XML documentation standards for C# code
+- **ef-core.prompt.md** - Entity Framework Core patterns
+
+### Aspire & Orchestration
+- **aspire-dashboard-troubleshooting.prompt.md** - Debug Aspire dashboard and service orchestration issues *(Updated 2025-11-02)*
+- **dependency-update-workflow.prompt.md** - Coordinate updates across NuGet, pip, and Docker *(New 2025-11-02)*
+
+### Python Services
+- **python-ingestion-debugging.prompt.md** - Debug FastAPI document processing and Graph-RAG *(Updated 2025-11-02)*
+- **cross-service-contract-sync.prompt.md** - Synchronize C#↔Python data contracts *(New 2025-11-02)*
+
+### Neo4j & Graph Database
+- **neo4j-cypher-prototyping.prompt.md** - Write and optimize Cypher queries *(Updated 2025-11-02)*
+
+### Testing & Automation
+- **playwright-explore-website.prompt.md** - Explore web applications with Playwright
+- **playwright-automation-fill-in-form.prompt.md** - Automate form filling workflows
+- **playwright-generate-test.prompt.md** - Generate Playwright test scripts
+
+### SQL & Database
+- **sql-code-review.prompt.md** - Review SQL code for performance and best practices
+- **sql-optimization.prompt.md** - Optimize SQL queries and stored procedures
+
+## Recent Updates (2025-11-02)
+- Updated existing prompts to reference new instruction files: `aspire-orchestration.instructions.md`, `neo4j-integration.instructions.md`, `python.instructions.md`, `cross-service-contracts.instructions.md`, `testing.instructions.md`, `dependency-management.instructions.md`
+- Created **dependency-update-workflow.prompt.md** for coordinating package updates across the stack
+- Created **cross-service-contract-sync.prompt.md** for maintaining C#↔Python API contracts
+
 ## Maintenance Checklist
 - Update `last_reviewed` when materially changing the prompt.
 - Ensure `owner` reflects the person or team responsible for keeping the prompt accurate.

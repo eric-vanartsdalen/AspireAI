@@ -10,7 +10,7 @@ last_reviewed: '2025-11-02'
 - **Use Cases**: Writing Cypher queries for graph traversals, data imports, relationship queries, performance optimization.
 - **Dependencies**: Neo4j database (containerized via Aspire), Cypher query language knowledge.
 - **Sample Inputs**: Graph schema descriptions, query requirements (e.g., find related nodes, aggregate data).
-- **Related Instructions**: See `../copilot-instructions.md` for Neo4j setup; reference `../instructions/sql-sp-generation.instructions.md` for query patterns.
+- **Related Instructions**: See `../instructions/neo4j-integration.instructions.md` for schema design, query patterns, and maintenance operations; reference `../copilot-instructions.md` for Neo4j setup.
 
 # Neo4j Cypher Prototyping Guide
 

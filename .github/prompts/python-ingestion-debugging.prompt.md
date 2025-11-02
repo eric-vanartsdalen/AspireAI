@@ -10,7 +10,7 @@ last_reviewed: '2025-11-02'
 - **Use Cases**: Debugging FastAPI endpoints, document ingestion failures, Graph-RAG processing errors, Docker container issues.
 - **Dependencies**: Python 3.12, FastAPI, Docker, access to `data/` and `database/` volumes.
 - **Sample Inputs**: Error logs from Python services, API request/response examples, file processing failures.
-- **Related Instructions**: See `../instructions/python.instructions.md` for FastAPI guidelines; reference `../copilot-instructions.md` for service setup.
+- **Related Instructions**: See `../instructions/python.instructions.md` for FastAPI guidelines and maintenance patterns; reference `../instructions/neo4j-integration.instructions.md` for graph database operations; see `../instructions/testing.instructions.md` for debugging test patterns.
 
 # Python Ingestion Debugging Guide
 

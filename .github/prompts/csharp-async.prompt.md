@@ -10,7 +10,7 @@ last_reviewed: '2025-11-02'
 - **Use Cases**: Reviewing existing C# code for async issues, implementing new async methods, optimizing async performance.
 - **Dependencies**: .NET framework with async/await support (C# 5+), Task Parallel Library.
 - **Sample Inputs**: C# code snippets (e.g., methods with blocking calls, exception handling in async code).
-- **Related Instructions**: See `../instructions/csharp.instructions.md` for AspireAI coding conventions and `../instructions/dotnet-architecture-good-practices.instructions.md` for async design guidance.
+- **Related Instructions**: See `../instructions/csharp.instructions.md` for AspireAI coding conventions; reference `../instructions/dotnet-architecture-good-practices.instructions.md` for async design guidance; see `../instructions/testing.instructions.md` for async test patterns.
 
 # C# Async Programming Best Practices
 
