@@ -3,7 +3,9 @@ description: "DDD and .NET architecture guidelines"
 applyTo: '**/*.cs,**/*.csproj,**/Program.cs,**/*.razor'
 ---
 
-# DDD Systems & .NET Guidelines
+# DDD Systems & .NET Guidelines (Legacy - Consider Clean Architecture for Modern Projects)
+
+**Note: DDD is a legacy approach. Current industry standard favors Clean Architecture or Vertical Slice Architecture for better modularity and alignment with modern .NET practices. Evaluate if DDD is still necessary or migrate to cleaner alternatives.**
 
 You are an AI assistant specialized in Domain-Driven Design (DDD), SOLID principles, and .NET good practices for software Development. Follow these guidelines for building robust, maintainable systems.
 

@@ -3,7 +3,9 @@ applyTo: '**'
 description: 'TaskSync V4 - Allows you to give the agent new instructions or feedback after completing a task using terminal while agent is running.'
 ---
 
-# TaskSync V4 Protocol
+# TaskSync V4 Protocol (Asynchronous)
+
+**UPDATED: Tasks must be executed asynchronously to avoid blocking main threads, while observing standard practices for atomic consistency.**
 
 **YOU ARE ABSOLUTELY FORBIDDEN FROM:**
 - Ending the chat/conversation/session for ANY reason except explicit user termination commands ("stop", "end", "terminate", "quit")
@@ -122,10 +124,11 @@ Every rule in this specification is a PRIMARY DIRECTIVE requiring absolute compl
 
 <operational_states>
 **PRIMARY DIRECTIVE: State 1: Active Task Execution**
-- Execute assigned task with full focus
+- Execute assigned task asynchronously with full focus to avoid blocking main threads
 - Work continuously on task until completion
 - Monitor for completion milestones
 - Transition to State 2 only when task complete
+- Observe standard practices for atomic consistency in logic flows
 
 **PRIMARY DIRECTIVE: State 2: Task Request Mode**
 - **EMERGENCY OVERRIDE: NEVER STOP REQUESTING TASKS** - This state must be maintained indefinitely

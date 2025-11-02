@@ -69,6 +69,8 @@ Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "instructions", "instruction
 		.github\instructions\tasksync.instructions.md = .github\instructions\tasksync.instructions.md
 	EndProjectSection
 EndProject
+Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "tasks", "tasks", "{AC6C25AA-3B4E-4D32-99F3-94841EE241A8}"
+EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
 		Debug|Any CPU = Debug|Any CPU
@@ -104,9 +106,10 @@ Global
 	GlobalSection(NestedProjects) = preSolution
 		{D7078045-A923-47B9-9543-4D92F2C16E57} = {6C3EA053-9755-4CBA-9D1E-A8AED60F6099}
 		{A278D685-967B-49C5-9CFF-726B1CBF259C} = {6C3EA053-9755-4CBA-9D1E-A8AED60F6099}
+		{AC6C25AA-3B4E-4D32-99F3-94841EE241A8} = {6C3EA053-9755-4CBA-9D1E-A8AED60F6099}
 	EndGlobalSection
 	GlobalSection(ExtensibilityGlobals) = postSolution
-		StartupProject = {CE4A7D9A-E58D-B782-7CBC-051C53AF10B1}
 		SolutionGuid = {CBD3E3C3-D6AB-4EE7-A317-B47493A7C9F2}
+		StartupProject = {CE4A7D9A-E58D-B782-7CBC-051C53AF10B1}
 	EndGlobalSection
 EndGlobal
