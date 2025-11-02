@@ -21,7 +21,6 @@ Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "docs", "docs", "{FBE155A9-2
 		docs\DATABASE_MANAGEMENT.md = docs\DATABASE_MANAGEMENT.md
 		docs\MIGRATION_GUIDE.md = docs\MIGRATION_GUIDE.md
 		docs\PROJECT_CLEANUP_COMPLETE.md = docs\PROJECT_CLEANUP_COMPLETE.md
-		docs\RAG_IMPLEMENTATION.md = docs\RAG_IMPLEMENTATION.md
 		README.md = README.md
 		docs\SPEECH_FEATURES.md = docs\SPEECH_FEATURES.md
 		docs\TESTING_FILE_UPLOAD.md = docs\TESTING_FILE_UPLOAD.md
@@ -33,6 +32,7 @@ Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "AspireApp.Neo4JService", "s
 EndProject
 Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = ".github", ".github", "{6C3EA053-9755-4CBA-9D1E-A8AED60F6099}"
 	ProjectSection(SolutionItems) = preProject
+		.github\copilot-instructions-improvement-plan.md = .github\copilot-instructions-improvement-plan.md
 		.github\copilot-instructions.md = .github\copilot-instructions.md
 	EndProjectSection
 EndProject
@@ -43,13 +43,18 @@ Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "SolutionItems", "SolutionIt
 EndProject
 Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "prompts", "prompts", "{D7078045-A923-47B9-9543-4D92F2C16E57}"
 	ProjectSection(SolutionItems) = preProject
+		.github\prompts\ai-evaluation-scripts.prompt.md = .github\prompts\ai-evaluation-scripts.prompt.md
 		.github\prompts\architecture-blueprint-generator.prompt.md = .github\prompts\architecture-blueprint-generator.prompt.md
+		.github\prompts\aspire-dashboard-troubleshooting.prompt.md = .github\prompts\aspire-dashboard-troubleshooting.prompt.md
 		.github\prompts\csharp-async.prompt.md = .github\prompts\csharp-async.prompt.md
 		.github\prompts\csharp-docs.prompt.md = .github\prompts\csharp-docs.prompt.md
 		.github\prompts\ef-core.prompt.md = .github\prompts\ef-core.prompt.md
+		.github\prompts\neo4j-cypher-prototyping.prompt.md = .github\prompts\neo4j-cypher-prototyping.prompt.md
 		.github\prompts\playwright-automation-fill-in-form.prompt.md = .github\prompts\playwright-automation-fill-in-form.prompt.md
 		.github\prompts\playwright-explore-website.prompt.md = .github\prompts\playwright-explore-website.prompt.md
 		.github\prompts\playwright-generate-test.prompt.md = .github\prompts\playwright-generate-test.prompt.md
+		.github\prompts\python-ingestion-debugging.prompt.md = .github\prompts\python-ingestion-debugging.prompt.md
+		.github\prompts\README.md = .github\prompts\README.md
 		.github\prompts\sql-code-review.prompt.md = .github\prompts\sql-code-review.prompt.md
 		.github\prompts\sql-optimization.prompt.md = .github\prompts\sql-optimization.prompt.md
 	EndProjectSection
@@ -61,15 +66,36 @@ Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "instructions", "instruction
 		.github\instructions\dotnet-architecture-good-practices.instructions.md = .github\instructions\dotnet-architecture-good-practices.instructions.md
 		.github\instructions\dotnet-framework.instructions.md = .github\instructions\dotnet-framework.instructions.md
 		.github\instructions\markdown.instructions.md = .github\instructions\markdown.instructions.md
-		.github\instructions\memory-bank.instructions.md = .github\instructions\memory-bank.instructions.md
+		.github\instructions\memory-recall.instructions.md = .github\instructions\memory-recall.instructions.md
 		.github\instructions\python.instructions.md = .github\instructions\python.instructions.md
 		.github\instructions\sql-sp-generation.instructions.md = .github\instructions\sql-sp-generation.instructions.md
-		.github\instructions\taming-copilot.instructions.md = .github\instructions\taming-copilot.instructions.md
-		.github\instructions\task-implementation.instructions.md = .github\instructions\task-implementation.instructions.md
 		.github\instructions\tasksync.instructions.md = .github\instructions\tasksync.instructions.md
 	EndProjectSection
 EndProject
 Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "tasks", "tasks", "{AC6C25AA-3B4E-4D32-99F3-94841EE241A8}"
+	ProjectSection(SolutionItems) = preProject
+		.github\tasks\bug-template.md = .github\tasks\bug-template.md
+		.github\tasks\feature-template.md = .github\tasks\feature-template.md
+		.github\tasks\README.md = .github\tasks\README.md
+		.github\tasks\research-template.md = .github\tasks\research-template.md
+		.github\tasks\TASK001-implement-graph-rag.md = .github\tasks\TASK001-implement-graph-rag.md
+		.github\tasks\TASK002-shared-playwright-harness.md = .github\tasks\TASK002-shared-playwright-harness.md
+		.github\tasks\TASK003-instruction-dry-run.md = .github\tasks\TASK003-instruction-dry-run.md
+		.github\tasks\_index.md = .github\tasks\_index.md
+	EndProjectSection
+EndProject
+Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "memory-bank", "memory-bank", "{0FF414FD-6CF5-4D5F-803E-73609F6292DF}"
+	ProjectSection(SolutionItems) = preProject
+		.github\memory-bank\activeContext.md = .github\memory-bank\activeContext.md
+		.github\memory-bank\productContext.md = .github\memory-bank\productContext.md
+		.github\memory-bank\progress.md = .github\memory-bank\progress.md
+		.github\memory-bank\projectbrief.md = .github\memory-bank\projectbrief.md
+		.github\memory-bank\README.md = .github\memory-bank\README.md
+		.github\memory-bank\systemPatterns.md = .github\memory-bank\systemPatterns.md
+		.github\memory-bank\techContext.md = .github\memory-bank\techContext.md
+	EndProjectSection
+EndProject
+Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "workflows", "workflows", "{B85A50D8-0A27-48BF-A673-56BB285EEE62}"
 EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
@@ -107,9 +133,11 @@ Global
 		{D7078045-A923-47B9-9543-4D92F2C16E57} = {6C3EA053-9755-4CBA-9D1E-A8AED60F6099}
 		{A278D685-967B-49C5-9CFF-726B1CBF259C} = {6C3EA053-9755-4CBA-9D1E-A8AED60F6099}
 		{AC6C25AA-3B4E-4D32-99F3-94841EE241A8} = {6C3EA053-9755-4CBA-9D1E-A8AED60F6099}
+		{0FF414FD-6CF5-4D5F-803E-73609F6292DF} = {6C3EA053-9755-4CBA-9D1E-A8AED60F6099}
+		{B85A50D8-0A27-48BF-A673-56BB285EEE62} = {6C3EA053-9755-4CBA-9D1E-A8AED60F6099}
 	EndGlobalSection
 	GlobalSection(ExtensibilityGlobals) = postSolution
-		SolutionGuid = {CBD3E3C3-D6AB-4EE7-A317-B47493A7C9F2}
 		StartupProject = {CE4A7D9A-E58D-B782-7CBC-051C53AF10B1}
+		SolutionGuid = {CBD3E3C3-D6AB-4EE7-A317-B47493A7C9F2}
 	EndGlobalSection
 EndGlobal

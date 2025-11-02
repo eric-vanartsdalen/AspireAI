@@ -61,7 +61,7 @@ Note: Updates to Aspire and .Net framework SDK will be likely and affected as se
 
 ## Phase 3: Document Upload & Ingestion Pipeline
 
-**Status**: ⏳ TO-DO
+**Status**: ⏳ IN-PROGRESS
 
 **Objective**: Allow users to upload documents (PDF, DOCX, etc.), which are chunked, embedded, and stored for later retrieval.  
 **Outcomes**:

@@ -44,8 +44,6 @@ Last updated: 2025-11-02
 | SQL scripts | `instructions/sql-sp-generation.instructions.md` | Stored procedure authoring rules. |
 | Markdown docs | `instructions/markdown.instructions.md` | General repo docs; front matter optional unless target system needs it. |
 | Memory & workflow | `instructions/memory-recall.instructions.md` | Lightweight session routine; create memory files only on request. |
-| Task tracking (`.copilot-tracking/changes`) | `instructions/task-implementation.instructions.md` | How to apply plan files. |
-| Legacy .NET Framework | `instructions/dotnet-framework.instructions.md` | Applies only if editing older non-SDK projects (rare here). |
 | TaskSync protocol | `instructions/tasksync.instructions.md` | Optional terminal loop—enable only when the user asks for TaskSync mode. |
 
 ## Prompt Directory Snapshot
