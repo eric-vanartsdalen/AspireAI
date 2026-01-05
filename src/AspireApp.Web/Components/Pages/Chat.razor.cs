@@ -61,14 +61,14 @@ namespace AspireApp.Web.Components.Pages
             
             // Debug: Check what configuration values we have
             var configEndpoint = configuration["AI-Endpoint"];
-            var configModel = configuration["AI-Model"];
+            var configModel = configuration["AI-Chat-Model"];
             var envEndpoint = Environment.GetEnvironmentVariable("AI-Endpoint");
-            var envModel = Environment.GetEnvironmentVariable("AI-Model");
+            var envModel = Environment.GetEnvironmentVariable("AI-Chat-Model");
             
             Console.WriteLine($"Chat: Config AI-Endpoint = '{configEndpoint}'");
-            Console.WriteLine($"Chat: Config AI-Model = '{configModel}'");
+            Console.WriteLine($"Chat: Config AI-Chat-Model = '{configModel}'");
             Console.WriteLine($"Chat: Env AI-Endpoint = '{envEndpoint}'");
-            Console.WriteLine($"Chat: Env AI-Model = '{envModel}'");
+            Console.WriteLine($"Chat: Env AI-Chat-Model = '{envModel}'");
             Console.WriteLine($"Chat: HomeConfigurations.ActiveModelURL = '{HomeConfigurations.ActiveModelURL}'");
             Console.WriteLine($"Chat: HomeConfigurations.ActiveModel = '{HomeConfigurations.ActiveModel}'");
             

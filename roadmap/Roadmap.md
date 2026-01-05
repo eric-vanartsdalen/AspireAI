@@ -55,7 +55,7 @@ Note: Updates to Aspire and .Net framework SDK will be likely and affected as se
 
 **Branch suggestion**: `feature/speech-io`
 
-**Documentation**: See [Speech Features Documentation](docs/SPEECH_FEATURES.md) for detailed implementation details.
+**Documentation**: See [Speech Features Documentation](../docs/SPEECH_FEATURES.md) for detailed implementation details.
 
 ---
 
