@@ -31,7 +31,7 @@ public partial class Program
 
         // Add a NEO4J container for graph database with caching optimizations
         var neo4jUser = builder.AddParameter("neo4j-user", "neo4j");
-        var neo4jPass = builder.AddParameter("neo4j-pass", "neo4j@secret");
+        var neo4jPass = builder.AddParameter("neo4j-pass", "neo4j@secret", secret: true);
 
         // Retrieve parameter values asynchronously to avoid using obsolete .Value
         var neo4jUserValue = await neo4jUser.Resource.GetValueAsync(CancellationToken.None);
@@ -65,15 +65,15 @@ public partial class Program
             .WithHttpEndpoint(port: 8000, targetPort: 8000, name: "http")
             .WithBindMount("../../data", "/app/data")
             .WithVolume("aspire-database", "/app/database")  // Use volume for database persistence
-            .WithBindMount("../../database", "/app/host-database")  // Keep host access for debugging/backup
+            .WithBindMount("../../database", "/app/database")  // Keep host access for debugging/backup
             .WithVolume("python-pip-cache", "/root/.cache/pip")            // Persist pip cache
             .WithEnvironment("NEO4J_URI", neo4jDb.GetEndpoint("bolt"))
             .WithEnvironment("NEO4J_USER", neo4jUser.Resource)
             .WithEnvironment("NEO4J_PASSWORD", neo4jPass.Resource)
             .WithEnvironment("PIP_CACHE_DIR", "/root/.cache/pip")          // Use persistent pip cache
             .WithEnvironment("DOCKER_BUILDKIT", "1")                      // Enable BuildKit for better caching
-            .WithEnvironment("ASPIRE_DB_PATH", "/app/database/data-resources.db")  // Use volume path
-            .WithEnvironment("ASPIRE_DB_BACKUP_PATH", "/app/host-database/data-resources.db")  // Backup to host
+            .WithEnvironment("ASPIRE_DB_PATH", "/app/database/data-resources.db")  // Use host-mounted path by default
+            //.WithEnvironment("ASPIRE_DB_BACKUP_PATH", "/app/database/data-resources.db")  // Backup to host
             .WithHttpHealthCheck("/health")
             .WaitFor(neo4jDb);  // Ensure Neo4j starts before Python service
 

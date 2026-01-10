@@ -1,5 +1,5 @@
 # Lightweight Neo4j Docker image for development - faster builds
-FROM neo4j:5.15.0-community
+FROM neo4j:2025.11.2-community AS base
 
 # Set environment variables for development
 ENV NEO4J_AUTH=neo4j/neo4j@secret \

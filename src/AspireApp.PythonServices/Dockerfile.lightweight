@@ -30,7 +30,7 @@ RUN pip install --upgrade pip setuptools wheel && \
 RUN pip install pypdf2 python-docx
 
 # Create database directory with open permissions before switching user
-RUN mkdir -p /app/database && chmod 777 /app/database
+RUN mkdir -p /app/database /app/docs-database && chmod 777 /app/database /app/docs-database
 
 # Create non-root user
 RUN adduser --disabled-password --gecos '' --uid 1000 appuser && \

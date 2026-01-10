@@ -68,8 +68,8 @@ ENV PATH="/opt/venv/bin:$PATH"
 WORKDIR /app
 
 # Create database and data directories with proper permissions before switching user
-RUN mkdir -p /app/database /app/data/uploads /app/data/processed/documents && \
-    chmod 777 /app/database && \
+RUN mkdir -p /app/database /app/docs-database /app/data/uploads /app/data/processed/documents && \
+    chmod 777 /app/database /app/docs-database && \
     chown -R appuser:appuser /app && \
     chmod -R 755 /app
 
@@ -83,4 +83,4 @@ USER appuser
 EXPOSE 8000
 
 # Command to run the application
-CMD ["uvicorn", "app.fastapi:app", "--host", "0.0.0.0", "--port", "8000", "--reload"]CMD ["uvicorn", "app.fastapi:app", "--host", "0.0.0.0", "--port", "8000", "--reload"]
+CMD ["uvicorn", "app.fastapi:app", "--host", "0.0.0.0", "--port", "8000"]

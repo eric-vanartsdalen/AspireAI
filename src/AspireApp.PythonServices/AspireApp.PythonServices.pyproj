@@ -56,7 +56,6 @@
     <Content Include="BUILD_CONFIGURATION.md" />
     <Content Include="DATABASE_FIX_SUMMARY.md" />
     <Content Include="Dockerfile" />
-    <Content Include="Dockerfile.cached" />
     <Content Include="Dockerfile.lightweight" />
     <Content Include="docs\DATABASE_CONCURRENT_ACCESS.md" />
     <Content Include="ENHANCEMENT_SUMMARY.md" />

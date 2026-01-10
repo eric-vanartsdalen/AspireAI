@@ -124,8 +124,21 @@ class DatabaseService:
     _pools_lock = threading.Lock()
     
     def __init__(self, db_path: str = None):
-        # Always use the fixed database path
-        self.db_path = "/app/database/data-resources.db"
+        # Determine database path with env override and sensible fallbacks
+        env_path = os.environ.get("ASPIRE_DB_PATH")
+        docs_db = Path(env_path) if env_path else Path("/app/docs-database/data-resources.db")
+        volume_db = Path("/app/database/data-resources.db")
+
+        if env_path:
+            self.db_path = str(docs_db)
+            logger.info(f"Using database path from ASPIRE_DB_PATH: {self.db_path}")
+        elif docs_db.exists() or docs_db.parent.exists():
+            self.db_path = str(docs_db)
+            logger.info(f"Using docs-mounted database path: {self.db_path}")
+        else:
+            self.db_path = str(volume_db)
+            logger.info(f"Using volume-backed database path: {self.db_path}")
+
         self._ensure_database_directory()
         
         # Get or create connection pool for this database path
@@ -156,10 +169,13 @@ class DatabaseService:
                 db_dir.mkdir(parents=True, exist_ok=True)
             # Try to set proper permissions if we can
             try:
-                os.chmod(db_dir, stat.S_IRWXU | stat.S_IRGRP | stat.S_IXGRP | stat.S_IROTH | stat.S_IXOTH)
-                logger.debug(f"Set permissions on database directory: {db_dir}")
+                if os.access(db_dir, os.W_OK | os.X_OK):
+                    os.chmod(db_dir, stat.S_IRWXU | stat.S_IRGRP | stat.S_IXGRP | stat.S_IROTH | stat.S_IXOTH)
+                    logger.debug(f"Set permissions on database directory: {db_dir}")
+                else:
+                    logger.debug(f"Skipping chmod on database directory (insufficient rights): {db_dir}")
             except (OSError, PermissionError) as e:
-                logger.warning(f"Could not set directory permissions: {e}")
+                logger.info(f"Skipping chmod on database directory (likely bind mount): {e}")
             # Check if we can write to the directory
             test_file = db_dir / ".write_test"
             try:
