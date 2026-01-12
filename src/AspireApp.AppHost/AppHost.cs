@@ -29,7 +29,6 @@ public partial class Program
 			})
 			.WithDataVolume()
 			.WithGPUSupport();
-            //.WithContainerRuntimeArgs("--gpus", "all");
         var appmodel = ollama.AddModel("chat", chatModelName);
         var embeddingmodel = ollama.AddModel("embedding", embeddingModelName);
 
