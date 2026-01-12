@@ -9,7 +9,7 @@ namespace AspireApp.Web.Data
     /// 
     /// Replaces the previous Files/Documents dual-table design with a single source of truth.
     /// </summary>
-    [Table("datasources")]
+    [Table("files")]
     public class FileMetadata
     {
         [Key]
@@ -19,27 +19,23 @@ namespace AspireApp.Web.Data
         // ==================== Core File Identification ====================
         
         [Required]
-        [Column("source_name")]
+        [Column("file_name")]
         [MaxLength(255)]
         public string FileName { get; set; } = string.Empty;
 
         [Required]
-        [Column("original_source_name")]
+        [Column("original_file_name")]
         [MaxLength(255)]
         public string OriginalFileName { get; set; } = string.Empty;
 
         [Required]
-        [Column("source_path")]
+        [Column("file_path")]
         [MaxLength(500)]
         public string FilePath { get; set; } = string.Empty;
 
-        [Column("source_hash")]
-        [MaxLength(64)]
-        public string FileHash { get; set; } = string.Empty;
-
         // ==================== File Metadata ====================
         
-        [Column("source_size")]
+        [Column("file_size")]
         public long FileSize { get; set; } = 0;
 
         [Column("mime_type")]
@@ -48,7 +44,7 @@ namespace AspireApp.Web.Data
 
         // ==================== Upload Tracking ====================
         
-        [Column("ingested_at")]
+        [Column("uploaded_at")]
         public DateTime UploadedAt { get; set; } = DateTime.UtcNow;
 
         // ==================== Processing Lifecycle ====================
@@ -73,7 +69,6 @@ namespace AspireApp.Web.Data
         // ==================== Docling Processing Output ====================
         
         [Column("docling_document_path")]
-        [MaxLength(500)]
         public string? DoclingDocumentPath { get; set; }
 
         [Column("total_pages")]
@@ -82,7 +77,6 @@ namespace AspireApp.Web.Data
         // ==================== Neo4j Integration (Future) ====================
         
         [Column("neo4j_document_node_id")]
-        [MaxLength(100)]
         public string? Neo4jDocumentNodeId { get; set; }
 
         // ==================== Future Extensibility ====================
@@ -91,16 +85,16 @@ namespace AspireApp.Web.Data
         /// Source type for future features: 'upload' (default), 'website', etc.
         /// </summary>
         [Column("source_type")]
-        [MaxLength(50)]
         public string SourceType { get; set; } = "upload";
 
         [Column("source_url")]
-        [MaxLength(500)]
         public string? SourceUrl { get; set; }
 
         // ==================== Navigation Properties ====================
         
         public virtual ICollection<DocumentPage> Pages { get; set; } = [];
+
+        public virtual ICollection<ProcessedDocument> ProcessedDocuments { get; set; } = [];
 
         // ==================== Computed Properties ====================
         
@@ -128,7 +122,10 @@ namespace AspireApp.Web.Data
                 return $"{size:0.##} {sizes[order]}";
             }
         }
-        
+
+		[Column("file_hash")]
+        public string FileHash { get; set; } = string.Empty;
+
         /// <summary>
         /// Gets a short representation of the file hash for display purposes
         /// </summary>
@@ -176,14 +173,14 @@ namespace AspireApp.Web.Data
     /// Document page entity for storing page-level content extracted by docling.
     /// Enables page-by-page RAG retrieval and Neo4j graph integration.
     /// </summary>
-    [Table("datasource_pages")]
+    [Table("document_pages")]
     public class DocumentPage
     {
         [Key]
         [Column("id")]
         public int Id { get; set; }
 
-        [Column("datasource_id")]
+        [Column("document_id")]
         public int FileId { get; set; }
 
         [Column("page_number")]
@@ -281,8 +278,9 @@ namespace AspireApp.Web.Data
         public string? Neo4jNodeId { get; set; }
 
         [ForeignKey("DocumentId")]
-        public virtual Document Document { get; set; } = null!;
+        public virtual FileMetadata Document { get; set; } = null!;
 
         public virtual ICollection<DocumentPage> DocumentPages { get; set; } = [];
     }
+
 }

@@ -31,7 +31,7 @@ builder.Services.AddHttpClient();
 
 // ADDING CONFIGURATIONS FOR STORAGE OF FILES
 // Configure SQLite database (and location)
-var connectionString = builder.Configuration.GetConnectionString("DefaultConnection") ?? "Data Source=../database/data-resources.db";
+var connectionString = builder.Configuration.GetConnectionString("DefaultConnection") ?? "Data Source=../../database/data-resources.db";
 builder.Services.AddDbContext<UploadDbContext>(options =>
     options.UseSqlite(connectionString));
 

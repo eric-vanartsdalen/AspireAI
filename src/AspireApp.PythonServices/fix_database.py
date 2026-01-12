@@ -15,7 +15,7 @@ def create_working_database():
     
     # Try different locations in order of preference
     db_locations = [
-        "/app/docs-database/data-resources.db",
+        "/app/database/data-resources.db",
         "/tmp/aspire_database/data-resources.db", 
         "/tmp/data-resources.db"
     ]
