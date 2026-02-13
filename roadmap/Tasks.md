@@ -18,15 +18,26 @@ A task-oriented view of the AspireAI project aligned with the [Roadmap](Roadmap.
 - [ ] **Upload Path Normalization (P0 blocker)**
   - Ensure Web persistence and Python Docling resolution use a shared file-path convention
   - Validate every uploaded row can be located by Python prior to processing
+  - Verify Docker volume mapping exposes uploaded files to Python container at runtime
 
 - [ ] **Processing Pipeline Stabilization (P1)**
   - Process uploaded records through Docling and persist page content in `document_pages`
   - Persist processing timestamps/error details consistently
   - Add clear retry behavior for failed processing records
 
+- [ ] **Docling -> LightRAG Ingestion (P1 blocker)**
+  - Export Docling free-text output in a form accepted by LightRAG ingest path
+  - Confirm LightRAG uses Neo4j backend and ingested records are queryable
+  - Keep orchestration through Python retrieval APIs (no parallel retrieval path)
+
 - [ ] **RAG Ingestion via Python (P1)**
   - Keep ingestion/query orchestration behind Python endpoints
   - Ensure Neo4j/LightRAG updates are linked to canonical SQLite records
+
+- [ ] **Python Footprint Minimization (P0 blocker)**
+  - Remove non-essential SQLite usage patterns and legacy schema dependencies
+  - Minimize API endpoints to required upload->process->retrieve lifecycle
+  - Document the retained endpoint/database contract surface
 
 - [ ] **Chat Retrieval + Citations (P2)**
   - Update chat flow to call Python `/rag` retrieval path
@@ -44,6 +55,9 @@ A task-oriented view of the AspireAI project aligned with the [Roadmap](Roadmap.
 - [ ] **Gate B**: Processing writes page rows successfully
 - [ ] **Gate C**: RAG search returns references from processed content
 - [ ] **Gate D**: Chat displays citation references from retrieval
+- [ ] **Gate E**: Uploaded files are visible inside Python container through mapped volume path
+- [ ] **Gate F**: Docling output is ingested into LightRAG and queryable via Python retrieval route
+- [ ] **Gate G**: Python SQLite/API footprint reduced to minimum required and documented
 
 ---
 

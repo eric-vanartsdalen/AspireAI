@@ -24,6 +24,14 @@ This section captures the current execution plan so near-term priorities are not
 - Canonical SQLite schema remains `files` + `document_pages`.
 - Retrieval path for chat is **Web Chat -> Python `/rag` API** (primary orchestration point).
 - Delivery priority is stabilization first, then feature expansion.
+- Phase is not complete until data-path blockers are resolved end-to-end on this branch.
+- Python service scope is intentionally minimal: keep only required SQLite fields and only required API endpoints for upload->process->retrieve.
+
+### Non-Negotiable Blockers (Must Close Before Phase Exit)
+
+- **Shared File Visibility**: Files uploaded by Aspire Web must be visible to Python in Docker via the mapped volume path used by Docling.
+- **Docling -> LightRAG Chain**: Parsed free text from Docling must flow into LightRAG ingestion, with LightRAG operating against Neo4j backend.
+- **Minimal Python Footprint**: Remove/avoid non-essential SQLite structures and non-essential API surface beyond required processing and retrieval flows.
 
 ### Incremental Execution Order
 
@@ -45,6 +53,9 @@ This section captures the current execution plan so near-term priorities are not
 - **Gate B**: Python processing can load file and write `document_pages` rows.
 - **Gate C**: RAG query returns source-bearing results from processed content.
 - **Gate D**: Chat response displays citation references from retrieval results.
+- **Gate E**: Volume-mounted file visibility is proven between Web upload location and Python container runtime.
+- **Gate F**: Docling text output is successfully ingested to LightRAG and queryable through the Python retrieval path.
+- **Gate G**: Python SQLite/API footprint is reduced to required minimum and documented.
 
 ### Test Bootstrap (First Iteration)
 
