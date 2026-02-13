@@ -4,40 +4,53 @@ A task-oriented view of the AspireAI project aligned with the [Roadmap](Roadmap.
 
 ---
 
-## Current Focus: Phase 3 - Document Upload & Ingestion Pipeline
+## Current Focus: 2026-02-13 Stabilization Track
 
 **Branch**: `feature/doc-upload` (active)
 
 ### Active Tasks
 
-- [ ] **UI: File Upload Component**
-  - Create Blazor drag-and-drop file upload component in `src/AspireApp.Web/Components/Pages/`
-  - Support PDF, DOCX, TXT file types
-  - Add file validation (size limits, type checking)
-  - Display upload progress indicator
+- [ ] **Contract Alignment (P0 blocker)**
+  - Align Python router/service/database contracts to canonical SQLite schema: `files` + `document_pages`
+  - Remove/replace legacy `documents`/`processed_documents` assumptions in Python models and router flows
+  - Normalize status lifecycle values and casing (`uploaded`, `processing`, `processed`, `error`)
 
-- [ ] **Backend: Python FastAPI Ingestion Service**
-  - Configure Docling integration in `src/AspireApp.PythonServices/`
-  - Create `/api/ingest` endpoint for file processing
-  - Implement document-to-DoclingDocument conversion
-  - Add chunking logic (configurable chunk size/overlap)
+- [ ] **Upload Path Normalization (P0 blocker)**
+  - Ensure Web persistence and Python Docling resolution use a shared file-path convention
+  - Validate every uploaded row can be located by Python prior to processing
 
-- [ ] **Storage: Metadata & Embeddings**
-  - Design database schema for document chunks (SQLite or Neo4j)
-  - Store chunk metadata (source file, page number, position)
-  - Add optional embedding generation pipeline
-  - Implement chunk retrieval API
+- [ ] **Processing Pipeline Stabilization (P1)**
+  - Process uploaded records through Docling and persist page content in `document_pages`
+  - Persist processing timestamps/error details consistently
+  - Add clear retry behavior for failed processing records
 
-- [ ] **Integration: Connect Upload UI to Python Service**
-  - Wire Blazor upload component to Python ingestion endpoint
-  - Handle async upload with status feedback
-  - Display ingestion results and errors in UI
+- [ ] **RAG Ingestion via Python (P1)**
+  - Keep ingestion/query orchestration behind Python endpoints
+  - Ensure Neo4j/LightRAG updates are linked to canonical SQLite records
+
+- [ ] **Chat Retrieval + Citations (P2)**
+  - Update chat flow to call Python `/rag` retrieval path
+  - Render source references in chat UI (file + page + snippet)
+
+- [ ] **Testing Baseline (P0-P2 gates)**
+  - Upload smoke test: create/list/delete file and validate filesystem + DB state
+  - Python integration test: uploaded record -> process -> `document_pages` rows
+  - RAG integration test: retrieval returns source-bearing results
+  - E2E manual smoke: upload -> process -> chat response includes citation
+
+### Milestone Gates
+
+- [ ] **Gate A**: Uploaded file exists on disk and row status/path are valid
+- [ ] **Gate B**: Processing writes page rows successfully
+- [ ] **Gate C**: RAG search returns references from processed content
+- [ ] **Gate D**: Chat displays citation references from retrieval
 
 ---
 
 ## Phase Completion Checklist
 
 ### ? Phase 0: Repo Cleanup & Setup
+
 - [x] Solution/project structure defined
 - [x] Aspire AppHost orchestration configured
 - [x] Plugin/extension scaffolding added
@@ -45,6 +58,7 @@ A task-oriented view of the AspireAI project aligned with the [Roadmap](Roadmap.
 - [x] Branch strategy established
 
 ### ? Phase 1: Basic Blazor Chat UI
+
 - [x] Chat.razor component with message history
 - [x] User/Assistant message bubbles with styling
 - [x] Text input with send button
@@ -52,6 +66,7 @@ A task-oriented view of the AspireAI project aligned with the [Roadmap](Roadmap.
 - [x] Auto-scroll and focus management
 
 ### ? Phase 2: Speech-to-Text & Text-to-Speech
+
 - [x] SpeechService.cs and speech.js implementation
 - [x] Microphone input (Web Speech API)
 - [x] Text-to-speech for AI responses
@@ -60,13 +75,15 @@ A task-oriented view of the AspireAI project aligned with the [Roadmap](Roadmap.
 - [x] Documentation in `docs/SPEECH_FEATURES.md`
 
 ### ? Phase 3: Document Upload & Ingestion
-- [ ] File upload UI component
-- [ ] Python Docling integration
-- [ ] Document chunking pipeline
-- [ ] Metadata storage (database)
-- [ ] Embedding generation (optional)
+
+- [x] File upload UI/component baseline
+- [ ] Python contract alignment with canonical schema
+- [ ] Stable Docling processing path from uploaded file records
+- [ ] Page-level persistence and retrieval-ready metadata
+- [ ] Processing + retrieval test coverage
 
 ### ? Phase 4: Flat Vector RAG
+
 - [ ] Vector store implementation
 - [ ] FlatVectorRetriever plugin
 - [ ] Top-K chunk retrieval logic
@@ -75,6 +92,7 @@ A task-oriented view of the AspireAI project aligned with the [Roadmap](Roadmap.
 - [ ] "Enable RAG" configuration toggle
 
 ### ? Phase 5: LightRAG / GraphRAG
+
 - [ ] Graph construction from document chunks
 - [ ] GraphRagRetriever or LightRagRetriever plugin
 - [ ] Multi-hop retrieval logic
@@ -83,6 +101,7 @@ A task-oriented view of the AspireAI project aligned with the [Roadmap](Roadmap.
 - [ ] Fallback to flat vector retrieval
 
 ### ? Phase 6: Plugin Ecosystem
+
 - [ ] Plugin documentation (how to create custom plugins)
 - [ ] Example custom IChatProvider (OpenAI/Anthropic)
 - [ ] Example custom chunker/embedder
@@ -91,15 +110,17 @@ A task-oriented view of the AspireAI project aligned with the [Roadmap](Roadmap.
 - [ ] Community contribution guidelines
 
 ### ? Phase 7: Testing & Deployment
+
 - [ ] Unit tests for backend services
-- [ ] Integration tests for RAG pipeline
-- [ ] End-to-end UI tests
+- [ ] Integration tests for upload -> processing -> retrieval path
+- [ ] End-to-end chat citation validation
 - [ ] Dockerfile for Blazor frontend
 - [ ] Dockerfile for Python backend
 - [ ] docker-compose.yml example
 - [ ] GitHub Actions CI/CD workflow
 
 ### ? Phase 8: Advanced Features
+
 - [ ] Multi-agent workflows
 - [ ] Long-term conversation memory
 - [ ] Web crawler/scraper integration
@@ -111,6 +132,7 @@ A task-oriented view of the AspireAI project aligned with the [Roadmap](Roadmap.
 ## Quick Reference Commands
 
 ### Development
+
 ```bash
 # Build solution
 dotnet build
@@ -123,6 +145,7 @@ dotnet run --project src/AspireApp.Web
 ```
 
 ### Git Workflow
+
 ```bash
 # Create feature branch
 git checkout -b feature/<phase-name>
@@ -136,6 +159,7 @@ git push origin feature/<phase-name>
 ```
 
 ### Testing (when implemented)
+
 ```bash
 # Run .NET tests
 dotnet test
@@ -157,6 +181,6 @@ pytest
 
 ---
 
-**Last Updated**: 2025-01-28  
-**Current Phase**: Phase 3 (Document Upload & Ingestion)  
+**Last Updated**: 2026-02-13  
+**Current Phase**: Stabilization Track (Phase 3 foundation -> Phase 5 enablement)  
 **Active Branch**: `feature/doc-upload`

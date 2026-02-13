@@ -14,14 +14,18 @@ Disclaimer: This is a hacked together example, so there may be bad practices and
 Before getting started, ensure you have the following installed:
 
 - **.NET 9 SDK**: [Download here](https://dotnet.microsoft.com/en-us/download/dotnet/9.0)
-Check from commandline
-```
+
+Check from command line:
+
+```bash
 dotnet --version
 ```
+
 - **Aspire Tooling**: [Setup instructions](https://learn.microsoft.com/en-us/dotnet/aspire/fundamentals/setup-tooling?tabs=windows&pivots=vscode) Install tools from commandline
 
 Once prerequisites are installed, you can perform an initial build:
-```
+
+```bash
 dotnet build
 ```
 
@@ -31,6 +35,21 @@ dotnet build
 - Demonstrate how to connect and use AI services.
 - Show how to centralize and share configuration settings.
 - Serve as a collaborative playground for learning and sharing knowledge.
+
+## Current Plan (2026-02-13)
+
+Active work is focused on stabilizing the document-to-RAG path before adding new features.
+
+- Keep canonical SQLite schema as `files` + `document_pages`.
+- Align Python processing/RAG contracts to the current schema and status lifecycle.
+- Normalize Web upload paths and Python Docling file resolution.
+- Route chat retrieval through Python `/rag` and render source citations (file/page/snippet).
+- Add baseline tests for upload, processing, retrieval, and citation display.
+
+Details and task tracking:
+
+- Roadmap: [roadmap/Roadmap.md](roadmap/Roadmap.md)
+- Tasks: [roadmap/Tasks.md](roadmap/Tasks.md)
 
 ## Getting Started
 
@@ -50,12 +69,14 @@ dotnet build
 **Solution**: Since this is an Aspire application, the startup project should always be `AspireApp.AppHost`, which orchestrates all services including the API, web frontend, and supporting services (Ollama, Neo4j, Python services).
 
 **To fix this in Visual Studio:**
+
 1. In Solution Explorer, right-click on the `AspireApp.AppHost` project
 2. Select "Set as Startup Project"
 3. The `AspireApp.AppHost` project should now appear in **bold** in Solution Explorer
 4. Run the application (F5) - this will launch the Aspire dashboard and coordinate all services
 
 **Expected behavior when working correctly:**
+
 - The Aspire dashboard should launch showing all services
 - The web application should be accessible through the dashboard
 - All supporting services (API, Neo4j, Ollama) should start automatically

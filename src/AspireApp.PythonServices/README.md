@@ -14,6 +14,7 @@ This service provides document processing capabilities using [docling](https://g
 ## Quick Start
 
 ### Option 1: Local Development (Fastest)
+
 ```bash
 # Set up local virtual environment (one-time setup)
 cd src/AspireApp.PythonServices
@@ -28,12 +29,14 @@ uvicorn app.fastapi:app --host 0.0.0.0 --port 8000 --reload
 ```
 
 ### Option 2: Docker Development with Caching
+
 ```bash
 cd src/AspireApp.PythonServices
 docker-compose -f docker-compose.dev.yml up
 ```
 
 ### Option 3: Full Aspire Orchestration
+
 ```bash
 # Run from solution root
 dotnet run --project src/AspireApp.AppHost
@@ -54,7 +57,7 @@ The Python service has been optimized for fast builds and development:
 ### ?? Performance Comparison
 
 | Method | Cold Build | Warm Build (code change) | Hot Reload |
-|--------|------------|-------------------------|------------|
+| ------ | ---------- | ------------------------ | ---------- |
 | Original | ~3-5 min | ~3-5 min | N/A |
 | Optimized Docker | ~3-5 min | ~30 sec | ~5 sec |
 | Local .venv | ~2 min | N/A | ~1 sec |
@@ -62,6 +65,7 @@ The Python service has been optimized for fast builds and development:
 ### ?? Cache Persistence
 
 **Docker Volumes**: The following are persisted across container rebuilds:
+
 - `python-pip-cache`: pip download cache (`/root/.cache/pip`)
 - `python-venv`: Virtual environment (`/opt/venv`)
 - Application data and database bindings
@@ -70,7 +74,7 @@ The Python service has been optimized for fast builds and development:
 
 ## Architecture
 
-```
+```text
 ???????????????????    ????????????????????    ???????????????????
 ?   Blazor Web    ?    ?  Python FastAPI  ?    ?     Neo4j       ?
 ?   Frontend      ??????     Service      ??????  Graph Database ?
@@ -93,18 +97,21 @@ The Python service has been optimized for fast builds and development:
 ## API Endpoints
 
 ### Documents
+
 - `GET /documents/` - List all documents
 - `GET /documents/unprocessed` - List unprocessed documents
 - `GET /documents/{document_id}` - Get specific document
 - `GET /documents/{document_id}/status` - Get document processing status
 
 ### Processing
+
 - `POST /processing/process-document/{document_id}` - Process a specific document
 - `POST /processing/process-all` - Process all unprocessed documents
 - `GET /processing/status/{document_id}` - Get processing status
 - `GET /processing/processed-documents` - List all processed documents
 
 ### RAG (Retrieval)
+
 - `GET /rag/search-documents?query={query}&limit={limit}` - Search document content
 - `GET /rag/document-context/{document_id}` - Get full document context
 - `GET /rag/page-content/{document_id}/{page_number}` - Get specific page content
@@ -113,6 +120,7 @@ The Python service has been optimized for fast builds and development:
 - `GET /rag/health` - Check RAG services health
 
 ### System
+
 - `GET /` - Service information
 - `GET /health` - Health check
 - `GET /docs` - Interactive API documentation
@@ -122,7 +130,7 @@ The Python service has been optimized for fast builds and development:
 1. **Upload**: Documents uploaded through Blazor frontend to `/app/data/uploads/`
 2. **Detection**: Service detects new documents in SQLite database
 3. **Processing**: Docling processes document and extracts pages
-4. **Storage**: 
+4. **Storage**:
    - Processed document saved to `/app/data/processed/documents/{doc_id}/`
    - Page content stored individually
    - Metadata and structure preserved
@@ -131,7 +139,7 @@ The Python service has been optimized for fast builds and development:
 
 ## File Structure
 
-```
+```text
 /app/
 ??? database/
 ?   ??? data-resources.db          # SQLite database
@@ -179,6 +187,7 @@ The Python service has been optimized for fast builds and development:
 ### ??? Development Tools
 
 The development environment includes:
+
 - **pytest**: Unit and integration testing
 - **black**: Code formatting
 - **flake8**: Code linting
@@ -314,11 +323,13 @@ python test_services.py
 ## Troubleshooting
 
 ### Build Issues
+
 - **Slow builds**: Ensure Docker BuildKit is enabled and use the optimized Dockerfile
 - **Dependency errors**: Clear Docker cache with `docker builder prune`
 - **Permission issues**: Use the non-root user configuration in Dockerfile
 
 ### Runtime Issues
+
 - **Neo4j connection**: Check health endpoint and ensure Neo4j is running
 - **File access**: Verify volume mounts in Aspire configuration
 - **Memory issues**: Increase Docker memory limits for large document processing

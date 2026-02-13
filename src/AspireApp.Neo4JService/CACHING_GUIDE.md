@@ -2,31 +2,34 @@
 
 This document explains the caching optimizations implemented for the Neo4j service in AspireAI.
 
-## ?? Caching Optimizations Implemented
+## Caching Optimizations Implemented
 
-### 1. **Docker Layer Caching**
-- **Plugin Installation**: APOC and Graph Data Science plugins are installed in a cached Docker layer
-- **Configuration Files**: Neo4j configuration is in a separate layer for better caching
-- **Base Image Pinning**: Uses specific Neo4j version (5.15.0) for consistent caching
+### 1. Docker Layer Caching
 
-### 2. **Volume Persistence**
-- **Data Volume**: `neo4j-data` - Persists database files across container restarts
-- **Plugin Volume**: `neo4j-plugins` - Caches downloaded plugins
-- **Log Volume**: `neo4j-logs` - Persists logs for debugging
-- **Config Volume**: `neo4j-conf` - Persists custom configuration
-- **Import Volume**: `neo4j-import` - Caches bulk import files
+- **Plugin Installation**: APOC and Graph Data Science plugins are installed in a cached Docker layer.
+- **Configuration Files**: Neo4j configuration is in a separate layer for better caching.
+- **Base Image Pinning**: Uses specific Neo4j version (`5.15.0`) for consistent caching.
 
-### 3. **Build Optimization**
-- **BuildKit Enabled**: Uses Docker BuildKit for advanced caching
-- **Lightweight Option**: Alternative dockerfile for faster development builds
-- **Minimal Context**: .dockerignore reduces build context size
+### 2. Volume Persistence
 
-## ? Performance Comparison
+- **Data Volume**: `neo4j-data` persists database files across container restarts.
+- **Plugin Volume**: `neo4j-plugins` caches downloaded plugins.
+- **Log Volume**: `neo4j-logs` persists logs for debugging.
+- **Config Volume**: `neo4j-conf` persists custom configuration.
+- **Import Volume**: `neo4j-import` caches bulk import files.
+
+### 3. Build Optimization
+
+- **BuildKit Enabled**: Uses Docker BuildKit for advanced caching.
+- **Lightweight Option**: Alternative Dockerfile for faster development builds.
+- **Minimal Context**: `.dockerignore` reduces build context size.
+
+## Performance Comparison
 
 ### Build Times
 
 | Configuration | First Build | Rebuild (config change) | Restart |
-|---------------|-------------|-------------------------|---------|
+| --- | --- | --- | --- |
 | **Original** | ~2-3 min | ~2-3 min | ~30 sec |
 | **Optimized** | ~2-3 min | ~30 sec | ~10 sec |
 | **Lightweight** | ~1 min | ~15 sec | ~5 sec |
@@ -34,17 +37,17 @@ This document explains the caching optimizations implemented for the Neo4j servi
 ### Container Startup Times
 
 | Configuration | Cold Start | Warm Start | With Data |
-|---------------|------------|------------|-----------|
+| --- | --- | --- | --- |
 | **Original** | ~30 sec | ~30 sec | ~60 sec |
 | **Optimized** | ~20 sec | ~10 sec | ~15 sec |
 | **Lightweight** | ~15 sec | ~5 sec | ~10 sec |
 
-## ?? Configuration Options
+## Configuration Options
 
 ### Environment Variables
 
 | Variable | Default | Description |
-|----------|---------|-------------|
+| --- | --- | --- |
 | `USE_LIGHTWEIGHT_NEO4J` | `false` | Use lightweight Neo4j build |
 | `NEO4J_AUTH` | `neo4j/neo4j@secret` | Authentication credentials |
 | `NEO4J_ACCEPT_LICENSE_AGREEMENT` | `yes` | Accept Neo4j license |
@@ -53,14 +56,15 @@ This document explains the caching optimizations implemented for the Neo4j servi
 ### Memory Settings (Optimized)
 
 | Setting | Development | Production | Description |
-|---------|-------------|------------|-------------|
+| --- | --- | --- | --- |
 | **Heap Initial** | 256M | 512M | JVM initial heap size |
 | **Heap Maximum** | 1G | 2G | JVM maximum heap size |
 | **Page Cache** | 512M | 1G | File system cache |
 
-## ?? Caching Strategies
+## Caching Strategies
 
-### 1. **Plugin Caching**
+### 1. Plugin Caching
+
 ```dockerfile
 # This layer is cached unless Neo4j version changes
 RUN wget -O /plugins/apoc-5.15.0-core.jar \
@@ -68,51 +72,57 @@ RUN wget -O /plugins/apoc-5.15.0-core.jar \
 ```
 
 **Benefits**:
-- ? Plugins downloaded once per Neo4j version
-- ? Shared across all container instances
-- ? Survives container rebuilds
 
-### 2. **Configuration Caching**
+- Plugins downloaded once per Neo4j version.
+- Shared across all container instances.
+- Survives container rebuilds.
+
+### 2. Configuration Caching
+
 ```dockerfile
 # Configuration in separate layer
 COPY neo4j.conf /conf/neo4j.conf
 ```
 
 **Benefits**:
-- ? Only rebuilds when config changes
-- ? Preserves optimized settings
-- ? Version-controlled configuration
 
-### 3. **Data Persistence**
+- Only rebuilds when config changes.
+- Preserves optimized settings.
+- Version-controlled configuration.
+
+### 3. Data Persistence
+
 ```csharp
 .WithVolume("neo4j-data", "/data")
 .WithVolume("neo4j-plugins", "/plugins")
 ```
 
 **Benefits**:
-- ? Database survives container restarts
-- ? No data loss during updates
-- ? Faster subsequent startups
 
-## ??? Usage Instructions
+- Database survives container restarts.
+- No data loss during updates.
+- Faster subsequent startups.
+
+## Usage Instructions
 
 ### Development (Fast Builds)
+
 ```json
-// appsettings.Development.json
 {
   "USE_LIGHTWEIGHT_NEO4J": "true"
 }
 ```
 
 ### Production (Full Features)
+
 ```json
-// appsettings.json
 {
   "USE_LIGHTWEIGHT_NEO4J": "false"
 }
 ```
 
 ### Manual Docker Commands
+
 ```bash
 # Build optimized version
 DOCKER_BUILDKIT=1 docker build -t neo4j-optimized .
@@ -129,27 +139,29 @@ docker run -d \
   neo4j-optimized
 ```
 
-## ?? Features by Configuration
+## Features by Configuration
 
 ### Full Build (Dockerfile)
-- ? **APOC Plugin**: Advanced procedures and functions
-- ? **Graph Data Science**: ML algorithms and graph analytics
-- ? **Optimized Memory**: Production-ready memory settings
-- ? **Health Checks**: Advanced health monitoring
-- ? **Security**: Comprehensive security configuration
+
+- **APOC Plugin**: Advanced procedures and functions.
+- **Graph Data Science**: ML algorithms and graph analytics.
+- **Optimized Memory**: Production-ready memory settings.
+- **Health Checks**: Advanced health monitoring.
+- **Security**: Comprehensive security configuration.
 
 ### Lightweight Build (Dockerfile.lightweight)
-- ? **Basic Neo4j**: Core graph database functionality
-- ? **Fast Startup**: Minimal dependencies
-- ? **Development**: Perfect for rapid iteration
-- ? **Simple Health**: Basic HTTP health checks
-- ?? **Limited Plugins**: No advanced procedures
 
-## ?? Performance Tuning
+- **Basic Neo4j**: Core graph database functionality.
+- **Fast Startup**: Minimal dependencies.
+- **Development**: Good for rapid iteration.
+- **Simple Health**: Basic HTTP health checks.
+- **Limited Plugins**: No advanced procedures.
+
+## Performance Tuning
 
 ### For Document Processing Workloads
 
-The optimized configuration includes settings specifically tuned for RAG workloads:
+The optimized configuration includes settings tuned for RAG workloads:
 
 ```conf
 # Optimized for text search and graph traversals
@@ -176,9 +188,10 @@ dbms.memory.pagecache.size=512M
 dbms.logs.debug.level=WARN
 ```
 
-## ?? Troubleshooting
+## Troubleshooting
 
 ### Build Issues
+
 ```bash
 # Clear Docker cache if builds fail
 docker builder prune -a
@@ -188,15 +201,17 @@ DOCKER_BUILDKIT=1 docker build --no-cache .
 ```
 
 ### Volume Issues
+
 ```bash
 # List volumes
 docker volume ls | grep neo4j
 
-# Remove volumes (?? DATA LOSS)
+# Remove volumes (DATA LOSS)
 docker volume rm neo4j-data neo4j-plugins neo4j-logs
 ```
 
 ### Memory Issues
+
 ```bash
 # Check container memory usage
 docker stats graph-db
@@ -206,6 +221,7 @@ docker stats graph-db
 ```
 
 ### Plugin Issues
+
 ```bash
 # Check plugins directory
 docker exec -it graph-db ls -la /plugins
@@ -214,38 +230,43 @@ docker exec -it graph-db ls -la /plugins
 docker exec -it graph-db cypher-shell -u neo4j -p password "CALL dbms.procedures() YIELD name WHERE name CONTAINS 'apoc' RETURN count(*)"
 ```
 
-## ?? Best Practices
+## Best Practices
 
 ### Development Workflow
-1. **Use lightweight build** for daily development
-2. **Enable all caching** with BuildKit
-3. **Persistent volumes** for data retention
-4. **Regular cleanup** of unused volumes
+
+1. Use lightweight build for daily development.
+2. Enable all caching with BuildKit.
+3. Use persistent volumes for data retention.
+4. Regularly clean up unused volumes.
 
 ### Production Deployment
-1. **Use full build** with all plugins
-2. **Monitor memory usage** and adjust settings
-3. **Backup volumes** regularly
-4. **Health monitoring** with proper alerts
+
+1. Use full build with all plugins.
+2. Monitor memory usage and adjust settings.
+3. Back up volumes regularly.
+4. Add health monitoring with proper alerts.
 
 ### CI/CD Pipeline
-1. **Cache Docker layers** between builds
-2. **Build matrix** (lightweight vs full)
-3. **Volume backup** in deployment scripts
-4. **Health checks** before routing traffic
 
-## ?? Monitoring
+1. Cache Docker layers between builds.
+2. Use a build matrix (lightweight vs full).
+3. Include volume backup in deployment scripts.
+4. Run health checks before routing traffic.
 
-The optimized Neo4j setup includes monitoring capabilities:
+## Monitoring
+
+The optimized Neo4j setup includes monitoring capabilities.
 
 ### Health Endpoints
-- **HTTP**: `http://localhost:7474/` - Browser interface
-- **Bolt**: `bolt://localhost:7687` - Database connection
+
+- **HTTP**: `http://localhost:7474/` (browser interface)
+- **Bolt**: `bolt://localhost:7687` (database connection)
 - **Metrics**: Available through JMX (production builds)
 
 ### Log Locations
+
 - **Query Logs**: `/logs/query.log`
 - **Debug Logs**: `/logs/debug.log`
 - **GC Logs**: `/logs/gc.log`
 
-This caching strategy significantly improves development velocity while maintaining production readiness.
+This caching strategy improves development velocity while maintaining production readiness.
