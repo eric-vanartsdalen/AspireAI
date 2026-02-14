@@ -14,11 +14,15 @@ A task-oriented view of the AspireAI project aligned with the [Roadmap](Roadmap.
   - Align Python router/service/database contracts to canonical SQLite schema: `files` + `document_pages`
   - Remove/replace legacy `documents`/`processed_documents` assumptions in Python models and router flows
   - Normalize status lifecycle values and casing (`uploaded`, `processing`, `processed`, `error`)
+  - Handle Web-uploaded `status='Uploaded'` rows safely (normalize or query case-insensitively)
+  - Preserve distinction between `original_file_name` (display) and `file_name` (stored artifact)
 
 - [ ] **Upload Path Normalization (P0 blocker)**
   - Ensure Web persistence and Python Docling resolution use a shared file-path convention
-  - Validate every uploaded row can be located by Python prior to processing
-  - Verify Docker volume mapping exposes uploaded files to Python container at runtime
+  - [x] Validate every uploaded row can be located by Python prior to processing
+  - [x] Verify Docker volume mapping exposes uploaded files to Python container at runtime
+  - Resolve full physical file as `file_path` (directory) + `file_name` (stored timestamped filename)
+  - Add guardrails for path normalization from Windows-style DB values to container runtime paths
 
 - [ ] **Processing Pipeline Stabilization (P1)**
   - Process uploaded records through Docling and persist page content in `document_pages`
@@ -51,13 +55,50 @@ A task-oriented view of the AspireAI project aligned with the [Roadmap](Roadmap.
 
 ### Milestone Gates
 
-- [ ] **Gate A**: Uploaded file exists on disk and row status/path are valid
+- [x] **Gate A**: Uploaded file exists on disk and row status/path are valid
 - [ ] **Gate B**: Processing writes page rows successfully
+- [ ] **Gate B1**: Processing accepts current upload-row shape (`file_path` directory + timestamped `file_name`)
+- [ ] **Gate B2**: Processing selection handles `Uploaded` status values without missing records
 - [ ] **Gate C**: RAG search returns references from processed content
 - [ ] **Gate D**: Chat displays citation references from retrieval
-- [ ] **Gate E**: Uploaded files are visible inside Python container through mapped volume path
+- [x] **Gate E**: Uploaded files are visible inside Python container through mapped volume path
 - [ ] **Gate F**: Docling output is ingested into LightRAG and queryable via Python retrieval route
 - [ ] **Gate G**: Python SQLite/API footprint reduced to minimum required and documented
+
+### Gate B1/B2 Implementation Checklist (File-Level)
+
+#### Web (.NET)
+
+- [ ] **`src/AspireApp.Web/Controllers/FileUploadController.cs`**
+  - [ ] In `UploadFile`, write canonical lifecycle value `uploaded` instead of `Uploaded` (or document why case normalization happens elsewhere).
+  - [ ] Keep timestamped `fileName` persistence behavior unchanged for stored artifact identity.
+
+- [ ] **`src/AspireApp.Web/Shared/FileStorageService.cs`**
+  - [ ] In `AddFileAsync`, normalize incoming status values to canonical lifecycle values before save.
+  - [ ] In `UpdateFileStatusAsync`, normalize status before timestamp branching (`processing`, `processed`, `error`).
+  - [ ] Preserve `FilePath` as directory and `FileName` as stored timestamped file.
+
+#### Python (FastAPI)
+
+- [ ] **`src/AspireApp.PythonServices/app/services/database_service.py`**
+  - [ ] Update `get_unprocessed_files` filter to handle case variance safely (e.g., normalize via SQL `lower(status) = 'uploaded'` or equivalent).
+  - [ ] Add/verify a helper to resolve physical input path from `file_path` (directory) + `file_name` (stored filename).
+  - [ ] Ensure Windows-style persisted paths are mapped to container-visible path conventions when needed.
+
+- [ ] **`src/AspireApp.PythonServices/app/routers/processing.py`**
+  - [ ] Replace legacy `documents/processed_documents` method usage with canonical `files/document_pages` workflow.
+  - [ ] Ensure processing status transitions use canonical values (`uploaded` -> `processing` -> `processed`/`error`).
+  - [ ] Ensure processing consumes resolved full file path instead of assuming `file_path` is already a complete filename.
+
+- [ ] **`src/AspireApp.PythonServices/app/services/docling_service.py`**
+  - [ ] Confirm docling input path uses resolved full path from canonical file record, not legacy document schema fields.
+
+#### Verification Steps (Gate B1/B2)
+
+- [ ] Upload via Web UI and confirm inserted row shape remains: directory in `file_path`, timestamped name in `file_name`.
+- [ ] Trigger Python processing and verify row is selected even if status arrives as `Uploaded`.
+- [ ] Verify processing reads the real file from mapped volume and writes `document_pages` rows.
+- [ ] Verify status transitions end at `processed` (or `error` with `processing_error` populated).
 
 ---
 

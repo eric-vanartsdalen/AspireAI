@@ -12,6 +12,27 @@ Note: Updates to Aspire and .Net framework SDK will be likely and affected as se
 
 This section captures the current execution plan so near-term priorities are not lost.
 
+### 2026-02-14 Status Update
+
+- Blazor upload currently saves file metadata into SQLite and writes the physical file with a timestamped filename.
+- Uploaded files are visible in the Python container through the mapped `/app/data` volume.
+- SQLite is visible in the Python container at `/app/database/data-resources.db`.
+- Remaining blockers are downstream: processing persistence, LightRAG ingestion/query verification, and Python footprint minimization.
+
+#### Observed Upload Row Example (from Web UI)
+
+- `file_name`: timestamped stored filename (example: `Example_Emergency_Survival_Kit_20260111_010426_a0068769.pdf`)
+- `original_file_name`: original user filename
+- `file_path`: directory path currently persisted (not a full file path)
+- `status`: currently written as `Uploaded` (capitalized)
+- `source_type`: `upload`
+
+#### Contract Implications from Observed Row
+
+- Python processing must resolve full input path as `file_path + file_name` when `file_path` is stored as a directory.
+- Status lifecycle handling must normalize/accept `Uploaded` and canonicalize to the processing workflow values.
+- Contract alignment work should preserve both display name (`original_file_name`) and stored file identity (`file_name`).
+
 ### Current Reality Snapshot
 
 - Upload flow is implemented in Blazor/Web and persists metadata in SQLite (`files`, `document_pages`).
@@ -49,11 +70,11 @@ This section captures the current execution plan so near-term priorities are not
 
 ### Acceptance Gates (Per Milestone)
 
-- **Gate A**: Upload record created with valid path + status and file exists on disk.
+- **Gate A**: ✅ Upload record created with valid path + status and file exists on disk.
 - **Gate B**: Python processing can load file and write `document_pages` rows.
 - **Gate C**: RAG query returns source-bearing results from processed content.
 - **Gate D**: Chat response displays citation references from retrieval results.
-- **Gate E**: Volume-mounted file visibility is proven between Web upload location and Python container runtime.
+- **Gate E**: ✅ Volume-mounted file visibility is proven between Web upload location and Python container runtime.
 - **Gate F**: Docling text output is successfully ingested to LightRAG and queryable through the Python retrieval path.
 - **Gate G**: Python SQLite/API footprint is reduced to required minimum and documented.
 
