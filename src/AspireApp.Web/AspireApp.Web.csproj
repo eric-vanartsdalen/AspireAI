@@ -9,7 +9,7 @@
   <ItemGroup>
     <PackageReference Include="Markdig" Version="0.45.0" />
     <PackageReference Include="Microsoft.EntityFrameworkCore.Sqlite" Version="10.0.3" />
-    <PackageReference Include="Microsoft.SemanticKernel" Version="1.70.0" />
+    <PackageReference Include="Microsoft.SemanticKernel" Version="1.71.0" />
     <PackageReference Include="Microsoft.SemanticKernel.Connectors.Ollama" Version="1.68.0-alpha" />
   </ItemGroup>
 
