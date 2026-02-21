@@ -1,0 +1,15 @@
+{
+  "assignments": [
+    {
+      "assignment_id": "aspireai-2026-02-21",
+      "universe": "The Usual Suspects",
+      "created_at": "2026-02-21T23:32:00Z",
+      "agents": [
+        { "name": "Keaton", "role": "Lead / Architect" },
+        { "name": "Fenster", "role": ".NET Dev" },
+        { "name": "McManus", "role": "Python / Data Dev" },
+        { "name": "Hockney", "role": "QA / Tester" }
+      ]
+    }
+  ]
+}
