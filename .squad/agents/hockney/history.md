@@ -40,3 +40,70 @@
 - Save_document_page() signature mismatch will crash during processing
 - FK column name conflict creates data integrity risk
 - Requirements.txt unpinned — reproducibility issue
+
+### 2026-02-22 — Squad Orchestration Complete
+
+**Status:** All four agents completed independent reviews; findings merged into shared decisions.md.
+
+**Hockney's Test Roadmap (Phase 1 Gates P0/P1 Fixes):**
+
+**Phase 1 (Week 1): Foundation — **CRITICAL BLOCKER** for merges**
+- Create `AspireApp.UnitTests.csproj` (xUnit)
+- Add `pytest` + `conftest.py` to Python services
+- Update CI (`squad-ci.yml`): run `dotnet build`, `dotnet test`, `pytest`
+- **Effort:** 4 hours
+- **Blocks:** No PR merges without CI passing
+
+**Phase 2 (Week 2): High-Risk Paths**
+- Contract tests: C# ↔ Python JSON serialization validation
+- FileUploadController validation tests
+- Python router unit tests (mocked DatabaseService)
+- Status casing verification ("uploaded" lowercase)
+- **Effort:** 22 hours
+- **Blocks:** No model refactoring without contract tests
+
+**Phase 3 (Week 3): Integration Suite**
+- End-to-end: file upload → processing → retrieval
+- Python DatabaseService integration (real SQLite)
+- Cross-service E2E (real Neo4j)
+- **Effort:** 12 hours
+
+**Phase 4 (Week 4+): Edge Cases & Stress**
+- Concurrent uploads, large files, timeouts, cleanup
+
+**Dependency:** P0 code fixes (Fenster + McManus) must land and pass manual validation before Phase 2 starts.
+
+### 2026-02-22 — Test Posture Review & Plan
+
+**Key Findings:**
+- **Zero automated tests.** No xUnit projects, no pytest integration. 6 files named `test_*.py` are diagnostic scripts with no assertions.
+- **CI is broken.** `squad-ci.yml` echoes placeholder; no build verification, no test runs, no PR gating.
+- **Contract misalignment risk is CRITICAL.** C# (`FileMetadata`) ↔ Python (`Document`) have no JSON serialization tests. Field renames or type changes will crash Python at runtime silently.
+- **Cross-service testing completely absent.** 0 tests verify C# JSON serialization matches Python Pydantic deserialization.
+- **High-risk paths untested:** File upload validation, processing pipeline, error handling, concurrent access.
+- **Python dependencies unpinned.** Reproducible builds impossible; docling updates could break silently.
+
+**Test Gap Priorities:**
+1. Phase 1 (Week 1): Test infrastructure + CI pipeline (xUnit project, pytest, conftest, CI workflow) — **4h effort**
+2. Phase 2 (Week 2): Contract tests + controller tests + router unit tests — **22h effort**  
+3. Phase 3 (Week 3): Integration suite (end-to-end file upload → processing → retrieval) — **12h effort**
+4. Phase 4 (Week 4+): Stress/edge case tests (concurrent, large files, timeouts, cleanup)
+
+**File Paths (Key Components):**
+- C# projects: `src/AspireApp.Web`, `src/AspireApp.ApiService`, `src/AspireApp.ServiceDefaults`
+- Python services: `src/AspireApp.PythonServices/app/` (routers, services)
+- SQLite: `database/data-resources.db` (shared via bind mount)
+- CI: `.github/workflows/squad-ci.yml` (currently placeholder)
+
+**Deliverable:** `plan.md` created with phase-based roadmap, quality gap matrix, and test organization.
+
+**Recommendation to Team:** Start Phase 1 immediately. Cannot merge code safely without CI. Contract tests must precede any refactoring of C# models or Python routes.
+
+**Skill Learned: Cross-Service Contract Testing Pattern**
+- C# models require `JsonPropertyName` attributes to match Python field names
+- Python Pydantic models must have snake_case fields matching JSON
+- Contract tests must verify round-trip serialization (C# → JSON → Python deserialize)
+- DateTime must use ISO 8601 format on both sides
+- Status/enum casing must be tested explicitly (e.g., "uploaded" lowercase vs "Uploaded")
+- Missing field names in JSON should fail test (regression detection)
+- Documented in `.squad/skills/` for future contract creation in AspireAI

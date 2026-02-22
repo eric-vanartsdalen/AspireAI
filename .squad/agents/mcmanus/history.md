@@ -72,3 +72,55 @@
 - Zero automated tests — processing pipeline changes are high-risk
 - Python dependencies unpinned — reproducibility issue
 - Global exception handler returns raw messages (info leak)
+
+### 2026-02-22 — Squad Orchestration Complete
+
+**Status:** All four agents completed independent reviews; findings merged into shared decisions.md.
+
+**McManus's Action Items (Ready to Execute):**
+1. Router contract rewrite: Use existing DatabaseService API (P0, 2 hrs)
+2. save_document_page() signature fix: Pass individual args (P0, 15 min)
+3. FK column name align: Verify/update to `file_id` (P0, 2 hrs)
+4. Pin requirements.txt versions (P1, 1 hr)
+5. Batch Neo4j operations with UNWIND (P1, 3 hrs)
+6. Add full-text index to Neo4j (P1, 2 hrs)
+7. Delete legacy C# entities (P1, 1 hr)
+
+**Dependencies:**
+- Fenster's status casing fix must land first (P0 blocker)
+- Fenster's FK column decision must be made before coding
+- All P0 items gate Sprint 1 completion
+- Phase 2 (P1 items) starts after P0 validation complete
+
+### 2026-02-21 — Deep Python Pipeline Review (McManus)
+
+**Completed:**
+- Analyzed all Python services, routers, DatabaseService API
+- Mapped method calls to actual implementation (30 methods exist, ~10 expected ones don't)
+- Identified 3 critical blockers (P0) + 5 high priorities (P1)
+- Documented fix order: 2–3 days to unblock pipeline
+
+**Key Decisions Made:**
+- Fix strategy for P0.1: Rewrite routers to use existing DatabaseService API instead of adding wrapper methods (cleaner)
+- Recommend batching Neo4j operations (UNWIND instead of loops) for 10–50x speedup
+- Defer vector embeddings to Phase 2; focus on full-text index first (Phase 1)
+
+**Coordination Needed:**
+- Fenster: Fix status casing in FileUploadController (P0.3)
+- Fenster: Verify FK column name in DocumentEntities.cs (P1.4)
+- Keaton: Decide LightRAG role (replace or supplement Python RAG?)
+
+**Written to Squad:**
+- `.squad/decisions/inbox/mcmanus-python-pipeline-review.md` — summary + fix order
+- `plan.md` (updated) — comprehensive action plan with checkpoints and success criteria
+
+**Files Modified/Created:**
+- `plan.md` — comprehensive 400-line action plan (created)
+- `.squad/decisions/inbox/mcmanus-python-pipeline-review.md` — summary for squad (created)
+
+**Learnings (Lasting):**
+- DatabaseService has ~30 well-implemented methods (`get_file_by_id`, `get_unprocessed_files`, etc.) but routers expect a different ~10 (mismatch in expectations)
+- Neo4j graph schema is sound but not batched (easy optimization)
+- Full-text index commented out; easy to enable
+- requirements.txt unpinned (reproducibility risk)
+- LightRAG wired but unused (architectural drift)

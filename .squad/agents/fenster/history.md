@@ -63,3 +63,48 @@
 - Zero automated tests — high regression risk on schema changes
 - Console.WriteLine used 35+ times in Chat.razor.cs alone
 - Cross-service contract tests critical to prevent JSON field name drift
+
+### 2026-02-22 — Squad Orchestration Complete
+
+**Status:** All four agents completed independent reviews; findings merged into shared decisions.md.
+
+**Fenster's Action Items (Ready to Execute):**
+1. Status casing fix: FileUploadController line 123 `"Uploaded"` → `"uploaded"` (30 min, P0)
+2. Config key align: AppHost `AI-Chat-Model` → `AI-Model` (30 min, P0)
+3. LightRAG health check or remove from WaitFor (1 hr, P0)
+4. ApiService removal decision: Remove entire project (1 day, P1)
+5. SemanticKernel version sync: Update Connectors.Ollama to 1.71.0 (30 min, P1)
+6. Duplicate ServiceDiscoveryUtilities consolidation (1-2 hrs, P1)
+7. Console.WriteLine → ILogger replacement (high-impact files first)
+
+**Dependencies:**
+- Status casing fix must land before Python tests can pass
+- ApiService removal needs full grep verification of references
+- All P0 items gate Sprint 1 completion
+
+### 2026-02-21 — Fenster Full .NET Codebase Review
+
+**Status:** Build clean (0 warnings), Aspire orchestration solid, 3 critical blockers, 7 code quality issues
+
+**Critical Blockers (P0):**
+1. Status casing: C# writes "Uploaded", Python queries "uploaded" → file discovery broken
+2. AI model env var: AppHost passes "AI-Chat-Model", Web reads "AI-Model" → config mismatch
+3. LightRAG: Registered with no health check, webfrontend waits for it → startup can hang
+
+**Code Quality (P1):**
+- Duplicate ServiceDiscoveryUtilities class (2 namespaces, 1 logic)
+- Console.WriteLine instead of ILogger in 7 files (Chat.razor.cs: 35+ instances)
+- OllamaWarmupService creates raw HttpClient (bypasses IHttpClientFactory)
+- SemanticKernel version skew (1.71.0 core vs 1.68.0-alpha connectors)
+
+**Tech Debt (P2):**
+- Redundant IConfiguration registration in Program.cs
+- ApiService health check dev-only (production readiness issue)
+- README outdated (.NET 9 ref, should say .NET 10)
+
+**Strategic (P3):**
+- LightRAG functional role unclear (replace or supplement custom RAG?)
+- ApiService decision pending (keep/remove/merge)
+- Test infrastructure foundation (3-5 days when ready)
+
+**Deliverable:** DOTNET_REVIEW.md with 90+ priority actions and validation checklist
