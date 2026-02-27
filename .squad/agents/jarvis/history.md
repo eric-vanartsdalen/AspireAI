@@ -124,3 +124,15 @@
 - Full-text index commented out; easy to enable
 - requirements.txt unpinned (reproducibility risk)
 - LightRAG wired but unused (architectural drift)
+
+### 2026-02-22 — Fix save_document_page Invocation Mismatch (P0.2)
+
+**Completed:** Fixed `processing.py` lines 67-75 where `save_document_page()` was called with a `DocumentPage` object instead of individual keyword arguments.
+
+**Two bugs fixed in one edit:**
+1. **Invocation style:** Removed unnecessary `DocumentPage` construction; now passes `file_id`, `page_number`, `content`, `metadata`, `neo4j_node_id` directly.
+2. **Wrong FK value:** Changed from `processed_doc_id` (return value of `save_processed_document`) to `document_id` (the original file ID). The `document_pages.file_id` column is a FK to `files.id`, not to processed documents.
+
+**Key insight:** The `save_document_page` service method was correct all along — only the caller was wrong. The DB INSERT targets columns `(file_id, page_number, content, page_metadata, neo4j_page_node_id)` which map to the individual args, not a Pydantic object.
+
+**Commit:** `e9d90ea` on `feature/doc-upload`

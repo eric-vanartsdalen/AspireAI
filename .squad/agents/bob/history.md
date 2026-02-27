@@ -131,3 +131,18 @@
 - Instruction files are referenced, not replicated — keeps the file lean
 - Squad conventions are a section, not the whole file — they serve the project, not the other way around
 - Removed stale references (Tasks & Memory Notes section, "Plan to add" comments)
+
+### 2026-02-27 — Jarvis Completes P0.2 (save_document_page Fix)
+
+**Status:** ✅ COMPLETE  
+**Commit:** `e9d90ea` on `feature/doc-upload`
+
+**What Was Fixed:**
+- `processing.py` lines 67–75: Invocation mismatch on `save_document_page()` corrected
+- Router now passes individual keyword args instead of DocumentPage object
+- FK value corrected from `processed_doc_id` to `document_id` (correct target is files.id, not processed documents)
+
+**Impact on Bob's Plan:**
+- **P0.2 (save_document_page fix):** ✅ Done. Blocks Gate B2 removal.
+- **Status:** Now awaiting P0.1 (router contract rewrite) + P0.3 (status casing fix) for full Gate B1/B2 closure.
+- **Next coordination:** Bob reviews combined P0 fixes for sprint validation before Phase 1.5 (orchestration cleanup).

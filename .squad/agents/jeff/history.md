@@ -69,7 +69,7 @@
 **Status:** All four agents completed independent reviews; findings merged into shared decisions.md.
 
 **Jeff's Action Items (Ready to Execute):**
-1. Status casing fix: FileUploadController line 123 `"Uploaded"` → `"uploaded"` (30 min, P0)
+1. Status casing fix: FileUploadController line 123 `"Uploaded"` → `"uploaded"` (30 min, P0) — **BLOCKER for Jarvis P0.2 validation**
 2. Config key align: AppHost `AI-Chat-Model` → `AI-Model` (30 min, P0)
 3. LightRAG health check or remove from WaitFor (1 hr, P0)
 4. ApiService removal decision: Remove entire project (1 day, P1)
@@ -81,6 +81,16 @@
 - Status casing fix must land before Python tests can pass
 - ApiService removal needs full grep verification of references
 - All P0 items gate Sprint 1 completion
+
+### 2026-02-27 — Cross-Agent Update: Jarvis P0.2 Lands
+
+**Status:** Jarvis completed P0.2 (save_document_page fix) at commit `e9d90ea`
+
+**Impact on Jeff:**
+- P0.2 is now ✅ COMPLETE. Method invocation corrected, FK value fixed.
+- **P0 Item 1 (status casing fix) is still BLOCKING** — files won't be discovered until Jeff's change lands
+- **Coordination:** Once Jeff lands status casing fix, full file discovery pipeline can be validated end-to-end with Jarvis's fix in place
+- Next step for Jeff: Prioritize P0.3 (status casing) to unblock integration testing
 
 ### 2026-02-21 — Jeff Full .NET Codebase Review
 
