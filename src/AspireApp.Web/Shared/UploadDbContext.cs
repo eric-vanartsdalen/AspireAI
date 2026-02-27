@@ -74,13 +74,13 @@ namespace AspireApp.Web.Shared
                 
                 // Note: Column names are defined via [Column] attributes in DocumentPage class
 
-                // Unique constraint on document_id + page_number
+                // Unique constraint on file_id + page_number
                 entity.HasIndex(e => new { e.FileId, e.PageNumber })
                       .IsUnique()
                       .HasDatabaseName("idx_pages_document_page");
 
                 // Indexes for performance
-                entity.HasIndex(e => e.FileId).HasDatabaseName("idx_pages_document_id");
+                entity.HasIndex(e => e.FileId).HasDatabaseName("idx_pages_file_id");
             });
 
             // ==================== Legacy Schema Configuration (Backward Compatibility) ====================

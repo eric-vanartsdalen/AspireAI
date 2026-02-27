@@ -180,7 +180,7 @@ namespace AspireApp.Web.Data
         [Column("id")]
         public int Id { get; set; }
 
-        [Column("document_id")]
+        [Column("file_id")]
         public int FileId { get; set; }
 
         [Column("page_number")]
