@@ -144,11 +144,13 @@ def create_database_schema(db_path="/app/database/data-resources.db"):
             cursor.execute("""
                 CREATE TABLE IF NOT EXISTS document_pages (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    processed_document_id INTEGER REFERENCES processed_documents(id),
+                    file_id INTEGER NOT NULL,
                     page_number INTEGER NOT NULL,
                     content TEXT NOT NULL,
                     page_metadata TEXT,
-                    neo4j_node_id TEXT
+                    neo4j_page_node_id TEXT,
+                    FOREIGN KEY (file_id) REFERENCES files(id) ON DELETE CASCADE,
+                    UNIQUE(file_id, page_number)
                 )
             """)
             

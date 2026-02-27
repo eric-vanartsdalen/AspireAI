@@ -27,7 +27,7 @@ class ProcessedDocument(BaseModel):
 
 class DocumentPage(BaseModel):
     id: Optional[int] = None
-    processed_document_id: int
+    file_id: int
     page_number: int
     content: str
     page_metadata: Optional[Dict[str, Any]] = None
