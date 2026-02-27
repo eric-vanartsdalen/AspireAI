@@ -12,21 +12,19 @@ Stabilize the document upload and processing pipeline, align C#↔Python contrac
 - The pipeline is currently blocked by contract and status mismatches between .NET and Python.
 - Automated testing is effectively absent; CI does not enforce build/test quality gates.
 
-## Priority 0 — Unblock the Pipeline (Do First)
+## Priority 0 — Unblock the Pipeline ✅ COMPLETE
 
-1. **Fix `save_document_page` invocation/signature mismatch**
-   - Align caller and service signature so page persistence no longer crashes.
+1. ~~**Fix `save_document_page` invocation/signature mismatch**~~ ✅ `e9d90ea`
+   - Aligned caller kwargs (`file_id`, `page_number`, `content`, `metadata`, `neo4j_node_id`) with service signature.
 
-2. **Align schema naming around `document_pages` foreign key**
-   - Resolve `file_id` vs `document_id` mismatch across C# models, Python, and DB usage.
+2. ~~**Align schema naming around `document_pages` foreign key**~~ ✅ `6e5b34b` + `77db074`
+   - C# `[Column("file_id")]`, Python model `file_id: int`, DB schema `file_id INTEGER NOT NULL` — all aligned.
 
-3. **Fix Python router/service contract mismatches**
-   - Update routers to call the DatabaseService methods that actually exist.
-   - Remove calls to missing methods that currently throw runtime errors.
+3. ~~**Fix Python router/service contract mismatches**~~ ✅ `a8e1b71`
+   - Added 9 backward-compatibility wrapper methods to DatabaseService for all router calls.
 
-4. **Normalize upload status value**
-   - Update Web upload flow to write `uploaded` (lowercase) consistently.
-   - Verify Python discovery queries read newly uploaded files.
+4. ~~**Normalize upload status value**~~ ✅ `62ee545`
+   - FileUploadController now writes `"uploaded"` (lowercase) consistently. Python queries match.
 
 ## Priority 1 — Testing and CI (Critical Program Work)
 
