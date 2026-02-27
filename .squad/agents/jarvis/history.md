@@ -168,3 +168,24 @@
 
 **Result:** C#↔Python schema alignment complete. Both services now agree on FK column name `file_id` referencing `files(id)`. P0 Item 2 closed.
 
+### 2025-11-02 — P0 Item 3: Fix Router/Service Contract Mismatches
+
+**Completed:** Added 9 missing backward-compatibility methods to `DatabaseService` that routers expected but didn't exist, causing `AttributeError` at runtime.
+
+**Methods added (all in Backward Compatibility section):**
+1. `get_document()` — wraps `get_file_by_id()` → `Document`
+2. `get_unprocessed_documents()` — wraps `get_unprocessed_files()` → `List[Document]`
+3. `get_documents_by_status()` — direct query with status translation
+4. `save_processed_document()` — delegates to `update_file_processing_results()` + `update_file_status()`
+5. `get_processed_document()` — wraps `get_file_by_id()` → `ProcessedDocument`
+6. `get_statistics()` — returns `_stats` dict + `ConnectionPool` metrics
+7. `get_active_services()` — static informational response
+8. `get_file_document_sync_status()` — `COUNT(*)` on unified files table
+9. `force_sync_files_and_documents()` — no-op (schema already unified)
+
+**Pattern:** All methods follow the established wrapper convention: delegate to existing file-based internals, convert results to legacy model objects. No existing methods modified.
+
+**Key insight:** `get_statistics()` leverages the `_stats` dict already tracked by `DatabaseService.__init__()` plus `ConnectionPool` internals (`_created_connections`, `max_connections`, `_pool.qsize()`). The pool doesn't track query/transaction stats itself, but the service does via `_stats_lock`.
+
+**Impact:** Unblocks all 17 router endpoints in `documents.py` and `processing.py`.
+

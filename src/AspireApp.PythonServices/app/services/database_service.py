@@ -618,3 +618,130 @@ class DatabaseService:
             'error': 'error'
         }
         return status_map.get(file_status.lower(), 'pending')
+
+    def get_document(self, document_id: int) -> Optional[Document]:
+        """Legacy compatibility: get a single Document by ID.
+        For new code, use get_file_by_id() instead."""
+        try:
+            result = self.get_file_by_id(document_id)
+            if result is None:
+                return None
+            return self._file_dict_to_document(result)
+        except Exception as e:
+            logger.error(f"Error in get_document({document_id}): {e}")
+            raise
+
+    def get_unprocessed_documents(self) -> List[Document]:
+        """Legacy compatibility: get unprocessed documents as Document objects.
+        For new code, use get_unprocessed_files() instead."""
+        try:
+            files = self.get_unprocessed_files()
+            return [self._file_dict_to_document(f) for f in files]
+        except Exception as e:
+            logger.error(f"Error in get_unprocessed_documents: {e}")
+            raise
+
+    def get_documents_by_status(self, status: str) -> List[Document]:
+        """Legacy compatibility: get documents filtered by document-style status.
+        Translates the document status to file status before querying."""
+        try:
+            file_status = self._document_status_to_file_status(status)
+            with self._pool.get_connection() as conn:
+                cursor = conn.cursor()
+                cursor.execute("""
+                    SELECT id, file_name, original_file_name, file_path, file_hash,
+                           file_size, mime_type, uploaded_at, status,
+                           processing_started_at, processing_completed_at, processing_error,
+                           docling_document_path, total_pages, neo4j_document_node_id,
+                           source_type, source_url
+                    FROM files
+                    WHERE status = ?
+                    ORDER BY uploaded_at DESC
+                """, (file_status,))
+                rows = cursor.fetchall()
+                return [self._file_dict_to_document(self._row_to_file_dict(row)) for row in rows]
+        except Exception as e:
+            logger.error(f"Error in get_documents_by_status('{status}'): {e}")
+            raise
+
+    def save_processed_document(self, processed_doc: ProcessedDocument) -> int:
+        """Legacy compatibility: persist processing results for a document.
+        Updates the existing file record with docling output and marks it processed."""
+        try:
+            self.update_file_processing_results(
+                file_id=processed_doc.document_id,
+                docling_path=processed_doc.docling_document_path,
+                total_pages=processed_doc.total_pages,
+                neo4j_node_id=processed_doc.neo4j_node_id
+            )
+            self.update_file_status(processed_doc.document_id, 'processed')
+            logger.debug(f"Saved processed document for file {processed_doc.document_id}")
+            return processed_doc.document_id
+        except Exception as e:
+            logger.error(f"Error in save_processed_document({processed_doc.document_id}): {e}")
+            raise
+
+    def get_processed_document(self, document_id: int) -> Optional[ProcessedDocument]:
+        """Legacy compatibility: retrieve ProcessedDocument for a file.
+        Returns None if the file doesn't exist or hasn't been processed."""
+        try:
+            file_dict = self.get_file_by_id(document_id)
+            if file_dict is None or not file_dict.get('docling_document_path'):
+                return None
+            return ProcessedDocument(
+                id=file_dict['id'],
+                document_id=file_dict['id'],
+                docling_document_path=file_dict['docling_document_path'],
+                total_pages=file_dict.get('total_pages') or 0,
+                processing_date=file_dict.get('processing_completed_at') or datetime.now(),
+                neo4j_node_id=file_dict.get('neo4j_document_node_id')
+            )
+        except Exception as e:
+            logger.error(f"Error in get_processed_document({document_id}): {e}")
+            raise
+
+    def get_statistics(self) -> Dict[str, Any]:
+        """Return database and connection pool statistics for monitoring."""
+        try:
+            with self._stats_lock:
+                stats = dict(self._stats)
+            stats.update({
+                'connection_pool_size': self._pool._created_connections,
+                'max_pool_size': self._pool.max_connections,
+                'pool_queue_size': self._pool._pool.qsize(),
+            })
+            return stats
+        except Exception as e:
+            logger.error(f"Error in get_statistics: {e}")
+            raise
+
+    def get_active_services(self) -> List[Dict[str, Any]]:
+        """Return a list of services actively using this database."""
+        return [{"name": "python-service", "type": "FastAPI", "status": "active"}]
+
+    def get_file_document_sync_status(self) -> Dict[str, Any]:
+        """Return sync status between files and documents.
+        Schema is now unified (files table only), so this always reports healthy."""
+        try:
+            with self._pool.get_connection() as conn:
+                cursor = conn.cursor()
+                cursor.execute("SELECT COUNT(*) FROM files")
+                count = cursor.fetchone()[0]
+            return {
+                "files_count": count,
+                "documents_count": count,
+                "sync_health": "healthy",
+                "unsynced_files": 0,
+                "unsynced_documents": 0
+            }
+        except Exception as e:
+            logger.error(f"Error in get_file_document_sync_status: {e}")
+            raise
+
+    def force_sync_files_and_documents(self) -> Dict[str, Any]:
+        """No-op sync since schema is now unified (files table only)."""
+        return {
+            "sync_performed": True,
+            "message": "Schema already unified - no sync needed",
+            "files_synced": 0
+        }
