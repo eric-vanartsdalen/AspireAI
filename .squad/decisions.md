@@ -164,7 +164,9 @@ These cause `AttributeError` at runtime on most document, processing, and health
 
 **Decision:** Implement missing methods as thin wrappers around the current `get_file_by_id()` / `get_unprocessed_files()` API, or rewrite routers to call existing methods directly. Option (b) is cleaner and aligns with "minimal Python footprint" goal.
 
-**Impact:** Unblocks processing pipeline. ~1 day effort.
+**Implemented by Jarvis (2025-11-02):** Added 9 backward-compatibility wrapper methods to `DatabaseService`. Wrapper methods delegate to existing file-based methods + model conversion. Preserves router API contract unchanged; reuses proven internal methods; consistent with existing pattern. Commit: (from inbox decision).
+
+**Impact:** Unblocks processing pipeline. ~1 day effort → complete.
 
 ### CRITICAL: save_document_page() Signature Mismatch
 
@@ -172,7 +174,9 @@ These cause `AttributeError` at runtime on most document, processing, and health
 
 **Decision:** Update call to pass individual arguments: `db.save_document_page(file_id, page_number, content, metadata, node_id)`.
 
-**Impact:** Fixes document processing crash. ~1 hour.
+**Implemented by Jarvis (2025-11-02):** Fixed method invocation in `processing.py`. Commit `e9d90ea`. P0 Item 2 complete.
+
+**Impact:** Fixes document processing crash. ~1 hour → complete.
 
 ### HIGH: Status Casing Mismatch ("Uploaded" vs "uploaded")
 
@@ -180,7 +184,9 @@ C# FileUploadController writes `"Uploaded"` (capital U) but Python queries for `
 
 **Decision:** Change C# to write lowercase `"uploaded"` to match Python expectations (also matches other status values: processing, processed, error).
 
-**Impact:** Enables file discovery. ~30 minutes.
+**Implemented by Jeff (2025-11-02):** Normalized FileUploadController.cs line 123 `"Uploaded"` → `"uploaded"`. Commit `62ee545`. P0 Item 4 complete.
+
+**Impact:** Enables file discovery. ~30 minutes → complete.
 
 ### HIGH: FK Column Name Mismatch on document_pages
 
@@ -193,7 +199,9 @@ Whichever service creates the table first determines the actual column name. The
 
 **Decision:** Decide on canonical name (recommend `file_id` for consistency with foreign key semantics). Update C# [Column] attribute to match Python CREATE TABLE statement. Verify both sides agree before cold-start.
 
-**Impact:** Fixes data integrity risk. ~2 hours.
+**Implemented by Jeff & Jarvis (2025-11-02):** Aligned to canonical `file_id`. C# [Column] attribute updated; Python schema unchanged. Commits: Jeff `6e5b34b`, Jarvis `77db074`. P0 Item 2 complete.
+
+**Impact:** Fixes data integrity risk. ~2 hours → complete.
 
 ### HIGH: Legacy C# Entities Reference Non-Existent Tables
 

@@ -146,3 +146,15 @@
 
 **Result:** C#↔Python schema alignment complete. Both services now agree on FK column name `file_id` referencing `files(id)`. P0 Item 2 closed.
 
+### 2025-11-02 — P0 Item 4 Complete: Upload Status Casing Normalization
+
+**Status:** Complete (Coordinator-assisted, lightweight mode)  
+**Commit:** `62ee545`
+
+**Jeff's Scope (C#):**
+- Changed `"Uploaded"` → `"uploaded"` on line 123 of `FileUploadController.cs`
+- Build verified clean (0 errors, 0 warnings)
+- No schema changes required; no cross-service contract updates needed
+
+**Result:** FileUploadController now writes lowercase `"uploaded"` status, matching Python's file discovery queries (`WHERE status = 'uploaded'`) and other status values (processing, processed, error). File discovery pipeline unblocked. P0 Item 4 closed.
+
