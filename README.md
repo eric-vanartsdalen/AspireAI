@@ -81,6 +81,26 @@ Details and task tracking:
 - The web application should be accessible through the dashboard
 - All supporting services (API, Neo4j, Ollama) should start automatically
 
+# If using Squad, considerations to follow...
+
+Follow instructions for [SQUAD repo](https://github.com/bradygaster/squad) 
+
+Update your local SQUAD repo to ensure you have the latest templates and tooling:
+```
+npx github:bradygaster/squad upgrade
+```
+
+Run the copilot cli
+
+```
+copilot
+
+# use /update to update copilot itself - follow instructions as given
+# use /agent to select squad agent
+# use SHIFT + TAB to see available commands for the agent you have selected
+# use /models list to see available agents and select the one you want squad to utilize
+```
+
 ## Contributing
 
 Contributions are welcome! Feel free to fork and add new Blazor components, AI integrations, or configuration examples as the project grows.
