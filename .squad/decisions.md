@@ -338,4 +338,23 @@ Run these tests in CI on every build.
 | Python routes | 🔴 HIGH | Unit (TestClient) + mocked dependencies |
 | Neo4j queries | Medium | Unit (mocked driver) + integration (real Neo4j) |
 
+---
+
+## Instructions Consolidation — Keaton (Lead/Architect) — 2026-02-27
+
+**Scope:** Merge project-specific context with Squad boilerplate into unified root instructions file
+
+### Consolidate copilot-instructions.md
+
+`.github/copilot-instructions.md` was replaced with 47-line Squad boilerplate, losing all project-specific context (architecture overview, day-one setup, troubleshooting, instruction lookup, repo map). Consolidated both versions into a single 167-line file that:
+
+1. **Opens with team personas** — Keaton, Fenster, McManus, Hockney described as domain owners with distinct voices
+2. **Restores operational context** — Quick Overview, Day-One Checklist, Build/Run/Test, Validation Before PR, Troubleshooting Cheatsheet, Repo Map
+3. **Retains Squad conventions** — team context, capability self-check, branch naming, PR guidelines, decision inbox
+4. **Updates all references** — .NET 10 SDK (from global.json), all 15 instruction files, all 12 prompt files
+
+**Principles:** Personas first (set ownership/tone), reference not replicate (keep root file scannable), correct versions (synced with project reality), unified voice.
+
+**Impact:** All squad members read updated file for current conventions. No instruction files modified; only root consolidation.
+
 

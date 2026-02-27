@@ -112,3 +112,22 @@
 - Sprint 1.5 (Orchestration stabilize): Fenster leads
 - Sprint 2 (Test infrastructure): Hockney leads
 - All tracked in `.squad/decisions.md`
+
+### 2026-02-22 — Consolidated copilot-instructions.md
+
+**Scope:** Merged previous rich-context version (replaced at commit e8a32af) with current Squad boilerplate into a single authoritative file.
+
+**What Changed:**
+- Opened with team personas (Keaton, Fenster, McManus, Hockney) — evocative 2-line descriptions per member
+- Restored all operational context: Quick Overview, Day-One Checklist, Build/Run/Test, Validation Before PR, Troubleshooting Cheatsheet, Repo Map
+- Retained Squad conventions: team context, capability self-check, branch naming, PR guidelines, decision inbox
+- Updated Instruction Lookup table to reflect all 15 current instruction files with glob patterns
+- Updated Prompt Directory to reflect all 12 current prompt files
+- Corrected .NET SDK version references from 9 to 10 (matches `global.json`)
+- Final size: 167 lines (target was 150-200)
+
+**Design Decisions:**
+- Personas go first — they set tone and ownership before any technical content
+- Instruction files are referenced, not replicated — keeps the file lean
+- Squad conventions are a section, not the whole file — they serve the project, not the other way around
+- Removed stale references (Tasks & Memory Notes section, "Plan to add" comments)
