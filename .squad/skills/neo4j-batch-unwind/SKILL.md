@@ -1,7 +1,7 @@
 # Neo4j Batch Operations (UNWIND Pattern)
 
 **Skill:** Optimizing Neo4j queries from loop-based to batched UNWIND operations  
-**Author:** McManus (Python/Data Dev)  
+**Author:** Jarvis (Python/Data Dev)  
 **Date:** 2026-02-21  
 **Level:** Intermediate  
 **Context:** AspireAI document processing (pages + relationships)  
@@ -264,11 +264,11 @@ def test_batch_vs_loop_performance():
 
 ## Skill Transfer
 
-**To Fenster (if working on C# Neo4j):**  
+**To Jeff (if working on C# Neo4j):**  
 Use same UNWIND pattern in Neo4jClient for C# drivers.
 
-**To Hockney (QA):**  
+**To Buster (QA):**
 Performance regression test: Process 50-page document; assert <5 seconds.
 
-**To Future McManus:**  
+**To Future Jarvis:**  
 Batch pattern is universally useful in graph DBs; reuse for entity extraction, relationship linking, etc.

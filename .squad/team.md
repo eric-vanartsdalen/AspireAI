@@ -12,10 +12,10 @@
 
 | Name | Role | Charter | Status |
 |------|------|---------|--------|
-| Keaton | Lead / Architect | `.squad/agents/keaton/charter.md` | ✅ Active |
-| Fenster | .NET Dev | `.squad/agents/fenster/charter.md` | ✅ Active |
-| McManus | Python / Data Dev | `.squad/agents/mcmanus/charter.md` | ✅ Active |
-| Hockney | QA / Tester | `.squad/agents/hockney/charter.md` | ✅ Active |
+| Bob | Lead / Architect | `.squad/agents/bob/charter.md` | ✅ Active |
+| Jeff | .NET Dev | `.squad/agents/jeff/charter.md` | ✅ Active |
+| Jarvis | Python / Data Dev | `.squad/agents/jarvis/charter.md` | ✅ Active |
+| Buster | QA / Tester | `.squad/agents/buster/charter.md` | ✅ Active |
 | Scribe | Session Logger | `.squad/agents/scribe/charter.md` | 📋 Silent |
 | Ralph | Work Monitor | — | 🔄 Monitor |
 

@@ -5,7 +5,7 @@
 
 <!-- Decisions are appended below. Each entry starts with ### -->
 
-## Architecture Review — Keaton (Lead/Architect) — 2026-02-21
+## Architecture Review — Bob (Lead/Architect) — 2026-02-21
 
 **Scope:** Comprehensive architecture review of AspireAI solution
 
@@ -69,13 +69,13 @@ LightRAG container is registered with full configuration in AppHost but has no h
 
 No test projects exist in the solution. `test_all_builds.py` and `test_database_schema.py` are utility scripts, not CI-ready test suites. Roadmap's "Testing Baseline" task is unstarted.
 
-**Decision:** Establish test infrastructure (CI build + test projects) before closing schema migration. Create C# xUnit project and Python pytest suite per Hockney's recommendations.
+**Decision:** Establish test infrastructure (CI build + test projects) before closing schema migration. Create C# xUnit project and Python pytest suite per Buster's recommendations.
 
 **Impact:** Enables safe refactoring. Foundation work required.
 
 ---
 
-## .NET Deep Analysis — Fenster (.NET Dev) — 2026-02-21
+## .NET Deep Analysis — Jeff (.NET Dev) — 2026-02-21
 
 **Scope:** .NET projects deep dive, build health, package dependency alignment
 
@@ -149,7 +149,7 @@ Both `Chat.razor.cs` (35+ instances) and other services use `Console.WriteLine` 
 
 ---
 
-## Python Services & Neo4j Deep Analysis — McManus (Python/Data) — 2026-02-21
+## Python Services & Neo4j Deep Analysis — Jarvis (Python/Data) — 2026-02-21
 
 **Scope:** Python service architecture, API endpoints, contract alignment, Neo4j schema validation
 
@@ -250,7 +250,7 @@ LightRAG is wired in AppHost as separate container with Ollama connection and Ne
 
 ---
 
-## Quality Audit — Hockney (QA) — 2026-02-21
+## Quality Audit — Buster (QA) — 2026-02-21
 
 **Scope:** Automated test inventory, CI/CD health, code quality patterns
 
@@ -266,7 +266,7 @@ The files `test_all_builds.py`, `test_database_schema.py`, `test_services.py`, a
 1. Create `AspireApp.UnitTests.csproj` (xUnit)
 2. Add `pytest` to requirements.txt
 3. Create `conftest.py` and `pytest.ini`
-4. Create integration test suites per Hockney's Phase 2-3 roadmap
+4. Create integration test suites per Buster's Phase 2-3 roadmap
 
 **Impact:** Enables safe refactoring of P0/P1 fixes. Blocks PR merge until CI passes.
 
@@ -340,7 +340,7 @@ Run these tests in CI on every build.
 
 ---
 
-## Instructions Consolidation — Keaton (Lead/Architect) — 2026-02-27
+## Instructions Consolidation — Bob (Lead/Architect) — 2026-02-27
 
 **Scope:** Merge project-specific context with Squad boilerplate into unified root instructions file
 
@@ -348,7 +348,7 @@ Run these tests in CI on every build.
 
 `.github/copilot-instructions.md` was replaced with 47-line Squad boilerplate, losing all project-specific context (architecture overview, day-one setup, troubleshooting, instruction lookup, repo map). Consolidated both versions into a single 167-line file that:
 
-1. **Opens with team personas** — Keaton, Fenster, McManus, Hockney described as domain owners with distinct voices
+1. **Opens with team personas** — Bob, Jeff, Jarvis, Buster described as domain owners with distinct voices
 2. **Restores operational context** — Quick Overview, Day-One Checklist, Build/Run/Test, Validation Before PR, Troubleshooting Cheatsheet, Repo Map
 3. **Retains Squad conventions** — team context, capability self-check, branch naming, PR guidelines, decision inbox
 4. **Updates all references** — .NET 10 SDK (from global.json), all 15 instruction files, all 12 prompt files
