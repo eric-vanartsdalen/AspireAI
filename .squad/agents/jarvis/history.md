@@ -136,3 +136,35 @@
 **Key insight:** The `save_document_page` service method was correct all along — only the caller was wrong. The DB INSERT targets columns `(file_id, page_number, content, page_metadata, neo4j_page_node_id)` which map to the individual args, not a Pydantic object.
 
 **Commit:** `e9d90ea` on `feature/doc-upload`
+
+### 2026-02-22 — Fix DocumentPage FK Column Name Mismatch (P0.3)
+
+**Completed:** Aligned the `DocumentPage` Pydantic model and two utility scripts (`fix_database.py`, `diagnose_database.py`) to use `file_id` instead of `processed_document_id`, matching the canonical schema in `database_service.py`.
+
+**Four files changed:**
+1. `app/models/models.py` — `DocumentPage.processed_document_id` → `file_id`
+2. `fix_database.py` — `document_pages` CREATE TABLE now uses `file_id INTEGER NOT NULL` with proper FK and UNIQUE constraints
+3. `diagnose_database.py` — same CREATE TABLE fix
+4. `README.md` — schema documentation updated to match
+
+**Key insight:** The utility scripts had a doubly-wrong schema: wrong column name (`processed_document_id`) and wrong FK target (`processed_documents(id)`). The canonical table references `files(id)` with `ON DELETE CASCADE` and a `UNIQUE(file_id, page_number)` constraint. Also aligned the column name `neo4j_node_id` → `neo4j_page_node_id` to match the source of truth.
+
+**Commit:** `77db074` on `feature/doc-upload`
+
+### 2025-11-02 — P0 Item 2 Complete: DocumentPage FK Column Final Alignment
+
+**Status:** Complete (parallel work with Jeff)  
+**Commits:** Jarvis: `77db074` | Jeff: `6e5b34b`
+
+**Jarvis's Scope (Python):**
+- Updated `DocumentPage` Pydantic model: `processed_document_id` → `file_id`
+- Updated `fix_database.py` and `diagnose_database.py` CREATE TABLE statements
+- Updated `README.md` schema documentation
+
+**Jeff's Parallel Scope (C#):**
+- Changed `[Column("document_id")]` → `[Column("file_id")]` on `DocumentPage.FileId` property in `DocumentEntities.cs`
+- Updated `UploadDbContext.cs` index name: `idx_pages_document_id` → `idx_pages_file_id`
+- Build verified clean (0 errors, 0 warnings)
+
+**Result:** C#↔Python schema alignment complete. Both services now agree on FK column name `file_id` referencing `files(id)`. P0 Item 2 closed.
+

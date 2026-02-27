@@ -118,3 +118,31 @@
 - Test infrastructure foundation (3-5 days when ready)
 
 **Deliverable:** DOTNET_REVIEW.md with 90+ priority actions and validation checklist
+
+### 2026-02-27 — DocumentPage FK Column Fix
+
+**Change:** Fixed `[Column("document_id")]` → `[Column("file_id")]` on `DocumentPage.FileId` property in `DocumentEntities.cs` line 183. Updated corresponding comment and index name in `UploadDbContext.cs` (`idx_pages_document_id` → `idx_pages_file_id`).
+
+**Why:** Python `database_service.py` creates the `document_pages` table with a column named `file_id` (FK to `files(id)`). The C# EF Core model had `[Column("document_id")]` which would map to a non-existent column, causing data integrity failures when both services access the same SQLite database. The C# property name `FileId` was already correct — only the column mapping attribute was wrong.
+
+**Scope:** 2 files, 3 lines changed. `ProcessedDocument.FileId` (line 259, separate table) was intentionally left unchanged.
+
+**Commit:** `6e5b34b` on `feature/doc-upload`
+
+### 2025-11-02 — P0 Item 2 Complete: DocumentPage FK Column Final Alignment
+
+**Status:** Complete (parallel work with Jarvis)  
+**Commits:** Jeff: `6e5b34b` | Jarvis: `77db074`
+
+**Jeff's Scope (C#):**
+- Changed `[Column("document_id")]` → `[Column("file_id")]` on `DocumentPage.FileId` property in `DocumentEntities.cs` line 183
+- Updated `UploadDbContext.cs` index name: `idx_pages_document_id` → `idx_pages_file_id`
+- Build verified clean (0 errors, 0 warnings)
+
+**Jarvis's Parallel Scope (Python):**
+- Updated `DocumentPage` Pydantic model: `processed_document_id` → `file_id`
+- Updated `fix_database.py` and `diagnose_database.py` CREATE TABLE statements
+- Updated `README.md` schema documentation
+
+**Result:** C#↔Python schema alignment complete. Both services now agree on FK column name `file_id` referencing `files(id)`. P0 Item 2 closed.
+

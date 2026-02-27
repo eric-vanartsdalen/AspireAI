@@ -357,4 +357,26 @@ Run these tests in CI on every build.
 
 **Impact:** All squad members read updated file for current conventions. No instruction files modified; only root consolidation.
 
+---
+
+## DocumentPage FK Column Name Alignment — Jeff & Jarvis — 2025-11-02
+
+**Scope:** P0 Item 2 — Resolve FK column name mismatch on `document_pages` table
+
+### RESOLVED: DocumentPage FK Column Alignment
+
+The `document_pages` table had conflicting column names across language boundaries:
+- **Python (source of truth):** `file_id` INTEGER NOT NULL (referencing `files(id)`)
+- **C# (EF Core):** `[Column("document_id")]` on `FileId` property
+
+This created a data integrity risk: C# and Python would disagree on the actual column name in the database.
+
+**Decision:** Aligned to canonical `file_id` (Python-defined, semantically correct).
+
+**Implementation:**
+- **Jeff (C#):** Updated `DocumentEntities.cs` `[Column("document_id")]` → `[Column("file_id")]`. Updated `UploadDbContext.cs` index name. Build verified clean. Commit: 6e5b34b.
+- **Jarvis (Python):** Updated `DocumentPage` Pydantic model, `fix_database.py`, `diagnose_database.py`, `README.md` schema docs. Commit: 77db074.
+
+**Impact:** Fixed schema alignment. P0 Item 2 closed. No more C#↔Python column name conflicts on `document_pages`.
+
 
