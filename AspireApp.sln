@@ -1,6 +1,6 @@
 Microsoft Visual Studio Solution File, Format Version 12.00
-# Visual Studio Version 17
-VisualStudioVersion = 17.14.36616.10 d17.14
+# Visual Studio Version 18
+VisualStudioVersion = 18.4.11513.90 insiders
 MinimumVisualStudioVersion = 10.0.40219.1
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "AspireApp.ApiService", "src\AspireApp.ApiService\AspireApp.ApiService.csproj", "{76AA9717-B3AA-1C85-D576-19AF5ADACF66}"
 EndProject
@@ -109,6 +109,11 @@ Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "memory-bank", "memory-bank"
 EndProject
 Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "workflows", "workflows", "{B85A50D8-0A27-48BF-A673-56BB285EEE62}"
 EndProject
+Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "Solution Items", "Solution Items", "{0135600A-0851-4504-AFA0-4EBEA765FF76}"
+	ProjectSection(SolutionItems) = preProject
+		.copilot\mcp-config.json = .copilot\mcp-config.json
+	EndProjectSection
+EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
 		Debug|Any CPU = Debug|Any CPU
@@ -149,7 +154,7 @@ Global
 		{B85A50D8-0A27-48BF-A673-56BB285EEE62} = {6C3EA053-9755-4CBA-9D1E-A8AED60F6099}
 	EndGlobalSection
 	GlobalSection(ExtensibilityGlobals) = postSolution
-		SolutionGuid = {CBD3E3C3-D6AB-4EE7-A317-B47493A7C9F2}
 		StartupProject = {CE4A7D9A-E58D-B782-7CBC-051C53AF10B1}
+		SolutionGuid = {CBD3E3C3-D6AB-4EE7-A317-B47493A7C9F2}
 	EndGlobalSection
 EndGlobal
