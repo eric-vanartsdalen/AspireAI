@@ -120,7 +120,7 @@ public class FileUploadController(
                 dataDirectory,
                 file.Length,
                 fileHash,
-                "Uploaded");
+                "uploaded");
 
             if (_logger.IsEnabled(LogLevel.Information))
             {
