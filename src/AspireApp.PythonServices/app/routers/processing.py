@@ -6,7 +6,7 @@ from datetime import datetime
 from ..services.database_service import DatabaseService
 from ..services.service_factory import get_docling_service
 from ..services.neo4j_service import Neo4jService
-from ..models.models import Document, ProcessedDocument, DocumentPage, ProcessingStatus
+from ..models.models import Document, ProcessedDocument, ProcessingStatus
 
 router = APIRouter(prefix="/processing", tags=["processing"])
 logger = logging.getLogger(__name__)
@@ -65,14 +65,13 @@ async def process_document_task(
         
         # Save individual pages
         for i, page in enumerate(pages):
-            page_record = DocumentPage(
-                processed_document_id=processed_doc_id,
+            db.save_document_page(
+                file_id=document_id,
                 page_number=page.page_number,
                 content=page.content,
-                page_metadata=page.metadata,
+                metadata=page.metadata,
                 neo4j_node_id=page_node_ids[i] if 'page_node_ids' in locals() else None
             )
-            db.save_document_page(page_record)
         
         # Update status to completed
         db.update_processing_status(document_id, "completed")
