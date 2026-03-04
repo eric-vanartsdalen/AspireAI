@@ -84,6 +84,7 @@ public partial class Program
 		var lightrag = builder.AddContainer("lightrag", "ghcr.io/hkuds/lightrag")
 			.WithReference(ollama)
 			.WithBindMount("../../data", "/app/data")
+            .WithEnvironment("ENTITY_TYPES", "['Person', 'Creature', 'Organization', 'Location', 'Event', 'Concept', 'Method', 'Content', 'Data', 'Artifact', 'NaturalObject']")
 			.WithEnvironment("WORKERS", "2")
 			.WithEnvironment("MAX_ASYNC", "1")
 			.WithEnvironment("WEBUI_TITLE", "Local LightRAG")
