@@ -30,7 +30,7 @@ Stabilize the document upload and processing pipeline, align C#↔Python contrac
 ## Priority 1 — Testing and CI (Critical Program Work)
 
 5. **Bootstrap test infrastructure**
-   - Add/verify C# test project(s).
+   - Add/verify C# test project(s). A project has been added AspireApp.WebTest. This should be used to test basic functionality oof launching the Aspire project and then from there checking the Blazor AspireApp.Web functions. Look at [TagzApp's way of testing.](https://github.com/FritzAndFriends/TagzApp/tree/main/src/TagzApp.WebTest) for insights
    - Add pytest tooling for Python tests.
    - Ensure repo has clear test entry points.
 

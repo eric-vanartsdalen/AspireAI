@@ -13,7 +13,7 @@ Disclaimer: This is a hacked together example, so there may be bad practices and
 
 Before getting started, ensure you have the following installed:
 
-- **.NET 9 SDK**: [Download here](https://dotnet.microsoft.com/en-us/download/dotnet/9.0)
+- **.NET 10 SDK**: [Download here](https://dotnet.microsoft.com/en-us/download/dotnet/10.0)
 
 Check from command line:
 
