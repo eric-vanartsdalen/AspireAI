@@ -13,15 +13,19 @@ Disclaimer: This is a hacked together example, so there may be bad practices and
 
 Before getting started, ensure you have the following installed:
 
-- **.NET 9 SDK**: [Download here](https://dotnet.microsoft.com/en-us/download/dotnet/9.0)
-Check from commandline
-```
+- **.NET 10 SDK**: [Download here](https://dotnet.microsoft.com/en-us/download/dotnet/10.0)
+
+Check from command line:
+
+```bash
 dotnet --version
 ```
+
 - **Aspire Tooling**: [Setup instructions](https://learn.microsoft.com/en-us/dotnet/aspire/fundamentals/setup-tooling?tabs=windows&pivots=vscode) Install tools from commandline
 
 Once prerequisites are installed, you can perform an initial build:
-```
+
+```bash
 dotnet build
 ```
 
@@ -32,12 +36,70 @@ dotnet build
 - Show how to centralize and share configuration settings.
 - Serve as a collaborative playground for learning and sharing knowledge.
 
+## Current Plan (2026-02-13)
+
+Active work is focused on stabilizing the document-to-RAG path before adding new features.
+
+- Keep canonical SQLite schema as `files` + `document_pages`.
+- Align Python processing/RAG contracts to the current schema and status lifecycle.
+- Normalize Web upload paths and Python Docling file resolution.
+- Route chat retrieval through Python `/rag` and render source citations (file/page/snippet).
+- Add baseline tests for upload, processing, retrieval, and citation display.
+
+Details and task tracking:
+
+- Roadmap: [roadmap/Roadmap.md](roadmap/Roadmap.md)
+- Tasks: [roadmap/Tasks.md](roadmap/Tasks.md)
+
 ## Getting Started
 
 1. **Clone the repository**
 2. **Restore dependencies** (once projects are added)
 3. **Run the project**
 4. **Explore the code and features**
+
+## Troubleshooting
+
+### Startup Project Issues
+
+**Problem**: The application may fail to start properly or show 404 errors when accessing URLs.
+
+**Common Cause**: The startup project may be incorrectly set to `AspireApp.ApiService` instead of `AspireApp.AppHost`.
+
+**Solution**: Since this is an Aspire application, the startup project should always be `AspireApp.AppHost`, which orchestrates all services including the API, web frontend, and supporting services (Ollama, Neo4j, Python services).
+
+**To fix this in Visual Studio:**
+
+1. In Solution Explorer, right-click on the `AspireApp.AppHost` project
+2. Select "Set as Startup Project"
+3. The `AspireApp.AppHost` project should now appear in **bold** in Solution Explorer
+4. Run the application (F5) - this will launch the Aspire dashboard and coordinate all services
+
+**Expected behavior when working correctly:**
+
+- The Aspire dashboard should launch showing all services
+- The web application should be accessible through the dashboard
+- All supporting services (API, Neo4j, Ollama) should start automatically
+
+# If using Squad, considerations to follow...
+
+Follow instructions for [SQUAD repo](https://github.com/bradygaster/squad) 
+
+Update your local SQUAD repo to ensure you have the latest templates and tooling:
+```
+npx github:bradygaster/squad upgrade
+```
+
+Run the copilot cli
+
+```
+copilot
+
+# use /update to update copilot itself - follow instructions as given
+# use /agent to select squad agent
+# use SHIFT + TAB to see available commands for the agent you have selected
+# use /models list to see available agents and select the one you want squad to utilize
+```
 
 ## Contributing
 

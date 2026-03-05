@@ -13,7 +13,7 @@ public static class ServiceDiscoveryUtilities
             return endpointValue;
         }
         Console.WriteLine($"Service {serviceName} not found");
-        return null;
+        return string.Empty;
     }
 
     public static List<string> ListAllServices()

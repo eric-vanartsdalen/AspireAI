@@ -47,7 +47,7 @@
 
 	.table {
 		color: var(--main-text-color);
-		background-color: 1px solid rgba(255, 255, 255, 0.05);
+		background-color: rgba(255, 255, 255, 0.05);
 		border: 1px solid rgba(255, 255, 255, 0.2);
 		margin-bottom: 0;
 	}
@@ -263,24 +263,8 @@
 		color: rgba(245, 245, 240, 0.5) !important;
 	}
 
-	/* Pulse animation */
-	@@keyframes pulse {
-		0% {
-			transform: scale(1);
-			opacity: 1;
-			box-shadow: 0 0 0 0 rgba(255, 255, 255, 0.3);
-		}
-		50% {
-			transform: scale(1.05);
-			opacity: 0.8;
-			box-shadow: 0 0 0 8px rgba(255, 255, 255, 0.1);
-		}
-		100% {
-			transform: scale(1);
-			opacity: 1;
-			box-shadow: 0 0 0 0 rgba(255, 255, 255, 0.3);
-		}
-	}
+	/* Pulse animation is defined in external css/speech.css */
+
 </style>
 
 <h1>AI Chatbot</h1>
@@ -312,11 +296,11 @@
 							<span>@ConvertToMarkup(message.Message)</span>
 							@if (message.User == "Assistant" && SpeechSupport?.TextToSpeech == true)
 							{
-								<button class="btn btn-sm btn-outline-info ms-2 tts-message-button" 
-										@onclick="() => SpeakMessage(message.Message)"
-										disabled="@(IsSpeaking && !IsMessageBeingSpoken(message.Message))"
-										title="@(IsMessageBeingSpoken(message.Message) ? "Stop speaking" : "Read message aloud")">
-									<img src="/images/@(IsMessageBeingSpoken(message.Message) ? "stop.png" : "playback.png")" 
+								<button class="btn btn-sm btn-outline-info ms-2 tts-message-button"
+									@onclick="() => SpeakMessage(message.Message)"
+									disabled="@IsTtsMessageButtonDisabled(message.Message)"
+									title="@(IsMessageBeingSpoken(message.Message) ? "Stop speaking" : "Read message aloud")">
+									<img src="/images/@(IsMessageBeingSpoken(message.Message) ? "stop.png" : "playback.png")"
 										 alt="@(IsMessageBeingSpoken(message.Message) ? "Stop" : "Play")" />
 								</button>
 							}
@@ -358,11 +342,11 @@
 			<div class="speech-controls">
 				@if (SpeechSupport.SpeechRecognition)
 				{
-					<button id="mic-button" 
-							class="speech-button mic-button @(IsListening ? "listening" : "")"
-							@onclick="ToggleMicrophone"
-							disabled="@IsAIResponsing"
-							title="@(IsListening ? "Stop listening" : "Start voice input")">
+					<button id="mic-button"
+						class="speech-button mic-button @(IsListening ? "listening" : "")"
+						@onclick="ToggleMicrophone"
+						disabled="@IsAIResponsing"
+						title="@(IsListening ? "Stop listening" : "Start voice input")">
 						<img src="/images/@(IsListening ? "stop.png" : "record.png")" alt="@(IsListening ? "Stop Recording" : "Start Recording")" />
 					</button>
 				}
@@ -370,9 +354,9 @@
 				@if (SpeechSupport.TextToSpeech && !string.IsNullOrEmpty(AIResponse))
 				{
 					<button class="speech-button tts-button"
-							@onclick="ToggleTextToSpeech"
-							disabled="@(string.IsNullOrEmpty(AIResponse))"
-							title="@(IsMessageBeingSpoken(AIResponse) ? "Stop speaking" : "Read AI response aloud")">
+						@onclick="ToggleTextToSpeech"
+						disabled="@IsTtsButtonDisabled()"
+						title="@(IsMessageBeingSpoken(AIResponse) ? "Stop speaking" : "Read AI response aloud")">
 						<img src="/images/@(IsMessageBeingSpoken(AIResponse) ? "stop.png" : "playback.png")" alt="@(IsMessageBeingSpoken(AIResponse) ? "Stop Speaking" : "Play Audio")" />
 					</button>
 				}
@@ -384,8 +368,7 @@
 					}
 					else if (IsSpeaking)
 					{
-						<span class="text-info">
-							Speaking...</span>
+						<span class="text-info">Speaking...</span>
 					}
 					else if (!string.IsNullOrEmpty(SpeechStatusText))
 					{
@@ -400,13 +383,13 @@
 	<div class="input-container">
 		<div class="input-group">
 			<input @bind="Question"
-				   @bind:event="oninput"
-				   @onkeydown="@(async (e) => { if (e.Key == "Enter" && !IsAIResponsing) { if (IsListening) await StopListening(); await QueryAIChat(); } })"
-				   type="text"
-				   class="form-control"
-				   placeholder="Enter your question or use voice input"
-				   disabled="@IsAIResponsing"
-				   @ref="questionInput" />
+			       @bind:event="oninput"
+			       @onkeydown="@(async (e) => { if (e.Key == "Enter" && !IsAIResponsing) { if (IsListening) await StopListening(); await QueryAIChat(); } })"
+			       type="text"
+			       class="form-control"
+			       placeholder="Enter your question or use voice input"
+			       disabled="@IsAIResponsing"
+			       @ref="questionInput" />
 		</div>
 	</div>
 	

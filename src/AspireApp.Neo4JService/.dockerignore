@@ -1,0 +1,46 @@
+# Neo4j .dockerignore for faster build context
+
+# Git
+.git/
+.gitignore
+.gitattributes
+
+# Documentation
+README.md
+*.md
+docs/
+
+# IDE files
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Temporary files
+*.tmp
+*.temp
+*.log
+
+# Build artifacts
+target/
+build/
+dist/
+
+# Testing
+test/
+tests/
+*_test.go
+*.test
+
+# Docker files (except the one being used)
+docker-compose*
+Dockerfile.bak
+
+# Project specific
+*.csproj.user
+bin/
+obj/

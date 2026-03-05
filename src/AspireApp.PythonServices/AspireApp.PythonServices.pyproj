@@ -1,0 +1,93 @@
+<Project DefaultTargets="Build" xmlns="http://schemas.microsoft.com/developer/msbuild/2003" ToolsVersion="4.0">
+  <PropertyGroup>
+    <Configuration Condition=" '$(Configuration)' == '' ">Debug</Configuration>
+    <SchemaVersion>2.0</SchemaVersion>
+    <ProjectGuid>b58f2d78-4d31-4407-a831-cb05da1c1d32</ProjectGuid>
+    <ProjectHome>.</ProjectHome>
+    <StartupFile>test_app_main.py</StartupFile>
+    <SearchPath>
+    </SearchPath>
+    <WorkingDirectory>.</WorkingDirectory>
+    <OutputPath>.</OutputPath>
+    <Name>AspireApp.PythonServices</Name>
+    <RootNamespace>AspireApp.PythonServices</RootNamespace>
+    <InterpreterId>MSBuild|.venv|$(MSBuildProjectFullPath)</InterpreterId>
+    <TestFramework>Pytest</TestFramework>
+  </PropertyGroup>
+  <PropertyGroup Condition=" '$(Configuration)' == 'Debug' ">
+    <DebugSymbols>true</DebugSymbols>
+    <EnableUnmanagedDebugging>false</EnableUnmanagedDebugging>
+  </PropertyGroup>
+  <PropertyGroup Condition=" '$(Configuration)' == 'Release' ">
+    <DebugSymbols>true</DebugSymbols>
+    <EnableUnmanagedDebugging>false</EnableUnmanagedDebugging>
+  </PropertyGroup>
+  <ItemGroup>
+    <Compile Include="app\fastapi.py" />
+    <Compile Include="app\models\models.py" />
+    <Compile Include="app\models\__init__.py" />
+    <Compile Include="app\routers\documents.py" />
+    <Compile Include="app\routers\processing.py" />
+    <Compile Include="app\routers\rag.py" />
+    <Compile Include="app\routers\__init__.py" />
+    <Compile Include="app\services\database_service.py" />
+    <Compile Include="app\services\docling_service.py" />
+    <Compile Include="app\services\docling_service_fallback.py" />
+    <Compile Include="app\services\neo4j_service.py" />
+    <Compile Include="app\services\service_factory.py" />
+    <Compile Include="app\services\__init__.py" />
+    <Compile Include="demo_processing.py" />
+    <Compile Include="diagnose_database.py" />
+    <Compile Include="fix_database.py" />
+    <Compile Include="scripts\check_db_status.py" />
+    <Compile Include="scripts\fix_schema.py" />
+    <Compile Include="scripts\init_database.py" />
+    <Compile Include="scripts\monitor_database.py" />
+    <Compile Include="scripts\test_concurrent_access.py" />
+    <Compile Include="setup_dev_env.py" />
+    <Compile Include="test_app_main.py" />
+    <Compile Include="test_build_config.py" />
+    <Compile Include="test_services.py" />
+    <Compile Include="verify_service.py" />
+  </ItemGroup>
+  <ItemGroup>
+    <Content Include=".dockerignore" />
+    <Content Include=".gitignore" />
+    <Content Include="BUILD_CONFIGURATION.md" />
+    <Content Include="DATABASE_FIX_SUMMARY.md" />
+    <Content Include="Dockerfile" />
+    <Content Include="Dockerfile.lightweight" />
+    <Content Include="docs\DATABASE_CONCURRENT_ACCESS.md" />
+    <Content Include="ENHANCEMENT_SUMMARY.md" />
+    <Content Include="README.md" />
+    <Content Include="requirements.txt" />
+  </ItemGroup>
+  <ItemGroup>
+    <Folder Include="app\" />
+    <Folder Include="app\models\" />
+    <Folder Include="app\routers\" />
+    <Folder Include="app\services\" />
+    <Folder Include="docs\" />
+    <Folder Include="scripts\" />
+  </ItemGroup>
+  <ItemGroup>
+    <Interpreter Include=".venv\">
+      <Id>.venv</Id>
+      <Version>3.12</Version>
+      <Description>.venv (Python 3.12 (64-bit))</Description>
+      <InterpreterPath>Scripts\python.exe</InterpreterPath>
+      <WindowsInterpreterPath>Scripts\pythonw.exe</WindowsInterpreterPath>
+      <PathEnvironmentVariable>PYTHONPATH</PathEnvironmentVariable>
+      <Architecture>X64</Architecture>
+    </Interpreter>
+  </ItemGroup>
+  <Import Project="$(MSBuildExtensionsPath32)\Microsoft\VisualStudio\v$(VisualStudioVersion)\Python Tools\Microsoft.PythonTools.targets" />
+  <!-- Uncomment the CoreCompile target to enable the Build command in
+       Visual Studio and specify your pre- and post-build commands in
+       the BeforeBuild and AfterBuild targets below. -->
+  <!--<Target Name="CoreCompile" />-->
+  <Target Name="BeforeBuild">
+  </Target>
+  <Target Name="AfterBuild">
+  </Target>
+</Project>

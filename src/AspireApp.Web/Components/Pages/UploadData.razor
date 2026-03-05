@@ -1,0 +1,983 @@
+﻿@page "/upload"
+@rendermode InteractiveServer
+@attribute [StreamRendering]
+@using AspireApp.Web.Data
+@using Microsoft.AspNetCore.Components.Forms
+@implements IDisposable
+
+<PageTitle>Upload Data</PageTitle>
+
+<style>
+    :root {
+        --main-bg-color: #2C1050;
+        --main-text-color: #f5f5f0;
+        --purple-dark: #1a0a30;
+        --purple-medium: #483D8B;
+        --purple-light: #6a5acd;
+        --accent-color: #28a745;
+    }
+
+    html, body {
+        height: 100%;
+        margin: 0;
+        padding: 0;
+        background: var(--main-bg-color) !important;
+        color: var(--main-text-color);
+    }
+
+    .page-background {
+        min-height: 100vh;
+        min-width: 100vw;
+        background-color: var(--main-bg-color);
+        margin: 0;
+        padding: 0;
+    }
+
+    .upload-container {
+        max-width: none; /* Remove max-width to allow full stretch */
+        width: 100%; /* Take full width of parent */
+        margin: 2rem 0; /* Remove auto centering, use vertical margins only */
+        padding: 2rem;
+        background-color: rgba(255, 255, 255, 0.05);
+        border-radius: 0.375rem;
+        border: 1px solid rgba(255, 255, 255, 0.2);
+        color: var(--main-text-color);
+        box-sizing: border-box; /* Include padding in width calculation */
+    }
+
+    .upload-container h1 {
+        color: var(--main-text-color);
+        margin-bottom: 1rem;
+    }
+
+    .upload-container h2 {
+        color: var(--main-text-color);
+        margin-top: 2rem;
+        margin-bottom: 1rem;
+    }
+
+    .phase-info {
+        background-color: rgba(72, 61, 139, 0.3);
+        border: 1px solid rgba(72, 61, 139, 0.6);
+        border-radius: 0.375rem;
+        padding: 1rem;
+        margin-bottom: 2rem;
+    }
+
+    .phase-info h4 {
+        color: #f5f5f0;
+        margin-bottom: 0.5rem;
+    }
+
+    .phase-info p {
+        color: rgba(255, 255, 255, 0.8);
+        margin-bottom: 0;
+    }
+
+    .simple-upload {
+        margin: 2rem 0;
+        padding: 2rem;
+        background-color: rgba(255, 255, 255, 0.03);
+        border-radius: 0.375rem;
+        border: 2px dashed rgba(255, 255, 255, 0.3);
+    }
+
+    .upload-hint {
+        margin-top: 0.5rem;
+        font-size: 0.875rem;
+        color: #dda0dd;
+    }
+
+    .form-control {
+        display: block;
+        width: 100%;
+        padding: 0.75rem;
+        font-size: 1rem;
+        line-height: 1.5;
+        color: var(--main-text-color);
+        background-color: var(--purple-dark);
+        border: 2px solid #4a4a4a;
+        border-radius: 0.375rem;
+        transition: border-color 0.15s ease-in-out, box-shadow 0.15s ease-in-out;
+    }
+
+    .form-control:focus {
+        background-color: #4a1560;
+        color: var(--main-text-color);
+        border-color: #6a6a6a;
+        box-shadow: 0 0 0 0.2rem rgba(72, 61, 139, 0.25);
+    }
+
+    .btn-primary {
+        background-color: var(--purple-medium);
+        color: #f5f5f0;
+        border: 2px solid var(--accent-color);
+        padding: 0.75rem 2rem;
+        font-size: 1rem;
+        border-radius: 0.375rem;
+        transition: all 0.3s ease;
+        cursor: pointer;
+    }
+
+    .btn-primary:hover:not(:disabled) {
+        background-color: #2a1540;
+        border-color: #34ce57;
+        color: #f5f5f0;
+        transform: translateY(-2px);
+    }
+
+    .btn-primary:disabled {
+        background-color: #333;
+        border-color: #555;
+        color: #999;
+        cursor: not-allowed;
+        transform: none;
+    }
+
+    .btn-danger {
+        background-color: #dc3545;
+        color: white;
+        border: 1px solid #dc3545;
+        padding: 0.375rem 0.75rem;
+        border-radius: 0.25rem;
+        cursor: pointer;
+        transition: all 0.3s ease;
+    }
+
+    .btn-danger:hover {
+        background-color: #c82333;
+        border-color: #bd2130;
+    }
+
+    .btn-sm {
+        font-size: 0.875rem;
+        padding: 0.25rem 0.5rem;
+    }
+
+    .mt-3 {
+        margin-top: 1rem;
+    }
+
+    .mt-5 {
+        margin-top: 2rem;
+    }
+
+    .alert {
+        padding: 1rem;
+        margin: 1rem 0;
+        border-radius: 0.375rem;
+        border: 1px solid transparent;
+    }
+
+    .alert-success {
+        background-color: rgba(40, 167, 69, 0.2);
+        color: var(--main-text-color);
+        border-color: rgba(40, 167, 69, 0.5);
+    }
+
+    .alert-error {
+        background-color: rgba(220, 53, 69, 0.2);
+        color: var(--main-text-color);
+        border-color: rgba(220, 53, 69, 0.5);
+    }
+
+    .alert-warning {
+        background-color: rgba(255, 193, 7, 0.2);
+        color: var(--main-text-color);
+        border-color: rgba(255, 193, 7, 0.5);
+    }
+
+    .alert-info {
+        background-color: rgba(23, 162, 184, 0.2);
+        color: var(--main-text-color);
+        border-color: rgba(23, 162, 184, 0.5);
+    }
+
+    .duplicate-warning {
+        padding: 0.5rem 0;
+    }
+
+    .duplicate-warning h5 {
+        color: #ffc107;
+        margin-bottom: 0.75rem;
+        font-weight: 600;
+    }
+
+    .duplicate-warning h5 i {
+        margin-right: 0.5rem;
+        font-size: 1.2rem;
+    }
+
+    .duplicate-details {
+        margin-top: 1rem;
+        padding: 1rem;
+        background-color: rgba(255, 193, 7, 0.1);
+        border-radius: 0.375rem;
+        border: 1px solid rgba(255, 193, 7, 0.3);
+    }
+
+    .duplicate-details h6 {
+        color: #ffc107;
+        margin-bottom: 0.5rem;
+        font-weight: 500;
+    }
+
+    .duplicate-details ul {
+        margin-bottom: 0.75rem;
+        padding-left: 1.5rem;
+    }
+
+    .duplicate-details li {
+        margin-bottom: 0.25rem;
+        color: var(--main-text-color);
+    }
+
+    .duplicate-details code {
+        background-color: rgba(255, 255, 255, 0.1);
+        color: #ffc107;
+        padding: 0.2rem 0.4rem;
+        border-radius: 0.25rem;
+        font-size: 0.85rem;
+        word-break: break-all;
+    }
+
+    .uploaded-files {
+        margin-top: 2rem;
+        padding: 1rem;
+        background-color: rgba(255, 255, 255, 0.03);
+        border-radius: 0.375rem;
+        border: 1px solid rgba(255, 255, 255, 0.1);
+        overflow-x: auto; /* Add horizontal scroll if needed */
+    }
+
+    .table-wrapper {
+        overflow-x: auto;
+        margin: -1rem;
+        padding: 1rem;
+    }
+
+    .table-wrapper::-webkit-scrollbar {
+        height: 8px;
+    }
+
+    .table-wrapper::-webkit-scrollbar-track {
+        background: rgba(255, 255, 255, 0.1);
+        border-radius: 4px;
+    }
+
+    .table-wrapper::-webkit-scrollbar-thumb {
+        background: rgba(255, 255, 255, 0.3);
+        border-radius: 4px;
+    }
+
+    .table-wrapper::-webkit-scrollbar-thumb:hover {
+        background: rgba(255, 255, 255, 0.5);
+    }
+
+    .file-table {
+        width: 100%;
+        border-collapse: collapse;
+        margin-top: 1rem;
+        background-color: rgba(255, 255, 255, 0.05);
+        border-radius: 0.375rem;
+        overflow: hidden;
+        table-layout: fixed; /* Force table to respect width constraints */
+    }
+
+    .file-table th {
+        background-color: var(--purple-dark);
+        color: var(--main-text-color);
+        font-weight: 600;
+        padding: 0.75rem;
+        text-align: left;
+        border-bottom: 2px solid rgba(255, 255, 255, 0.3);
+    }
+
+    .file-table td {
+        padding: 0.75rem;
+        text-align: left;
+        border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+        background-color: rgba(255, 255, 255, 0.03);
+        color: var(--main-text-color);
+        word-wrap: break-word;
+        overflow-wrap: break-word;
+    }
+
+    .file-table tr:hover td {
+        background-color: #3a1550;
+    }
+
+    /* Column width allocation for fixed table layout */
+    .file-table th:nth-child(1), /* Source Name */
+    .file-table td:nth-child(1) {
+        width: 30%;
+        max-width: 0; /* Required for text-overflow to work with table-layout: fixed */
+    }
+
+    .file-table th:nth-child(2), /* Type */
+    .file-table td:nth-child(2) {
+        width: 10%;
+    }
+
+    .file-table th:nth-child(3), /* Size/URL */
+    .file-table td:nth-child(3) {
+        width: 15%;
+    }
+
+    .file-table th:nth-child(4), /* Status */
+    .file-table td:nth-child(4) {
+        width: 12%;
+    }
+
+    .file-table th:nth-child(5), /* Hash */
+    .file-table td:nth-child(5) {
+        width: 15%;
+    }
+
+    .file-table th:nth-child(6), /* Added At */
+    .file-table td:nth-child(6) {
+        width: 18%;
+    }
+
+    .file-table th:nth-child(7), /* Actions */
+    .file-table td:nth-child(7) {
+        width: 10%;
+    }
+
+    .file-name-cell {
+        font-weight: 500;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+        position: relative;
+    }
+
+    .file-name-cell:hover {
+        white-space: normal;
+        word-wrap: break-word;
+        overflow-wrap: break-word;
+    }
+
+    /* Tooltip for full file name on hover */
+    .file-name-cell .file-name-full {
+        display: none;
+        position: absolute;
+        background-color: var(--purple-dark);
+        border: 1px solid rgba(255, 255, 255, 0.3);
+        border-radius: 0.25rem;
+        padding: 0.5rem;
+        z-index: 1000;
+        max-width: 300px;
+        word-break: break-all;
+        top: 100%;
+        left: 0;
+        margin-top: 0.25rem;
+        box-shadow: 0 4px 6px rgba(0, 0, 0, 0.3);
+    }
+
+    .file-name-cell:hover .file-name-full {
+        display: block;
+    }
+
+    .file-hash-cell {
+        color: rgba(255, 255, 255, 0.6);
+        font-size: 0.75rem;
+        font-family: monospace;
+        max-width: 120px;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+    }
+
+    .file-hash-full {
+        display: none;
+    }
+
+    .file-hash-cell:hover .file-hash-full {
+        display: block;
+        position: absolute;
+        background-color: var(--purple-dark);
+        border: 1px solid rgba(255, 255, 255, 0.3);
+        border-radius: 0.25rem;
+        padding: 0.5rem;
+        z-index: 1000;
+        max-width: 300px;
+        word-break: break-all;
+    }
+
+    .file-size-cell {
+        color: rgba(255, 255, 255, 0.8);
+    }
+
+    .url-cell {
+        color: rgba(173, 216, 230, 0.9);
+        font-size: 0.8rem;
+        font-family: monospace;
+        max-width: 200px;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+        position: relative;
+    }
+
+    .url-cell:hover .url-full {
+        display: block;
+        position: absolute;
+        background-color: var(--purple-dark);
+        border: 1px solid rgba(255, 255, 255, 0.3);
+        border-radius: 0.25rem;
+        padding: 0.5rem;
+        z-index: 1000;
+        max-width: 400px;
+        word-break: break-all;
+        top: 100%;
+        left: 0;
+        margin-top: 0.25rem;
+        box-shadow: 0 4px 6px rgba(0, 0, 0, 0.3);
+    }
+
+    .url-full {
+        display: none;
+    }
+
+    .upload-date-cell {
+        color: rgba(255, 255, 255, 0.8);
+        font-size: 0.875rem;
+    }
+
+    .status-cell {
+        color: rgba(255, 255, 255, 0.8);
+        font-size: 0.875rem;
+    }
+
+    .status-badge {
+        display: inline-block;
+        padding: 0.25rem 0.5rem;
+        border-radius: 0.25rem;
+        font-size: 0.75rem;
+        font-weight: 500;
+        text-transform: uppercase;
+        text-align: center;
+        min-width: 60px;
+    }
+
+    .status-uploaded {
+        background-color: rgba(40, 167, 69, 0.3);
+        color: #28a745;
+        border: 1px solid rgba(40, 167, 69, 0.5);
+    }
+
+    .status-pending {
+        background-color: rgba(255, 193, 7, 0.3);
+        color: #ffc107;
+        border: 1px solid rgba(255, 193, 7, 0.5);
+    }
+
+    .status-processing {
+        background-color: rgba(23, 162, 184, 0.3);
+        color: #17a2b8;
+        border: 1px solid rgba(23, 162, 184, 0.5);
+    }
+
+    .status-error {
+        background-color: rgba(220, 53, 69, 0.3);
+        color: #dc3545;
+        border: 1px solid rgba(220, 53, 69, 0.5);
+    }
+
+    .file-actions {
+        display: flex;
+        gap: 0.5rem;
+    }
+
+    .file-name-cell {
+        font-weight: 500;
+    }
+
+    .no-files-message {
+        text-align: center;
+        color: rgba(255, 255, 255, 0.7);
+        font-style: italic;
+        padding: 2rem;
+    }
+
+    .loading-indicator {
+        display: flex;
+        align-items: center;
+        gap: 0.5rem;
+        color: rgba(255, 255, 255, 0.8);
+    }
+
+    .spinner-border {
+        width: 1rem;
+        height: 1rem;
+        border: 0.125em solid currentColor;
+        border-right-color: transparent;
+        border-radius: 50%;
+        animation: spinner-border 0.75s linear infinite;
+    }
+
+    @@keyframes spinner-border {
+        to {
+            transform: rotate(360deg);
+        }
+    }
+
+    .selected-file {
+        margin-top: 1rem;
+        padding: 0.75rem;
+        background-color: rgba(72, 61, 139, 0.3);
+        border-radius: 0.375rem;
+        border: 1px solid rgba(72, 61, 139, 0.6);
+    }
+
+    .error-list {
+        margin-top: 0.5rem;
+        padding-left: 1.5rem;
+    }
+
+    .error-list li {
+        margin-bottom: 0.25rem;
+        color: #ffcccc;
+    }
+
+    .upload-progress {
+        margin-top: 0.5rem;
+    }
+
+    .progress-bar {
+        width: 100%;
+        height: 4px;
+        background-color: rgba(255, 255, 255, 0.2);
+        border-radius: 2px;
+        overflow: hidden;
+    }
+
+    .progress-fill {
+        height: 100%;
+        background-color: var(--accent-color);
+        transition: width 0.3s ease;
+    }
+
+    /* Responsive adjustments for smaller screens */
+    @@media (max-width: 768px) {
+        .upload-container {
+            margin: 1rem 0; /* Adjust margins for mobile */
+            padding: 1rem;
+        }
+        
+        .file-table th:nth-child(5),
+        .file-table td:nth-child(5) {
+            display: none; /* Hide hash column on mobile */
+        }
+    }
+
+    @@media (max-width: 480px) {
+        .upload-container {
+            margin: 0.5rem 0; /* Smaller margins for very small screens */
+            padding: 0.75rem;
+        }
+        
+        .file-table th:nth-child(4),
+        .file-table td:nth-child(4) {
+            display: none; /* Hide status column on very small screens */
+        }
+    }
+
+    @@keyframes slideInRight {
+        from {
+            transform: translateX(100%);
+            opacity: 0;
+        }
+        to {
+            transform: translateX(0);
+            opacity: 1;
+        }
+    }
+
+    /* Toast Notification Styles */
+    .toast-container {
+        position: fixed;
+        top: 20px;
+        right: 20px;
+        z-index: 1050;
+        max-width: 400px;
+    }
+
+    .duplicate-toast {
+        background-color: rgba(255, 193, 7, 0.95);
+        color: #212529;
+        border: 2px solid #ffc107;
+        border-radius: 0.5rem;
+        box-shadow: 0 4px 6px rgba(0, 0, 0, 0.3);
+        animation: slideInRight 0.3s ease-out;
+    }
+
+    .duplicate-toast .toast-header {
+        background-color: rgba(255, 193, 7, 0.8);
+        border-bottom: 1px solid rgba(255, 193, 7, 0.5);
+        color: #212529;
+    }
+
+    .duplicate-toast .toast-body {
+        padding: 1rem;
+    }
+
+    .duplicate-toast-details {
+        margin-top: 0.75rem;
+        padding: 0.5rem;
+        background-color: rgba(255, 255, 255, 0.3);
+        border-radius: 0.25rem;
+    }
+
+    .btn-close {
+        background: none;
+        border: none;
+        font-size: 1.2rem;
+        opacity: 0.7;
+        cursor: pointer;
+        color: #212529;
+    }
+
+    .btn-close:hover {
+        opacity: 1;
+    }
+
+    .toast {
+        display: block;
+        margin-bottom: 0.5rem;
+    }
+
+    .toast.show {
+        opacity: 1;
+    }
+
+    .url-input-group {
+        margin-bottom: 1rem;
+    }
+
+    .url-input-group label {
+        display: block;
+        margin-bottom: 0.5rem;
+        color: var(--main-text-color);
+        font-weight: 500;
+    }
+
+    .url-input-group .form-control {
+        width: 100%;
+    }
+
+    .source-type-badge {
+        display: inline-block;
+        padding: 0.2rem 0.5rem;
+        border-radius: 0.25rem;
+        font-size: 0.7rem;
+        font-weight: 500;
+        text-transform: uppercase;
+        margin-right: 0.5rem;
+    }
+
+    .source-type-upload {
+        background-color: rgba(72, 61, 139, 0.3);
+        color: #9b8ce8;
+        border: 1px solid rgba(72, 61, 139, 0.5);
+    }
+
+    .source-type-url {
+        background-color: rgba(23, 162, 184, 0.3);
+        color: #17a2b8;
+        border: 1px solid rgba(23, 162, 184, 0.5);
+    }
+
+    .divider {
+        margin: 2rem 0;
+        text-align: center;
+        position: relative;
+    }
+
+    .divider::before {
+        content: '';
+        position: absolute;
+        top: 50%;
+        left: 0;
+        right: 0;
+        height: 1px;
+        background: rgba(255, 255, 255, 0.3);
+    }
+
+    .divider span {
+        background: var(--main-bg-color);
+        padding: 0 1rem;
+        color: rgba(255, 255, 255, 0.7);
+        font-weight: 500;
+        text-transform: uppercase;
+        font-size: 0.8rem;
+    }
+</style>
+
+<div class="upload-container">
+	<h1><i class="bi bi-cloud-upload-fill"></i> Document Upload & Data Source Management</h1>
+    
+    <!-- Toast Notification for Duplicates -->
+    @if (_showDuplicateToast)
+    {
+        <div class="toast-container">
+            <div class="toast show duplicate-toast" role="alert">
+                <div class="toast-header">
+                    <i class="bi bi-exclamation-triangle-fill text-warning me-2"></i>
+                    <strong class="me-auto">Duplicate Detected</strong>
+                    <button type="button" class="btn-close" @onclick="CloseDuplicateToast" aria-label="Close"></button>
+                </div>
+                <div class="toast-body">
+                    <p><strong>This data source already exists!</strong></p>
+                    <p>The item is identical to an existing entry and was not saved.</p>
+                    @if (_duplicateFileInfo != null)
+                    {
+                        <div class="duplicate-toast-details">
+                            <small>
+                                <strong>Existing entry:</strong> @_duplicateFileInfo.FileName<br>
+                                <strong>Added:</strong> @_duplicateFileInfo.UploadedAt.ToLocalTime().ToString("MMM dd, yyyy HH:mm")
+                            </small>
+                        </div>
+                    }
+                </div>
+            </div>
+        </div>
+    }
+
+    <!-- File Upload Section -->
+    <div class="phase-info">
+        <h4><i class="bi bi-file-earmark-arrow-up"></i> Upload Documents</h4>
+        <p>Upload documents for processing and analysis. Max size: 10MB. Accepted formats: .pdf, .docx, .xlsx</p>
+    </div>
+
+    <InputFile OnChange="HandleFileSelected" accept=".pdf,.docx,.xlsx" class="form-control" id="fileInput" />
+    <div class="upload-hint">
+        <i class="bi bi-info-circle"></i> For best results, ensure your document is well-structured and contains identifiable data fields.
+    </div>
+
+    @if (!IsFileSelected || _isUploading)
+    {
+        <button class="btn btn-primary btn-sm" @onclick="UploadFiles" disabled>
+            @if (_isUploading)
+            {
+                <span class="loading-indicator">
+                    <span class="spinner-border" aria-hidden="true"></span>
+                    Processing...
+                </span>
+            }
+            else
+            {
+                <i class="bi bi-upload"></i>
+                <span>Start Upload</span>
+            }
+        </button>
+    }
+    else
+    {
+        <button class="btn btn-primary btn-sm" @onclick="UploadFiles">
+            @if (_isUploading)
+            {
+                <span class="loading-indicator">
+                    <span class="spinner-border" aria-hidden="true"></span>
+                    Processing...
+                </span>
+            }
+            else
+            {
+                <i class="bi bi-upload"></i>
+                <span>Start Upload</span>
+            }
+        </button>
+    }
+
+    <!-- Divider -->
+    <div class="divider">
+        <span>or</span>
+    </div>
+
+    <!-- Website URL Section -->
+    <div class="phase-info">
+        <h4><i class="bi bi-globe"></i> Add Website or Web Resource</h4>
+        <p>Add website URLs, web pages, or online resources as data sources. Content will be processed and analyzed later.</p>
+    </div>
+
+    <div class="url-input-group">
+        <label for="websiteUrl">Website URL or Web Resource</label>
+        @if (_isUploading)
+        {
+            <input type="text" id="websiteUrl" @bind="_websiteUrl" class="form-control" 
+                   placeholder="https://example.com or https://example.com/document.pdf" disabled />
+        }
+        else
+        {
+            <input type="text" id="websiteUrl" @bind="_websiteUrl" class="form-control" 
+                   placeholder="https://example.com or https://example.com/document.pdf" />
+        }
+    </div>
+    
+    @if (string.IsNullOrWhiteSpace(_websiteUrl) || _isUploading)
+    {
+        <button class="btn btn-primary btn-sm" @onclick="HandleUrlUpload" disabled>
+            @if (_isUploading)
+            {
+                <span class="loading-indicator">
+                    <span class="spinner-border" aria-hidden="true"></span>
+                    Adding...
+                </span>
+            }
+            else
+            {
+                <i class="bi bi-link-45deg"></i>
+                <span>Add Website</span>
+            }
+        </button>
+    }
+    else
+    {
+        <button class="btn btn-primary btn-sm" @onclick="HandleUrlUpload">
+            @if (_isUploading)
+            {
+                <span class="loading-indicator">
+                    <span class="spinner-border" aria-hidden="true"></span>
+                    Adding...
+                </span>
+            }
+            else
+            {
+                <i class="bi bi-link-45deg"></i>
+                <span>Add Website</span>
+            }
+        </button>
+    }
+
+    <div class="upload-hint">
+        <i class="bi bi-info-circle"></i> Enter any website URL, web page, or online document. The URL will be saved as a data source for future processing.
+    </div>
+
+    <!-- Progress and Status Messages -->
+    @if (!string.IsNullOrEmpty(_uploadMessage))
+    {
+        <div class="alert alert-@_messageClass mt-3">
+            @_uploadMessage
+            @if (_uploadErrors.Any())
+            {
+                <ul class="error-list">
+                    @foreach (var error in _uploadErrors)
+                    {
+                        <li>@error</li>
+                    }
+                </ul>
+            }
+        </div>
+    }
+
+    @if (_uploadProgress > 0 && _uploadProgress < 100)
+    {
+        <div class="upload-progress">
+            <div class="progress-bar">
+                <div class="progress-fill" style="width: @($"{_uploadProgress}%")"></div>
+            </div>
+        </div>
+    }
+
+    <!-- Data Sources List -->
+    <div class="uploaded-files">
+        <h2><i class="bi bi-database"></i> Data Sources</h2>
+        @if (Files != null && Files.Count > 0)
+        {
+            <div class="table-wrapper">
+                <table class="file-table">
+                    <thead>
+                        <tr>
+                            <th>Source Name</th>
+                            <th>Type</th>
+                            <th>Size/URL</th>
+                            <th>Status</th>
+                            <th>Hash</th>
+                            <th>Added At</th>
+                            <th>Actions</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        @foreach (var file in Files)
+                        {
+                            <tr style="width:max()">
+                                <td class="file-name-cell">
+                                    <span class="source-type-badge @(file.SourceType == "url" ? "source-type-url" : "source-type-upload")">
+                                        @(file.SourceType == "url" ? "WEB" : "FILE")
+                                    </span>
+                                    @file.FileName
+                                    <span class="file-name-full">@file.FileName</span>
+                                </td>
+                                <td class="status-cell">
+                                    @if (file.SourceType == "url")
+                                    {
+                                        <i class="bi bi-globe" title="Website/Web Resource"></i>
+                                    }
+                                    else
+                                    {
+                                        <i class="bi bi-file-earmark" title="Uploaded File"></i>
+                                    }
+                                </td>
+                                <td class="@(file.SourceType == "url" ? "url-cell" : "file-size-cell")">
+                                    @if (file.SourceType == "url")
+                                    {
+                                        @if (!string.IsNullOrEmpty(file.SourceUrl))
+                                        {
+                                            <span>@file.SourceUrl</span>
+                                            <span class="url-full">@file.SourceUrl</span>
+                                        }
+                                        else
+                                        {
+                                            <span>-</span>
+                                        }
+                                    }
+                                    else
+                                    {
+                                        @file.FileSizeFormatted
+                                    }
+                                </td>
+                                <td class="status-cell">
+                                    <span class="status-badge @(GetStatusClass(file.Status.ToString()))">@file.Status</span>
+                                </td>
+                                <td class="file-hash-cell">
+                                    @if (!string.IsNullOrEmpty(file.FileHash))
+                                    {
+                                        <span>@file.FileHash</span>
+                                        <span class="file-hash-full">@file.FileHash</span>
+                                    }
+                                    else
+                                    {
+                                        <span>-</span>
+                                    }
+                                </td>
+                                <td class="upload-date-cell">@file.UploadedAt.ToLocalTime().ToString("MMM dd, yyyy HH:mm")</td>
+								<td>
+                                    <button class="btn btn-danger btn-sm" @onclick="() => DeleteFile(file.FileId)">
+                                        <i class="bi bi-trash"></i> Delete
+                                    </button>
+                                </td>
+                            </tr>
+                        }
+                    </tbody>
+                </table>
+            </div>
+        }
+        else if (_isLoading)
+        {
+            <div class="no-files-message">
+                <span class="loading-indicator">
+                    <span class="spinner-border" aria-hidden="true"></span>
+                    Loading data sources...
+                </span>
+            </div>
+        }
+        else
+        {
+            <div class="no-files-message">
+                <i class="bi bi-inbox"></i> No data sources added yet. Upload documents or add website URLs to get started.
+            </div>
+        }
+    </div>
+</div>

@@ -1,7 +1,9 @@
-using AspireApp.Web;
+﻿using AspireApp.Web;
 using AspireApp.Web.Components;
-using AspireApp.Web.Components.Shared;
 using AspireApp.Web.Components.Pages;
+using AspireApp.Web.Components.Shared;
+using AspireApp.Web.Shared;
+using Microsoft.EntityFrameworkCore;
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -11,6 +13,9 @@ builder.AddServiceDefaults();
 // Add services to the container.
 builder.Services.AddRazorComponents()
     .AddInteractiveServerComponents();
+
+// Add MVC services for API controllers
+builder.Services.AddControllers();
 
 builder.Services.AddOutputCache();
 
@@ -23,6 +28,26 @@ builder.Services.AddHttpClient<WeatherApiClient>(client =>
 
 // Add HttpClient factory for general use
 builder.Services.AddHttpClient();
+
+// ADDING CONFIGURATIONS FOR STORAGE OF FILES
+// Configure SQLite database (and location)
+var connectionString = builder.Configuration.GetConnectionString("DefaultConnection") ?? "Data Source=../../database/data-resources.db";
+builder.Services.AddDbContext<UploadDbContext>(options =>
+    options.UseSqlite(connectionString));
+
+// Register the FileStorageService with data directory (simplified - no bridge service needed)
+var fileUploadDataDir = builder.Configuration.GetValue<string>("FileUpload:DataDirectory");
+var dataDirectory = !string.IsNullOrEmpty(fileUploadDataDir)
+    ? Path.IsPathRooted(fileUploadDataDir)
+        ? fileUploadDataDir
+        : Path.Combine(builder.Environment.ContentRootPath, fileUploadDataDir ?? string.Empty)
+    : Path.Combine(builder.Environment.ContentRootPath, "data");
+
+builder.Services.AddScoped<FileStorageService>(sp =>
+    new FileStorageService(
+        sp.GetRequiredService<UploadDbContext>(),
+        sp.GetRequiredService<ILogger<FileStorageService>>(),
+        dataDirectory));
 
 // Add this right after the AddHttpClient section
 builder.Services.AddSingleton<IConfiguration>(builder.Configuration);
@@ -37,10 +62,16 @@ builder.Services.AddSingleton<AiInfoStateService>();
 // Register Speech service
 builder.Services.AddScoped<SpeechService>();
 
+// Register Ollama warmup background service
+builder.Services.AddHostedService<AspireApp.Web.Services.OllamaWarmupService>();
+
 // Initialize configurations early
 HomeConfigurations.PullConfigure();
 
 var app = builder.Build();
+
+// Initialize database and directories with enhanced bridge support
+await InitializeDatabaseAsync(app.Services, connectionString, dataDirectory);
 
 if (!app.Environment.IsDevelopment())
 {
@@ -60,9 +91,75 @@ app.MapStaticAssets();
 app.MapRazorComponents<App>()
     .AddInteractiveServerRenderMode();
 
+// Map API controllers
+app.MapControllers();
+
 app.MapDefaultEndpoints();
 // Add this after the existing endpoint mappings
 
 app.MapGet("/health", () => Results.Ok("Healthy"));
 
 await app.RunAsync();
+
+// Simplified database initialization method
+static async Task InitializeDatabaseAsync(IServiceProvider services, string connectionString, string dataDirectory)
+{
+    try
+    {
+        // Create database directory if it doesn't exist
+        var dbPath = connectionString.Replace("Data Source=", "").Trim();
+        
+        // Make database path absolute if it's relative
+        if (!Path.IsPathRooted(dbPath))
+        {
+            dbPath = Path.GetFullPath(dbPath);
+        }
+        
+        var dbDirectory = Path.GetDirectoryName(dbPath);
+        if (!string.IsNullOrEmpty(dbDirectory) && !Directory.Exists(dbDirectory))
+        {
+            Directory.CreateDirectory(dbDirectory);
+            Console.WriteLine($"Created database directory: {dbDirectory}");
+        }
+
+        // Create data directory if it doesn't exist
+        if (!Directory.Exists(dataDirectory))
+        {
+            Directory.CreateDirectory(dataDirectory);
+            Console.WriteLine($"Created data directory: {dataDirectory}");
+        }
+
+        // Initialize database with EF Core
+        using var scope = services.CreateScope();
+        var context = scope.ServiceProvider.GetRequiredService<UploadDbContext>();
+        
+        // Ensure database schema is created
+        await context.Database.EnsureCreatedAsync();
+        Console.WriteLine($"? Database schema initialized successfully at: {dbPath}");
+
+        // Test database connection
+        var canConnect = await context.Database.CanConnectAsync();
+        if (canConnect)
+        {
+            Console.WriteLine("✓ Database connection test successful");
+            
+            // Show current database stats
+            var fileCount = await context.Datasources.CountAsync();
+            var pageCount = await context.DatasourcePages.CountAsync();
+            
+            Console.WriteLine($"Database initialized with:");
+            Console.WriteLine($"  - {fileCount} datasources in datasources table");
+            Console.WriteLine($"  - {pageCount} datasource pages");
+        }
+        else
+        {
+            Console.WriteLine("⚠ Warning: Database connection test failed");
+        }
+    }
+    catch (Exception ex)
+    {
+        Console.WriteLine($"Error initializing database: {ex.Message}");
+        Console.WriteLine($"Stack trace: {ex.StackTrace}");
+        throw; // Re-throw to prevent application startup if database initialization fails
+    }
+}

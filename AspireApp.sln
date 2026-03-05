@@ -1,6 +1,6 @@
 Microsoft Visual Studio Solution File, Format Version 12.00
 # Visual Studio Version 18
-VisualStudioVersion = 18.0.11018.127
+VisualStudioVersion = 18.4.11513.90
 MinimumVisualStudioVersion = 10.0.40219.1
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "AspireApp.ApiService", "src\AspireApp.ApiService\AspireApp.ApiService.csproj", "{76AA9717-B3AA-1C85-D576-19AF5ADACF66}"
 EndProject
@@ -13,13 +13,108 @@ EndProject
 Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "roadmap", "roadmap", "{02EA681E-C7D8-13C7-8484-4AC65E1B71E8}"
 	ProjectSection(SolutionItems) = preProject
 		roadmap\Roadmap.md = roadmap\Roadmap.md
+		roadmap\Tasks.md = roadmap\Tasks.md
 	EndProjectSection
 EndProject
 Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "docs", "docs", "{FBE155A9-2F55-417C-851F-620540B898B6}"
 	ProjectSection(SolutionItems) = preProject
+		docs\CONTRIBUTIONS.md = docs\CONTRIBUTIONS.md
+		docs\DATABASE_MANAGEMENT.md = docs\DATABASE_MANAGEMENT.md
+		docs\MIGRATION_GUIDE.md = docs\MIGRATION_GUIDE.md
+		docs\PROJECT_CLEANUP_COMPLETE.md = docs\PROJECT_CLEANUP_COMPLETE.md
 		README.md = README.md
 		docs\SPEECH_FEATURES.md = docs\SPEECH_FEATURES.md
+		docs\TESTING_FILE_UPLOAD.md = docs\TESTING_FILE_UPLOAD.md
 	EndProjectSection
+EndProject
+Project("{888888A0-9F3D-457C-B088-3A5042F75D52}") = "AspireApp.PythonServices", "src\AspireApp.PythonServices\AspireApp.PythonServices.pyproj", "{B58F2D78-4D31-4407-A831-CB05DA1C1D32}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "AspireApp.Neo4JService", "src\AspireApp.Neo4JService\AspireApp.Neo4JService.csproj", "{659E2264-AB42-40E4-B257-9A07AE14CC04}"
+EndProject
+Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = ".github", ".github", "{6C3EA053-9755-4CBA-9D1E-A8AED60F6099}"
+	ProjectSection(SolutionItems) = preProject
+		.github\copilot-instructions-improvement-plan.md = .github\copilot-instructions-improvement-plan.md
+		.github\COPILOT-INSTRUCTIONS-REVIEW.md = .github\COPILOT-INSTRUCTIONS-REVIEW.md
+		.github\copilot-instructions.md = .github\copilot-instructions.md
+	EndProjectSection
+EndProject
+Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "SolutionItems", "SolutionItems", "{FD1FBAE9-5B65-4052-98E9-85E52DF3EFA6}"
+	ProjectSection(SolutionItems) = preProject
+		.gitignore = .gitignore
+	EndProjectSection
+EndProject
+Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "prompts", "prompts", "{D7078045-A923-47B9-9543-4D92F2C16E57}"
+	ProjectSection(SolutionItems) = preProject
+		.github\prompts\ai-evaluation-scripts.prompt.md = .github\prompts\ai-evaluation-scripts.prompt.md
+		.github\prompts\architecture-blueprint-generator.prompt.md = .github\prompts\architecture-blueprint-generator.prompt.md
+		.github\prompts\aspire-dashboard-troubleshooting.prompt.md = .github\prompts\aspire-dashboard-troubleshooting.prompt.md
+		.github\prompts\cross-service-contract-sync.prompt.md = .github\prompts\cross-service-contract-sync.prompt.md
+		.github\prompts\csharp-async.prompt.md = .github\prompts\csharp-async.prompt.md
+		.github\prompts\csharp-docs.prompt.md = .github\prompts\csharp-docs.prompt.md
+		.github\prompts\dependency-update-workflow.prompt.md = .github\prompts\dependency-update-workflow.prompt.md
+		.github\prompts\ef-core.prompt.md = .github\prompts\ef-core.prompt.md
+		.github\prompts\neo4j-cypher-prototyping.prompt.md = .github\prompts\neo4j-cypher-prototyping.prompt.md
+		.github\prompts\playwright-automation-fill-in-form.prompt.md = .github\prompts\playwright-automation-fill-in-form.prompt.md
+		.github\prompts\playwright-explore-website.prompt.md = .github\prompts\playwright-explore-website.prompt.md
+		.github\prompts\playwright-generate-test.prompt.md = .github\prompts\playwright-generate-test.prompt.md
+		.github\prompts\python-ingestion-debugging.prompt.md = .github\prompts\python-ingestion-debugging.prompt.md
+		.github\prompts\README.md = .github\prompts\README.md
+		.github\prompts\sql-code-review.prompt.md = .github\prompts\sql-code-review.prompt.md
+		.github\prompts\sql-optimization.prompt.md = .github\prompts\sql-optimization.prompt.md
+	EndProjectSection
+EndProject
+Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "instructions", "instructions", "{A278D685-967B-49C5-9CFF-726B1CBF259C}"
+	ProjectSection(SolutionItems) = preProject
+		.github\instructions\aspire-orchestration.instructions.md = .github\instructions\aspire-orchestration.instructions.md
+		.github\instructions\blazor.instructions.md = .github\instructions\blazor.instructions.md
+		.github\instructions\cross-service-contracts.instructions.md = .github\instructions\cross-service-contracts.instructions.md
+		.github\instructions\csharp.instructions.md = .github\instructions\csharp.instructions.md
+		.github\instructions\dependency-management.instructions.md = .github\instructions\dependency-management.instructions.md
+		.github\instructions\dotnet-architecture-good-practices.instructions.md = .github\instructions\dotnet-architecture-good-practices.instructions.md
+		.github\instructions\dotnet-framework.instructions.md = .github\instructions\dotnet-framework.instructions.md
+		.github\instructions\markdown.instructions.md = .github\instructions\markdown.instructions.md
+		.github\instructions\memory-recall.instructions.md = .github\instructions\memory-recall.instructions.md
+		.github\instructions\neo4j-integration.instructions.md = .github\instructions\neo4j-integration.instructions.md
+		.github\instructions\python.instructions.md = .github\instructions\python.instructions.md
+		.github\instructions\sql-sp-generation.instructions.md = .github\instructions\sql-sp-generation.instructions.md
+		.github\instructions\taming-copilot.instructions.md = .github\instructions\taming-copilot.instructions.md
+		.github\instructions\task-implementation.instructions.md = .github\instructions\task-implementation.instructions.md
+		.github\instructions\task-management.instructions.md = .github\instructions\task-management.instructions.md
+		.github\instructions\tasksync.instructions.md = .github\instructions\tasksync.instructions.md
+		.github\instructions\testing.instructions.md = .github\instructions\testing.instructions.md
+	EndProjectSection
+EndProject
+Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "tasks", "tasks", "{AC6C25AA-3B4E-4D32-99F3-94841EE241A8}"
+	ProjectSection(SolutionItems) = preProject
+		.github\tasks\bug-template.md = .github\tasks\bug-template.md
+		.github\tasks\feature-template.md = .github\tasks\feature-template.md
+		.github\tasks\README.md = .github\tasks\README.md
+		.github\tasks\research-template.md = .github\tasks\research-template.md
+		.github\tasks\TASK001-implement-graph-rag.md = .github\tasks\TASK001-implement-graph-rag.md
+		.github\tasks\TASK002-shared-playwright-harness.md = .github\tasks\TASK002-shared-playwright-harness.md
+		.github\tasks\TASK003-instruction-dry-run.md = .github\tasks\TASK003-instruction-dry-run.md
+		.github\tasks\_index.md = .github\tasks\_index.md
+	EndProjectSection
+EndProject
+Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "memory-bank", "memory-bank", "{0FF414FD-6CF5-4D5F-803E-73609F6292DF}"
+	ProjectSection(SolutionItems) = preProject
+		.github\memory-bank\activeContext.md = .github\memory-bank\activeContext.md
+		.github\memory-bank\productContext.md = .github\memory-bank\productContext.md
+		.github\memory-bank\progress.md = .github\memory-bank\progress.md
+		.github\memory-bank\projectbrief.md = .github\memory-bank\projectbrief.md
+		.github\memory-bank\README.md = .github\memory-bank\README.md
+		.github\memory-bank\systemPatterns.md = .github\memory-bank\systemPatterns.md
+		.github\memory-bank\techContext.md = .github\memory-bank\techContext.md
+	EndProjectSection
+EndProject
+Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "workflows", "workflows", "{B85A50D8-0A27-48BF-A673-56BB285EEE62}"
+EndProject
+Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "Solution Items", "Solution Items", "{0135600A-0851-4504-AFA0-4EBEA765FF76}"
+	ProjectSection(SolutionItems) = preProject
+		.copilot\mcp-config.json = .copilot\mcp-config.json
+	EndProjectSection
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "AspireApp.WebTest", "src\AspireApp.WebTest\AspireApp.WebTest.csproj", "{D56206F6-166D-4A3F-A9B6-E69A6D6E7BD8}"
 EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
@@ -43,12 +138,29 @@ Global
 		{E494093C-6340-9888-0364-A77ED66DE782}.Debug|Any CPU.Build.0 = Debug|Any CPU
 		{E494093C-6340-9888-0364-A77ED66DE782}.Release|Any CPU.ActiveCfg = Release|Any CPU
 		{E494093C-6340-9888-0364-A77ED66DE782}.Release|Any CPU.Build.0 = Release|Any CPU
+		{B58F2D78-4D31-4407-A831-CB05DA1C1D32}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{B58F2D78-4D31-4407-A831-CB05DA1C1D32}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{659E2264-AB42-40E4-B257-9A07AE14CC04}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{659E2264-AB42-40E4-B257-9A07AE14CC04}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{659E2264-AB42-40E4-B257-9A07AE14CC04}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{659E2264-AB42-40E4-B257-9A07AE14CC04}.Release|Any CPU.Build.0 = Release|Any CPU
+		{D56206F6-166D-4A3F-A9B6-E69A6D6E7BD8}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{D56206F6-166D-4A3F-A9B6-E69A6D6E7BD8}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{D56206F6-166D-4A3F-A9B6-E69A6D6E7BD8}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{D56206F6-166D-4A3F-A9B6-E69A6D6E7BD8}.Release|Any CPU.Build.0 = Release|Any CPU
 	EndGlobalSection
 	GlobalSection(SolutionProperties) = preSolution
 		HideSolutionNode = FALSE
 	EndGlobalSection
+	GlobalSection(NestedProjects) = preSolution
+		{D7078045-A923-47B9-9543-4D92F2C16E57} = {6C3EA053-9755-4CBA-9D1E-A8AED60F6099}
+		{A278D685-967B-49C5-9CFF-726B1CBF259C} = {6C3EA053-9755-4CBA-9D1E-A8AED60F6099}
+		{AC6C25AA-3B4E-4D32-99F3-94841EE241A8} = {6C3EA053-9755-4CBA-9D1E-A8AED60F6099}
+		{0FF414FD-6CF5-4D5F-803E-73609F6292DF} = {6C3EA053-9755-4CBA-9D1E-A8AED60F6099}
+		{B85A50D8-0A27-48BF-A673-56BB285EEE62} = {6C3EA053-9755-4CBA-9D1E-A8AED60F6099}
+	EndGlobalSection
 	GlobalSection(ExtensibilityGlobals) = postSolution
 		SolutionGuid = {CBD3E3C3-D6AB-4EE7-A317-B47493A7C9F2}
-		StartupProject = AspireApp.AppHost
+		StartupProject = {CE4A7D9A-E58D-B782-7CBC-051C53AF10B1}
 	EndGlobalSection
 EndGlobal

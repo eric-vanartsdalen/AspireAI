@@ -1,0 +1,49 @@
+# Lightweight Dockerfile for development - avoids heavy ML dependencies
+FROM python:3.12.7-slim
+
+# Set environment variables for Python optimization
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1 \
+    PIP_DISABLE_PIP_VERSION_CHECK=1 \
+    PIP_DEFAULT_TIMEOUT=300
+
+# Install minimal system dependencies
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    build-essential \
+    curl \
+    && rm -rf /var/lib/apt/lists/*
+
+# Set the working directory
+WORKDIR /app
+
+# Create cache directory for persistent pip cache
+RUN mkdir -p /root/.cache/pip
+
+# Copy requirements and install core dependencies only
+COPY requirements.txt .
+
+# Install core dependencies first
+RUN pip install --upgrade pip setuptools wheel && \
+    pip install -r requirements.txt
+
+# Install a lightweight document processor as fallback
+RUN pip install pypdf2 python-docx
+
+# Create database directory with open permissions before switching user
+RUN mkdir -p /app/database /app/docs-database && chmod 777 /app/database /app/docs-database
+
+# Create non-root user
+RUN adduser --disabled-password --gecos '' --uid 1000 appuser && \
+    chown -R appuser:appuser /app
+
+# Switch to non-root user
+USER appuser
+
+# Copy the application code
+COPY --chown=appuser:appuser . .
+
+# Expose the port the app runs on
+EXPOSE 8000
+
+# Command to run the application
+CMD ["uvicorn", "app.fastapi:app", "--host", "0.0.0.0", "--port", "8000", "--reload"]

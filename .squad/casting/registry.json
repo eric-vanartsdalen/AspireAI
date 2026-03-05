@@ -1,0 +1,36 @@
+{
+  "agents": [
+    {
+      "persistent_name": "Bob",
+      "role": "Lead / Architect",
+      "universe": "The Usual Suspects",
+      "created_at": "2026-02-21T23:32:00Z",
+      "legacy_named": false,
+      "status": "active"
+    },
+    {
+      "persistent_name": "Jeff",
+      "role": ".NET Dev",
+      "universe": "The Usual Suspects",
+      "created_at": "2026-02-21T23:32:00Z",
+      "legacy_named": false,
+      "status": "active"
+    },
+    {
+      "persistent_name": "Jarvis",
+      "role": "Python / Data Dev",
+      "universe": "The Usual Suspects",
+      "created_at": "2026-02-21T23:32:00Z",
+      "legacy_named": false,
+      "status": "active"
+    },
+    {
+      "persistent_name": "Buster",
+      "role": "QA / Tester",
+      "universe": "The Usual Suspects",
+      "created_at": "2026-02-21T23:32:00Z",
+      "legacy_named": false,
+      "status": "active"
+    }
+  ]
+}
