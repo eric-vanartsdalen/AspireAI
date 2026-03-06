@@ -1,109 +1,87 @@
 # AspireAI
 
-AspireAI is a collaborative learning project designed to help developers explore and experiment with:
+A modular, Blazor-based chat assistant platform that ingests documents, builds knowledge graphs, and delivers retrieval-augmented answers with source citations — all orchestrated through .NET Aspire.
 
-Disclaimer: This is a hacked together example, so there may be bad practices and places to improve. Use at your own risk!
+> **Disclaimer:** This is an experimental learning project. Expect rough edges and areas to improve. Use at your own risk!
 
-- **Blazor**: Building interactive web UIs using C# and .NET.
-- **AI Integrations**: Experimenting with AI features and services in .NET applications.
-- **Shared Configurations**: Managing and sharing configuration across different parts of an application.
-- **Aspire Platform**: Using Aspire to scaffold and manage modern .NET projects.
+## What It Does
+
+1. **Chat** — Conversational UI powered by local LLMs (Ollama) via Semantic Kernel, with speech-to-text and text-to-speech support.
+2. **Ingest** — Upload documentation - a Python/Docling pipeline extracts page-level content and persists output.
+3. **Retrieve** — LightRAG + Neo4j turn extracted content into a queryable knowledge graph, surfacing cited answers in chat.
+
+## Technology Stack
+
+| Layer | Technology |
+|-------|------------|
+| Orchestration | .NET Aspire |
+| Web UI | Blazor (.NET 10) |
+| AI Runtime | Ollama (local containerized LLMs) accessed via Semantic Kernel |
+| Document Processing | Python FastAPI + Docling |
+| Knowledge Graph | LightRAG (containerized) with Neo4j (containerized) |
+| Relational Storage | SQLite (EF Core) |
+| Containerization | Docker |
 
 ## Prerequisites
 
-Before getting started, ensure you have the following installed:
-
-- **.NET 10 SDK**: [Download here](https://dotnet.microsoft.com/en-us/download/dotnet/10.0)
-
-Check from command line:
-
-```bash
-dotnet --version
-```
-
-- **Aspire Tooling**: [Setup instructions](https://learn.microsoft.com/en-us/dotnet/aspire/fundamentals/setup-tooling?tabs=windows&pivots=vscode) Install tools from commandline
-
-Once prerequisites are installed, you can perform an initial build:
-
-```bash
-dotnet build
-```
-
-## Goals
-
-- Provide hands-on examples for Blazor components and patterns.
-- Demonstrate how to connect and use AI services.
-- Show how to centralize and share configuration settings.
-- Serve as a collaborative playground for learning and sharing knowledge.
-
-## Current Plan (2026-02-13)
-
-Active work is focused on stabilizing the document-to-RAG path before adding new features.
-
-- Keep canonical SQLite schema as `files` + `document_pages`.
-- Align Python processing/RAG contracts to the current schema and status lifecycle.
-- Normalize Web upload paths and Python Docling file resolution.
-- Route chat retrieval through Python `/rag` and render source citations (file/page/snippet).
-- Add baseline tests for upload, processing, retrieval, and citation display.
-
-Details and task tracking:
-
-- Roadmap: [roadmap/Roadmap.md](roadmap/Roadmap.md)
-- Tasks: [roadmap/Tasks.md](roadmap/Tasks.md)
+- [.NET 10 SDK](https://dotnet.microsoft.com/en-us/download/dotnet/10.0) — verify with `dotnet --version`
+- [Docker Desktop](https://www.docker.com/products/docker-desktop/) — required for Neo4j, Ollama, and Python containers
+- [Aspire Tooling](https://learn.microsoft.com/en-us/dotnet/aspire/fundamentals/setup-tooling) — workload install via `dotnet workload install aspire`
+- Python 3.11+ *(optional, for local Python development outside containers)*
 
 ## Getting Started
 
-1. **Clone the repository**
-2. **Restore dependencies** (once projects are added)
-3. **Run the project**
-4. **Explore the code and features**
+```bash
+# 1. Clone and restore
+git clone https://github.com/eric-vanartsdalen/AspireAI.git
+cd AspireAI
+dotnet restore
+
+# 2. Build
+dotnet build
+
+# 3. Run (launches Aspire dashboard + all services)
+dotnet run --project src/AspireApp.AppHost
+```
+
+The Aspire dashboard opens automatically. All services — Web UI, Python processing, Neo4j, Ollama — start and register health checks there.
+
+> **Startup project must be `AspireApp.AppHost`.** If the app 404s or services are missing, right-click `AspireApp.AppHost` in Solution Explorer ? *Set as Startup Project*.
+
+## Project Layout
+
+| Path | Purpose |
+|------|---------|
+| `src/AspireApp.AppHost/` | Aspire orchestration — wires all services, containers, and config |
+| `src/AspireApp.Web/` | Blazor UI — chat, file upload, speech I/O |
+| `src/AspireApp.ApiService/` | Minimal API (placeholder for future gateway) |
+| `src/AspireApp.PythonServices/` | FastAPI — document processing, RAG retrieval, Neo4j integration |
+| `src/AspireApp.Neo4JService/` | Neo4j Docker build context and config |
+| `src/AspireApp.ServiceDefaults/` | Shared .NET service configuration and health checks |
+| `data/` | Bind-mounted volume for uploaded documents |
+| `database/` | SQLite and Neo4j storage volumes |
+
+## Documentation
+
+| Document | Contents |
+|----------|----------|
+| [Architecture](roadmap/Architecture.md) | System design, component map, data schemas, design principles |
+| [Plan](plan.md) | Epics and phased roadmap from foundation through advanced features |
+| [Tasks](roadmap/Tasks.md) | Active work breakdown — stabilization track, checklists, gate criteria |
 
 ## Troubleshooting
 
-### Startup Project Issues
-
-**Problem**: The application may fail to start properly or show 404 errors when accessing URLs.
-
-**Common Cause**: The startup project may be incorrectly set to `AspireApp.ApiService` instead of `AspireApp.AppHost`.
-
-**Solution**: Since this is an Aspire application, the startup project should always be `AspireApp.AppHost`, which orchestrates all services including the API, web frontend, and supporting services (Ollama, Neo4j, Python services).
-
-**To fix this in Visual Studio:**
-
-1. In Solution Explorer, right-click on the `AspireApp.AppHost` project
-2. Select "Set as Startup Project"
-3. The `AspireApp.AppHost` project should now appear in **bold** in Solution Explorer
-4. Run the application (F5) - this will launch the Aspire dashboard and coordinate all services
-
-**Expected behavior when working correctly:**
-
-- The Aspire dashboard should launch showing all services
-- The web application should be accessible through the dashboard
-- All supporting services (API, Neo4j, Ollama) should start automatically
-
-# If using Squad, considerations to follow...
-
-Follow instructions for [SQUAD repo](https://github.com/bradygaster/squad) 
-
-Update your local SQUAD repo to ensure you have the latest templates and tooling:
-```
-npx github:bradygaster/squad upgrade
-```
-
-Run the copilot cli
-
-```
-copilot
-
-# use /update to update copilot itself - follow instructions as given
-# use /agent to select squad agent
-# use SHIFT + TAB to see available commands for the agent you have selected
-# use /models list to see available agents and select the one you want squad to utilize
-```
+| Problem | Fix |
+|---------|-----|
+| Wrong startup project / 404 errors | Set `AspireApp.AppHost` as startup project |
+| Containers not starting | Start Docker Desktop; re-run AppHost |
+| Ollama offline | Check container health in dashboard; verify `AI-Endpoint` / `AI-Model` in appsettings |
+| Neo4j / Python errors | Check dashboard logs; ensure ports 7474, 7687, 8000 are free |
+| SDK mismatch | `dotnet --info` must show .NET 10.0; install matching SDK from `global.json` |
 
 ## Contributing
 
-Contributions are welcome! Feel free to fork and add new Blazor components, AI integrations, or configuration examples as the project grows.
+Contributions welcome! Fork the repo, create a feature branch, and open a PR. See the [Plan](plan.md) for current priorities.
 
 ## License
 

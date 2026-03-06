@@ -422,3 +422,6 @@ FodyWeavers.xsd
 # Ignore data directories
 /data/
 /database/
+# Squad: ignore generated logs
+.squad/orchestration-log/
+.squad/log/
