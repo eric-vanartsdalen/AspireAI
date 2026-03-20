@@ -107,3 +107,45 @@
 - Status/enum casing must be tested explicitly (e.g., "uploaded" lowercase vs "Uploaded")
 - Missing field names in JSON should fail test (regression detection)
 - Documented in `.squad/skills/` for future contract creation in AspireAI
+
+### 2026-03-20 — P0 QA Audit: Upload Paths + Python Footprint
+- **QA verdict: reject current P0 state.** Added focused dependency-free unittest coverage in `src/AspireApp.PythonServices/tests/test_p0_contract_audit.py`; 2 schema/contract checks pass and 2 expected-failure tests capture the still-broken upload path normalization rules.
+- **Cross-service upload contract is explicit now:** C# writes `files.file_path` as the physical directory and `files.file_name` as the timestamped stored filename (`src/AspireApp.Web/Shared/FileStorageService.cs`, `src/AspireApp.Web/Data/DocumentEntities.cs`). Python `DoclingService` still ignores `document.filename` and prepends `self.uploads_path` to `document.file_path`, so it cannot safely resolve either container-relative or Windows host paths.
+- **Python footprint is only partially minimized.** The unified SQLite schema is consistent (`files` + `document_pages` only), but the FastAPI surface is still bloated at 21 routes across `documents.py`, `processing.py`, and `rag.py`, including health/admin/stats endpoints and legacy compatibility paths Bob already marked for removal.
+- **Key QA paths:** `src/AspireApp.PythonServices/app/services/database_service.py`, `src/AspireApp.PythonServices/app/services/docling_service.py`, `src/AspireApp.PythonServices/tests/test_p0_contract_audit.py`, and `roadmap/Tasks.md`.
+
+### 2026-03-20 — Final P0 QA Re-Review
+- **Runtime path normalization now lives in `DatabaseService.resolve_upload_path()`.** `processing.py` resolves the physical file before calling either `docling_service.py` or `docling_service_fallback.py`, and manual smoke validation resolved both container-style directories and Windows-style `...\data\uploads` values to the same mounted file.
+- **The Python footprint is materially smaller.** The live schema remains `files` + `document_pages`, and the current FastAPI surface is 17 total endpoints (15 routed lifecycle endpoints plus `/` and `/health`), which matches `docs/DATABASE_MANAGEMENT.md`.
+- **The contract documentation is not yet coherent.** `docs/CROSS_SERVICE_CONTRACT.md` still claims Python ignores `file_path` and still documents `/documents/status/{status}`, while the code and `docs/DATABASE_MANAGEMENT.md` use `file_path` + `file_name` resolution and no longer expose that route.
+- **QA validation command for this area:** `python -m unittest discover -s src\AspireApp.PythonServices\tests -p test_p0_contract_audit.py -v`. Current result is 2 passing schema checks plus 2 `expectedFailure` upload-path tests, so the fix is present but the regression coverage is not yet upgraded to a passing gate.
+
+### 2026-03-20 — Post-Cleanup P0 QA Gate
+- **Upload Path Normalization is now test-green.** `python -m unittest discover -s src\AspireApp.PythonServices\tests -p test_p0_contract_audit.py -v` passed 4/4 tests, including both path-resolution cases that cover container-style directories and Windows host-path remapping.
+- **Processing now consumes the resolved physical path.** `processing.py` calls `DatabaseService.resolve_upload_path()` before handing work to both `docling_service.py` and `docling_service_fallback.py`, so the runtime contract is explicit and exercised.
+- **Python Footprint Minimization is still not cleanly closed.** The live route surface is down to 17 endpoints and `docs/DATABASE_MANAGEMENT.md` matches that retained subset, but `DatabaseService` still carries multiple `Legacy compatibility` methods plus `get_file_document_sync_status()` / `force_sync_files_and_documents()`, and support artifacts like `README.md`, `fix_database.py`, `diagnose_database.py`, and `scripts/fix_schema.py` still reference `documents` / `processed_documents`.
+- **Cross-service docs are closer but not exact.** `docs/CROSS_SERVICE_CONTRACT.md` is functionally aligned, yet it still uses placeholder/query forms (`{id}`, `{page}`, `/rag/search-documents?query=&limit=`) that do not match the literal live route signatures extracted from FastAPI code.
+
+### 2026-03-20 — P0 Python Footprint Approval
+- **QA verdict: approve Python Footprint Minimization.** The live runtime surface in `src/AspireApp.PythonServices/app/services/database_service.py`, `src/AspireApp.PythonServices/app/routers/documents.py`, and `src/AspireApp.PythonServices/app/routers/processing.py` now reads and writes the canonical `files` / `document_pages` contract directly.
+- **Legacy contract shims are no longer the active surface.** `src/AspireApp.PythonServices/tests/test_p0_contract_audit.py` asserts deprecated sync helpers are absent, and the current maintainer references (`src/AspireApp.PythonServices/README.md`, `docs/DATABASE_MANAGEMENT.md`, `docs/CROSS_SERVICE_CONTRACT.md`) describe `documents` / `processed_documents` as retired historical tables only.
+- **Current validation gate for this area:** `test_p0_contract_audit.py` and `test_database_schema.py` both pass against a temp canonical database; support helpers (`migrate_database.py`, `diagnose_database.py`, `fix_database.py`, `scripts/fix_schema.py`, `scripts/test_concurrent_access.py`) all target the same footprint.
+- **Reusable QA pattern:** when helper scripts only fail on `pydantic.BaseModel` imports, a temporary `PYTHONPATH` stub is enough to validate them without changing the workstation Python install.
+
+### 2026-03-20 — P0 Decision Merge Complete
+
+**Status:** All P0 work merged into shared decisions.md and approved by squad.
+
+**Work Summary Across Squad:**
+- **Buster (this agent):** QA gates (3 phases). Initial rejection for incomplete test gate. Post-Bob revision approval for path normalization. Post-Jeff approval for footprint minimization.
+- **Jarvis:** Implemented upload path fix + endpoint/method pruning.
+- **Bob:** Post-QA revision work. Converted audit tests from `expectedFailure` to live regression. Aligned CROSS_SERVICE_CONTRACT.md.
+- **Jeff:** Finished Python footprint cleanup by removing sync shims and updating canonical contract methods.
+
+**Inbox → Decisions.md:** 6 files merged. Buster's three QA gate decisions now part of permanent squad record.
+
+**Orchestration Log Created:** Scribe created one per agent documenting spawn phases and context for successors.
+
+**Session Log Created:** Scribe created brief summary of P0 completion status.
+
+**Next Phase:** P1 items ready. Validation gates remain live as regression coverage. Buster to maintain gate discipline going forward.

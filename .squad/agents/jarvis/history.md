@@ -189,3 +189,42 @@
 
 **Impact:** Unblocks all 17 router endpoints in `documents.py` and `processing.py`.
 
+### 2026-03-20 — Upload Path Normalization + Python Footprint Trim
+
+**Completed:**
+- Added `DatabaseService.resolve_upload_path()` so Python now resolves a physical upload path from database `file_path` + `file_name`.
+- Updated both docling implementations to consume the resolved full path instead of assuming `document.file_path` is already the file.
+- Trimmed the Python API surface by removing status-filter, schema-sync, force-sync, concurrent-access, and performance endpoints; also removed `processed-documents`.
+- Replaced the database contract doc with an accurate `files` / `document_pages` + retained-endpoints reference in `docs/DATABASE_MANAGEMENT.md`.
+
+**Key decisions:**
+- Treat `file_path` as a directory contract, not a final file path.
+- Add runtime guardrails that remap stored Windows host paths under the shared `data` root to the active Python runtime data root.
+- Keep `GET /documents/health/database` and `GET /processing/service-info` because they still support monitoring and processor introspection without reintroducing the removed admin surface.
+
+**Validation:**
+- `python -m compileall app`
+- stdlib-only path-resolution check using a stubbed `pydantic` module plus a temporary SQLite file and real `data\\` fixture path
+
+**Key file paths:**
+- Path resolver: `src/AspireApp.PythonServices/app/services/database_service.py`
+- Processing orchestration: `src/AspireApp.PythonServices/app/routers/processing.py`
+- Docling readers: `src/AspireApp.PythonServices/app/services/docling_service.py`, `src/AspireApp.PythonServices/app/services/docling_service_fallback.py`
+- Contract doc: `docs/DATABASE_MANAGEMENT.md`
+
+### 2026-03-20 — P0 Decision Merge Complete
+
+**Status:** All P0 work merged into shared decisions.md and approved by squad.
+
+**Work Summary Across Squad:**
+- **Jarvis (this agent):** Implemented upload path fix + endpoint/method pruning. Removed 7 endpoints, 5 dead methods.
+- **Bob:** Post-QA revision work. Converted audit tests from `expectedFailure` to live regression. Aligned CROSS_SERVICE_CONTRACT.md.
+- **Buster:** QA gates (3 phases). Initial rejection, then approvals post-Bob and post-Jeff.
+- **Jeff:** Final Python footprint cleanup. Removed sync shims, updated canonical contract methods.
+
+**Inbox → Decisions.md:** 6 files merged. Jarvis's decisions now part of permanent squad record.
+
+**Orchestration Log Created:** `20260320T103216Z-jarvis.md` documenting spawn phases and context for successors.
+
+**Next Phase:** Jeff owns canonical Python contract surface maintenance. Validation gates remain live.
+

@@ -182,3 +182,46 @@
 - Contract doc: `docs/CROSS_SERVICE_CONTRACT.md`
 - C# upload controller: `src/AspireApp.Web/Controllers/FileUploadController.cs`
 - C# entities: `src/AspireApp.Web/Data/DocumentEntities.cs`
+
+### 2026-02-28 — Upload Path Audit Converted to Passing Regression Gate
+
+**Scope:** Two reviewer issues — expectedFailure tests and stale contract doc.
+
+**What Changed:**
+- Removed `@unittest.expectedFailure` from both `UploadPathNormalizationAuditTests`
+- Tests now exercise the live two-arg contract: `DatabaseService.resolve_upload_path()` → `DoclingService.process_document(doc, resolved_path)`
+- Extracted shared `_run_with_resolved_path` helper to DRY test setup/teardown
+- Updated `docs/CROSS_SERVICE_CONTRACT.md`:
+  - Path resolution section documents the multi-root `resolve_upload_path()` search algorithm
+  - Endpoint table matches live routers (added `/documents/health/database`, `/processing/status/{id}`; removed phantom `/documents/status/{status}`)
+  - Section renamed from "Retained" to "Live" to reflect actual state
+
+**Architecture Pattern Confirmed:**
+- Path normalization lives in `DatabaseService.resolve_upload_path()`, not in DoclingService
+- DoclingService receives a pre-resolved `Path` — clean separation of concerns
+- Regression tests validate the integration boundary between the two services
+
+**Validation:** All 4 contract audit tests pass, .NET build clean (0 warnings).
+
+**Key Files:**
+- Test file: `src/AspireApp.PythonServices/tests/test_p0_contract_audit.py`
+- Contract doc: `docs/CROSS_SERVICE_CONTRACT.md`
+- Path resolver: `src/AspireApp.PythonServices/app/services/database_service.py:370`
+
+### 2026-03-20 — P0 Decision Merge: Upload Path Normalization & Footprint Minimization Approved
+
+**Scope:** Final squad coordination session — all P0 work approved and merged into shared decision log.
+
+**Work Summary Across Squad:**
+1. **Jarvis:** Implemented upload path fix + endpoint/method pruning. Removed 7 endpoints, 5 dead methods. FastAPI surface trimmed.
+2. **Buster:** QA gates (3 phases). Initial rejection for incomplete test gate. Post-Bob revision approval for path normalization. Post-Jeff approval for footprint minimization.
+3. **Jeff:** Finished Python footprint cleanup by removing sync shims and updating canonical contract methods.
+4. **Bob (revision):** Converted upload-path audit from `expectedFailure` to passing regression gate. Aligned CROSS_SERVICE_CONTRACT.md with live contract.
+
+**Inbox → Decisions.md:** 6 files merged and deduplicated. Decisions form coherent audit trail from initial blocker through implementation to approval.
+
+**Orchestration Logs Created:** One per agent documenting spawn phases, context for successors, related decisions.
+
+**Session Log Created:** Brief summary of P0 completion, blocked issues resolved, decisions merged, next phase assignments.
+
+**Next Phase:** Jeff to maintain canonical Python contract surface methods and docs. Validation gates remain live as regression coverage.
