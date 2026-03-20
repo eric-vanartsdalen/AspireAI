@@ -73,16 +73,22 @@ C# runs on the host machine (via `AddProject<>`). Python runs in a Docker contai
 
 ### The Rule
 
-**Python ignores `file_path` from the database.** Physical file location is:
+**Python never trusts `file_path` literally.** The processing router calls `DatabaseService.resolve_upload_path(document)` which:
 
-```
-{DATA_PATH environment variable, default /app/data} / {file_name column}
-```
+1. Extracts `file_path` (directory) and `filename` (timestamped name) from the document.
+2. Combines them into a candidate path.
+3. Detects Windows-style paths (e.g., `C:\...\data\uploads`) and extracts the relative portion after the `data` directory segment.
+4. Searches runtime data roots (`ASPIRE_DATA_PATH` env var, `/app/data`, repo-relative `data/`, `cwd/data/`) for a matching file.
+5. Returns the first candidate that exists on disk.
+
+The resolved path is then passed as a second argument to `DoclingService.process_document(document, resolved_file_path)`.
 
 Example:
+- DB `file_path`: `C:\Users\dev\repos\AspireAI\data\uploads`
 - DB `file_name`: `report_20240101_143022_a1b2c3d4.pdf`
-- Container `DATA_PATH`: `/app/data`
-- Physical path: `/app/data/report_20240101_143022_a1b2c3d4.pdf`
+- Container `ASPIRE_DATA_PATH`: `/app/data`
+- Relative extraction: `uploads/report_20240101_143022_a1b2c3d4.pdf`
+- Resolved path: `/app/data/uploads/report_20240101_143022_a1b2c3d4.pdf`
 
 ### Volume Mounts
 
@@ -95,7 +101,7 @@ C# accesses `./data` directly on the host filesystem via its configured data dir
 
 ---
 
-## Python API Surface (Retained)
+## Python API Surface (Live)
 
 ### Health & Info
 | Method | Path | Purpose |
@@ -109,15 +115,16 @@ C# accesses `./data` directly on the host filesystem via its configured data dir
 |--------|------|---------|
 | GET | `/documents/` | List all documents |
 | GET | `/documents/unprocessed` | List files awaiting processing |
-| GET | `/documents/status/{status}` | Filter by status value |
 | GET | `/documents/{id}` | Get single document |
 | GET | `/documents/{id}/status` | Get processing status detail |
+| GET | `/documents/health/database` | SQLite health check |
 
 ### Processing
 | Method | Path | Purpose |
 |--------|------|---------|
 | POST | `/processing/process-document/{id}` | Process single document |
 | POST | `/processing/process-all` | Process all unprocessed |
+| GET | `/processing/status/{id}` | Get processing status (mirrors `/documents/{id}/status`) |
 
 ### RAG / Retrieval
 | Method | Path | Purpose |
