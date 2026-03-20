@@ -146,3 +146,39 @@
 - **P0.2 (save_document_page fix):** ✅ Done. Blocks Gate B2 removal.
 - **Status:** Now awaiting P0.1 (router contract rewrite) + P0.3 (status casing fix) for full Gate B1/B2 closure.
 - **Next coordination:** Bob reviews combined P0 fixes for sprint validation before Phase 1.5 (orchestration cleanup).
+
+### 2026-02-27 — Upload Path Normalization & Python Footprint Review
+
+**Scope:** Architecture review of P0 tasks: Upload Path Normalization + Python Footprint Minimization.
+
+**Blocking Issue Found — DoclingService Path Resolution:**
+- `DoclingService.process_document()` line 32 constructs `self.uploads_path / document.file_path`
+- `uploads_path` = `/app/data/uploads` (wrong — no uploads subdirectory in contract)
+- `document.file_path` = host-side directory (e.g., `C:\Users\...\data`) — meaningless in Linux container
+- Correct construction: `Path(os.environ.get("DATA_PATH", "/app/data")) / document.filename`
+- This is the reason Gate B1 is still blocked. One-file fix in `docling_service.py`.
+
+**Python Endpoint Audit — 7 endpoints marked for removal:**
+- 5 from documents router: health/concurrent-access, health/schema-sync, admin/force-sync, stats/performance, health/database (all dead/redundant)
+- 2 from processing router: status/{id} (duplicate), processed-documents (reimplements status filter)
+- 16 endpoints retained covering the full upload→process→retrieve lifecycle
+
+**DatabaseService Audit — 5 methods marked for removal:**
+- `get_statistics()`, `get_active_services()`, `get_file_document_sync_status()`, `force_sync_files_and_documents()`, `save_document()` — all dead code after endpoint pruning
+- Legacy compatibility layer (7 methods) justified and retained — routers depend on Document/ProcessedDocument models
+- Core pipeline (8 methods) + infra (3 methods) all needed
+
+**Contract Documentation Created:**
+- `docs/CROSS_SERVICE_CONTRACT.md` — canonical reference for C#↔Python shared state
+- Documents: shared DB schema, status lifecycle, path resolution rule, volume mounts, retained API surface, Pydantic model shapes
+
+**Decisions Recorded:**
+- `.squad/decisions/inbox/bob-python-footprint-p0.md` — full decision record with execution plan
+
+**Key File Paths:**
+- DoclingService (path bug): `src/AspireApp.PythonServices/app/services/docling_service.py:32`
+- Documents router (endpoint pruning): `src/AspireApp.PythonServices/app/routers/documents.py`
+- Processing router (endpoint pruning): `src/AspireApp.PythonServices/app/routers/processing.py`
+- Contract doc: `docs/CROSS_SERVICE_CONTRACT.md`
+- C# upload controller: `src/AspireApp.Web/Controllers/FileUploadController.cs`
+- C# entities: `src/AspireApp.Web/Data/DocumentEntities.cs`
