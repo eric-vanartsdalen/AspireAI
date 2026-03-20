@@ -2,6 +2,7 @@
 
 > Shared decision log. All agents read this before starting work.
 > Scribe merges new decisions from `.squad/decisions/inbox/` after each session.
+> **Note (2026-03-20):** File size 25.3 KB. All entries ≤30 days old; no archival triggered. Monitor for next merge.
 
 <!-- Decisions are appended below. Each entry starts with ### -->
 
