@@ -1,12 +1,10 @@
 from fastapi import APIRouter, HTTPException, Depends, BackgroundTasks
-from typing import List
 import logging
-from datetime import datetime
 
 from ..services.database_service import DatabaseService
 from ..services.service_factory import get_docling_service
 from ..services.neo4j_service import Neo4jService
-from ..models.models import Document, ProcessedDocument, ProcessingStatus
+from ..models.models import ProcessingStatus
 
 router = APIRouter(prefix="/processing", tags=["processing"])
 logger = logging.getLogger(__name__)
@@ -31,20 +29,20 @@ async def process_document_task(
         logger.info(f"Starting processing for document {document_id}")
         
         # Update status to processing
-        db.update_processing_status(document_id, "processing")
+        db.update_file_status(document_id, "processing")
         
         # Get document
-        document = db.get_document(document_id)
+        document = db.get_document_by_id(document_id)
         if not document:
             raise Exception("Document not found")
+
+        resolved_file_path = db.resolve_upload_path(document)
         
         # Process with docling (full or fallback)
-        processed_doc, pages = docling.process_document(document)
-        
-        # Save processed document to database
-        processed_doc_id = db.save_processed_document(processed_doc)
+        processed_doc, pages = docling.process_document(document, resolved_file_path)
         
         # Create Neo4j nodes
+        page_node_ids = []
         try:
             # Create document node
             doc_node_id = neo4j.create_document_node(document)
@@ -62,6 +60,13 @@ async def process_document_task(
         except Exception as neo4j_error:
             logger.warning(f"Neo4j processing failed for document {document_id}: {neo4j_error}")
             # Continue without Neo4j - the document is still processed
+
+        db.update_file_processing_results(
+            file_id=document_id,
+            docling_path=processed_doc.docling_document_path,
+            total_pages=processed_doc.total_pages,
+            neo4j_node_id=processed_doc.neo4j_node_id,
+        )
         
         # Save individual pages
         for i, page in enumerate(pages):
@@ -70,17 +75,17 @@ async def process_document_task(
                 page_number=page.page_number,
                 content=page.content,
                 metadata=page.metadata,
-                neo4j_node_id=page_node_ids[i] if 'page_node_ids' in locals() else None
+                neo4j_node_id=page_node_ids[i] if i < len(page_node_ids) else None
             )
         
-        # Update status to completed
-        db.update_processing_status(document_id, "completed")
+        # Update status to processed
+        db.update_file_status(document_id, "processed")
         
         logger.info(f"Completed processing for document {document_id} with {len(pages)} pages")
         
     except Exception as e:
         logger.error(f"Error processing document {document_id}: {e}")
-        db.update_processing_status(document_id, f"error: {str(e)}")
+        db.update_file_status(document_id, "error", str(e))
         raise
 
 
@@ -94,12 +99,12 @@ async def process_document(
     """Start processing a specific document"""
     try:
         # Check if document exists
-        document = db.get_document(document_id)
+        document = db.get_document_by_id(document_id)
         if not document:
             raise HTTPException(status_code=404, detail="Document not found")
         
         # Check if already processed
-        if document.processed:
+        if document.processing_status == "processed":
             raise HTTPException(status_code=400, detail="Document already processed")
         
         # Get the appropriate docling service
@@ -131,7 +136,7 @@ async def process_all_documents(
 ):
     """Start processing all unprocessed documents"""
     try:
-        unprocessed_docs = db.get_unprocessed_documents()
+        unprocessed_docs = db.list_unprocessed_documents()
         
         if not unprocessed_docs:
             return {"message": "No unprocessed documents found"}
@@ -166,48 +171,15 @@ async def get_processing_status(
 ):
     """Get processing status of a specific document"""
     try:
-        document = db.get_document(document_id)
-        if not document:
+        status = db.get_processing_status(document_id)
+        if not status:
             raise HTTPException(status_code=404, detail="Document not found")
-        
-        processed_doc = db.get_processed_document(document_id)
-        
-        status = ProcessingStatus(
-            document_id=document_id,
-            status=document.processing_status,
-            total_pages=processed_doc.total_pages if processed_doc else None,
-            started_at=document.upload_date,
-            completed_at=processed_doc.processing_date if processed_doc else None
-        )
-        
         return status
         
     except HTTPException:
         raise
     except Exception as e:
         logger.error(f"Error getting processing status for document {document_id}: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
-
-
-@router.get("/processed-documents")
-async def list_processed_documents(db: DatabaseService = Depends(get_database_service)):
-    """Get all processed documents"""
-    try:
-        all_docs = db.get_all_documents()
-        processed_docs = [doc for doc in all_docs if doc.processed]
-        
-        result = []
-        for doc in processed_docs:
-            processed_doc = db.get_processed_document(doc.id)
-            result.append({
-                "document": doc,
-                "processed_info": processed_doc
-            })
-        
-        return result
-        
-    except Exception as e:
-        logger.error(f"Error listing processed documents: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 

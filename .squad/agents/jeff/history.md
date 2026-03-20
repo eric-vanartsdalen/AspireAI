@@ -158,3 +158,38 @@
 
 **Result:** FileUploadController now writes lowercase `"uploaded"` status, matching Python's file discovery queries (`WHERE status = 'uploaded'`) and other status values (processing, processed, error). File discovery pipeline unblocked. P0 Item 4 closed.
 
+### 2026-03-20 — Python Footprint Minimization Follow-Through
+
+**Status:** Complete (Jeff revision)
+
+**Key paths:**
+- `src/AspireApp.PythonServices/app/services/database_service.py` — removed legacy sync/document wrappers, added canonical `files`-based projections and status lookup
+- `src/AspireApp.PythonServices/app/routers/documents.py` — document endpoints now project directly from `files`
+- `src/AspireApp.PythonServices/app/routers/processing.py` — processing endpoints now use canonical file/status methods
+- `src/AspireApp.PythonServices/tests/test_p0_contract_audit.py` — regression gate now asserts the canonical surface and absence of removed sync shims
+- `src/AspireApp.PythonServices/README.md`, `docs/CROSS_SERVICE_CONTRACT.md`, `docs/MIGRATION_GUIDE.md` — docs updated to describe only the live `files` + `document_pages` footprint
+- `migrate_database.py`, `test_database_schema.py`, `src/AspireApp.PythonServices/diagnose_database.py`, `src/AspireApp.PythonServices/fix_database.py`, `src/AspireApp.PythonServices/scripts/fix_schema.py`, `src/AspireApp.PythonServices/scripts/test_concurrent_access.py` — support helpers rewritten around the canonical schema
+
+**Patterns learned:**
+- Keep the SQLite source of truth in `files`; if the API still wants `Document`/`ProcessingStatus`, project those models from `files` rather than maintaining bridge/sync methods.
+- Status values in the Python surface should stay canonical (`uploaded`, `processing`, `processed`, `error`) even when exposed through legacy-shaped response models.
+- Stdlib validation is enough to guard this footprint: `python src/AspireApp.PythonServices/tests/test_p0_contract_audit.py` plus `python test_database_schema.py` caught the contract cleanup without needing pytest installed.
+
+### 2026-03-20 — P0 Decision Merge Complete
+
+**Status:** All P0 work merged into shared decisions.md and approved by squad.
+
+**Work Summary Across Squad:**
+- **Jeff (this agent):** Finished Python footprint cleanup by removing sync shims and updating canonical contract methods. Fixed status casing + FK column alignment in earlier phases.
+- **Jarvis:** Implemented upload path fix + endpoint/method pruning.
+- **Bob:** Post-QA revision work. Converted audit tests from `expectedFailure` to live regression. Aligned CROSS_SERVICE_CONTRACT.md.
+- **Buster:** QA gates (3 phases). Initial rejection, then approvals post-Bob and post-Jeff.
+
+**Inbox → Decisions.md:** 6 files merged. Jeff's final footprint decision now part of permanent squad record.
+
+**Orchestration Log Created:** Scribe created one per agent documenting spawn phases and context for successors.
+
+**Session Log Created:** Scribe created brief summary of P0 completion status.
+
+**Next Phase:** Continue with P1 items (version pinning, Neo4j batching, etc.) or new features. Jeff to maintain canonical Python contract surface methods and docs going forward.
+

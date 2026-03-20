@@ -1,127 +1,151 @@
 #!/usr/bin/env python3
 """
-Quick test script to verify that the .NET database creates the expected tables for the Python service
+Quick database verification script for the canonical Python footprint.
 """
 
-import sqlite3
-import sys
 import os
-from pathlib import Path
+import sqlite3
 
-def test_database_schema(db_path="../database/data-resources.db"):
-    """Test if the database has the expected schema for Python service compatibility"""
-    
+
+FILES_COLUMNS = {
+    "id",
+    "file_name",
+    "original_file_name",
+    "file_path",
+    "file_hash",
+    "file_size",
+    "mime_type",
+    "uploaded_at",
+    "status",
+    "processing_started_at",
+    "processing_completed_at",
+    "processing_error",
+    "docling_document_path",
+    "total_pages",
+    "neo4j_document_node_id",
+    "source_type",
+    "source_url",
+}
+
+DOCUMENT_PAGES_COLUMNS = {
+    "id",
+    "file_id",
+    "page_number",
+    "content",
+    "page_metadata",
+    "neo4j_page_node_id",
+}
+
+
+def _get_table_columns(cursor, table_name: str) -> set[str]:
+    cursor.execute(f"PRAGMA table_info({table_name})")
+    return {row[1] for row in cursor.fetchall()}
+
+
+def test_database_schema(db_path: str = "database/data-resources.db") -> bool:
+    """Verify that the database matches the canonical `files` + `document_pages` contract."""
     if not os.path.exists(db_path):
-        print(f"? Database file not found: {db_path}")
+        print(f"❌ Database file not found: {db_path}")
         return False
-    
+
     try:
         with sqlite3.connect(db_path) as conn:
             cursor = conn.cursor()
-            
-            # Get all tables
             cursor.execute("SELECT name FROM sqlite_master WHERE type='table'")
-            tables = [row[0] for row in cursor.fetchall()]
-            
-            print(f"?? Found tables in database: {tables}")
-            
-            # Expected tables for Python service
-            expected_tables = ['documents', 'processed_documents', 'document_pages']
-            existing_tables = ['Files']  # Original .NET table
-            
-            # Check for expected tables
-            missing_tables = [table for table in expected_tables if table not in tables]
-            
+            tables = {row[0] for row in cursor.fetchall()}
+
+            print(f"📋 Found tables in database: {sorted(tables)}")
+
+            required_tables = {"files", "document_pages"}
+            missing_tables = sorted(required_tables - tables)
             if missing_tables:
-                print(f"? Missing required tables: {missing_tables}")
+                print(f"❌ Missing required tables: {missing_tables}")
                 return False
-            
-            print("? All required tables found!")
-            
-            # Check table schemas
-            for table in expected_tables:
-                cursor.execute(f"PRAGMA table_info({table})")
-                columns = cursor.fetchall()
-                print(f"\n?? Table '{table}' schema:")
-                for col in columns:
-                    print(f"  - {col[1]} ({col[2]}) {'NOT NULL' if col[3] else ''} {'PRIMARY KEY' if col[5] else ''}")
-            
-            # Check data counts
-            print(f"\n?? Data counts:")
-            for table in tables:
-                try:
-                    cursor.execute(f"SELECT COUNT(*) FROM {table}")
-                    count = cursor.fetchone()[0]
-                    print(f"  - {table}: {count} records")
-                except Exception as e:
-                    print(f"  - {table}: Error counting records ({e})")
-            
-            # Test basic operations
-            print(f"\n?? Testing basic operations...")
-            
-            # Test Documents table operations
-            try:
-                cursor.execute("""
-                    INSERT INTO documents 
-                    (filename, original_filename, file_path, file_size, mime_type) 
-                    VALUES (?, ?, ?, ?, ?)
-                """, ("test.pdf", "test.pdf", "test.pdf", 1024, "application/pdf"))
-                
-                cursor.execute("SELECT id FROM documents WHERE filename = ?", ("test.pdf",))
-                doc_id = cursor.fetchone()[0]
-                
-                print(f"  ? Documents table insert/select: Document ID {doc_id}")
-                
-                # Clean up test data
-                cursor.execute("DELETE FROM documents WHERE filename = ?", ("test.pdf",))
-                
-            except Exception as e:
-                print(f"  ? Documents table operation failed: {e}")
+
+            legacy_tables = sorted({"documents", "processed_documents"} & tables)
+            if legacy_tables:
+                print(f"⚠️ Legacy tables still present (not used by Python): {legacy_tables}")
+
+            files_columns = _get_table_columns(cursor, "files")
+            page_columns = _get_table_columns(cursor, "document_pages")
+
+            if not FILES_COLUMNS.issubset(files_columns):
+                print(f"❌ Files table is missing columns: {sorted(FILES_COLUMNS - files_columns)}")
                 return False
-            
-            print(f"\n?? Database schema verification successful!")
-            print(f"?? The Python service should now be able to access the database properly.")
-            
+
+            if not DOCUMENT_PAGES_COLUMNS.issubset(page_columns):
+                print(
+                    f"❌ document_pages table is missing columns: "
+                    f"{sorted(DOCUMENT_PAGES_COLUMNS - page_columns)}"
+                )
+                return False
+
+            cursor.execute(
+                """
+                INSERT INTO files (
+                    file_name,
+                    original_file_name,
+                    file_path,
+                    file_size,
+                    mime_type,
+                    status,
+                    source_type
+                )
+                VALUES (?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    "test.pdf",
+                    "test.pdf",
+                    "uploads",
+                    1024,
+                    "application/pdf",
+                    "uploaded",
+                    "upload",
+                ),
+            )
+            file_id = cursor.lastrowid
+            cursor.execute("SELECT file_name, status FROM files WHERE id = ?", (file_id,))
+            inserted = cursor.fetchone()
+            cursor.execute("DELETE FROM files WHERE id = ?", (file_id,))
+            conn.commit()
+
+            print(f"✅ Insert/select/delete succeeded for canonical files row: {inserted}")
+            print("✅ Database schema verification successful")
+            print("ℹ️ Supported Python footprint: files + document_pages")
             return True
-            
+
     except Exception as e:
-        print(f"? Database test failed: {e}")
+        print(f"❌ Database test failed: {e}")
         return False
 
-def main():
-    """Main test function"""
-    print("?? Testing .NET Database Schema for Python Service Compatibility")
+
+def main() -> None:
+    print("🧪 Testing database schema for AspireAI Python service")
     print("=" * 70)
-    
-    # Test the database
+
     db_paths = [
+        "database/data-resources.db",
         "../database/data-resources.db",
-        "database/data-resources.db", 
-        "src/AspireApp.Web/data-resources.db"
+        "src/AspireApp.Web/data-resources.db",
     ]
-    
+
     for db_path in db_paths:
         if os.path.exists(db_path):
-            print(f"?? Found database at: {db_path}")
-            success = test_database_schema(db_path)
-            
-            if success:
-                print(f"\n? Database test passed! Python service should work with this database.")
-                print(f"\n?? Next steps:")
-                print(f"   1. Start your Aspire application")
-                print(f"   2. The Python service should no longer get 'disk I/O error'")
-                print(f"   3. Test the /documents/ endpoint")
-                print(f"   4. Upload files through the Blazor interface")
+            print(f"📍 Found database at: {db_path}")
+            if test_database_schema(db_path):
+                print("\n✅ Database test passed")
+                print("Next steps:")
+                print("  1. Start Aspire if it is not already running")
+                print("  2. Verify /documents/ and /processing/status/{id}")
+                print("  3. Upload a file through the Blazor UI")
                 return
-            else:
-                print(f"\n? Database test failed for {db_path}")
+
+            print(f"\n❌ Database test failed for {db_path}")
         else:
-            print(f"?? Database not found at: {db_path}")
-    
-    print(f"\n?? If no database was found:")
-    print(f"   1. Start your Aspire application first")
-    print(f"   2. This will create the database with the correct schema")
-    print(f"   3. Then run this test again")
+            print(f"ℹ️ Database not found at: {db_path}")
+
+    print("\nℹ️ No usable database found. Start the app once, then rerun this check.")
+
 
 if __name__ == "__main__":
     main()

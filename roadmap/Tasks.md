@@ -4,8 +4,8 @@ Working task breakdown for the [Plan](../plan.md). Tracks what's been accomplish
 
 Note: This will be a living document.
 
-**Last Updated:** 2026-02-27
-**Active Branch:** `task/documents-cleanup`
+**Last Updated:** 2026-03-20
+**Active Branch:** `task/p0-python-tasks`
 
 ---
 
@@ -29,24 +29,26 @@ Note: This will be a living document.
 - [x] File upload UI component with SQLite metadata persistence
 - [x] Timestamped file storage with `original_file_name` / `file_name` distinction
 
+### Upload Path Normalization (P0) ✅
+
+- [x] Resolve full physical file path as `file_path` (directory) + `file_name` (stored timestamped filename) in Python
+- [x] Add guardrails for Windows-style DB paths → container runtime paths
+- [x] Python resolves physical upload paths correctly; Docling receives resolved full path
+- [x] Validation cleared with Python contract audit (4/4 green)
+
+### Python Footprint Minimization (P0) ✅
+
+- [x] Remove non-essential SQLite usage patterns and legacy schema dependencies
+- [x] Minimize API endpoints to required upload → process → retrieve lifecycle
+- [x] Document the retained endpoint/database contract surface
+- [x] Live Python runtime now uses canonical `files` / `document_pages` contract
+- [x] Non-essential Python admin/perf/schema-sync surface trimmed
+- [x] Maintainer-facing docs/scripts updated; retired `documents` / `processed_documents` semantics removed
+- [x] Schema verification against canonical temp DB and compile checks passed
+
 ---
 
 ## Active Tasks
-
-### Upload Path Normalization (P0)
-
-- [ ] Resolve full physical file path as `file_path` (directory) + `file_name` (stored timestamped filename) in Python
-- [ ] Add guardrails for Windows-style DB paths ? container runtime paths
-
-**Files:**
-- `src/AspireApp.PythonServices/app/services/database_service.py` — add/verify helper to resolve physical path from `file_path` + `file_name`
-- `src/AspireApp.PythonServices/app/services/docling_service.py` — confirm docling input uses resolved full path
-
-### Python Footprint Minimization (P0)
-
-- [ ] Remove non-essential SQLite usage patterns and legacy schema dependencies
-- [ ] Minimize API endpoints to required upload ? process ? retrieve lifecycle
-- [ ] Document the retained endpoint/database contract surface
 
 ### Processing Pipeline Stabilization (P1)
 
@@ -153,13 +155,13 @@ Note: This will be a living document.
 
 | Gate | Criteria | Status |
 |------|----------|--------|
-| A | Upload record has valid path + status; file exists on disk | ? |
-| E | Volume-mounted files visible to Python container | ? |
-| B1 | Processing accepts current upload-row shape (`file_path` dir + timestamped `file_name`) | ? |
-| B2 | Processing selection handles `Uploaded` status values without missing records | ? |
+| A | Upload record has valid path + status; file exists on disk | ✅ |
+| E | Volume-mounted files visible to Python container | ✅ |
+| B1 | Processing accepts current upload-row shape (`file_path` dir + timestamped `file_name`) | ✅ |
+| B2 | Processing selection handles `Uploaded` status values without missing records | ✅ |
 | B | Processing writes `document_pages` rows successfully | ? |
 | F | Docling output ingested into LightRAG and queryable | ? |
-| G | Python SQLite/API footprint reduced and documented | ? |
+| G | Python SQLite/API footprint reduced and documented | ✅ |
 | C | RAG search returns references from processed content | ? |
 | D | Chat displays citation references from retrieval | ? |
 

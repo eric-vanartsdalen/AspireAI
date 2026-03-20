@@ -5,99 +5,96 @@
 - **Stack:** C# (.NET 9), Blazor, Minimal API, Python (FastAPI), Neo4j, Ollama, Docker, Aspire
 - **Created:** 2026-02-21T23:32:00Z
 
+## Core Context
+
+**Initial Assessment (2026-02-21 to 2026-02-22):**
+- Codebase has **5 critical blockers** preventing processing pipeline: Python router contract mismatches, status casing bug, FK column mismatch, legacy entities, zero tests
+- **AppHost orchestration is clean** (6 services, proper WaitFor, health checks)
+- **Canonical schema exists** (`files` + `document_pages` shared via SQLite)
+- Cross-agent findings: Jeff (config/health checks), Jarvis (signature mismatches), Buster (test infrastructure)
+- Stabilization plan: 4 sprints, ~8 days to full unblock of Gates B1/B2
+- Team coordination: Jarvis (Python contracts), Jeff (Web/orchestration), Buster (tests), Bob (architecture decisions)
+
+**Key File Paths:**
+- Orchestration: `src/AspireApp.AppHost/AppHost.cs`
+- C# entities: `src/AspireApp.Web/Data/DocumentEntities.cs`
+- C# upload: `src/AspireApp.Web/Controllers/FileUploadController.cs`
+- Python services: `src/AspireApp.PythonServices/app/services/database_service.py`, `/routers/`
+
+**Squad Orchestration Complete (2026-02-22):**
+- All four agents completed independent reviews; findings merged into shared decisions.md
+- Execution plan: Sprint 1 (Gate B1/B2 unblock), Sprint 1.5 (orchestration), Sprint 2 (tests), Sprint 3 (observability)
+- Tracked in decisions.md
+- Consolidated copilot-instructions.md with team personas + operational context (167 lines)
+
+---
+
 ## Learnings
 
 <!-- Append new learnings below. Each entry is something lasting about the project. -->
 
-### 2026-02-21 — Comprehensive Review & Stabilization Plan
+### 2026-02-27 — Jarvis Completes P0.2 (save_document_page Fix)
 
-**Scope:** Full codebase assessment + squad coordination plan for Phase 3 completion
+**Status:** ✅ COMPLETE  
+**Commit:** `e9d90ea` on `feature/doc-upload`
 
-**Key Findings:**
-- **5 critical blockers** prevent processing pipeline from working (all 1-line to 1-day fixes)
-  - Python routers call ~10 methods that don't exist on DatabaseService
-  - Status casing mismatch prevents file discovery (`"Uploaded"` vs `"uploaded"`)
-  - Method signature misalignment on `save_document_page()`
-  - FK column name conflict on `document_pages` table
-  - Zero automated tests block safe refactoring
-- **9 supporting fixes** for orchestration cleanup and observability
-- **Execution plan:** 4 sprints spanning ~8 days to full stabilization
-- **Testing strategy:** Phased (Phase 1 foundation → Phase 4 edge cases) coordinated with Buster
-- **Decision record:** Document in `.squad/decisions/inbox/bob-plan-review.md`
-- **Plan:** Complete PLAN.md updated with architecture fixes + testing plan sections
+**What Was Fixed:**
+- `processing.py` lines 67–75: Invocation mismatch on `save_document_page()` corrected
+- Router now passes individual keyword args instead of DocumentPage object
+- FK value corrected from `processed_doc_id` to `document_id` (correct target is files.id, not processed documents)
 
-**Architecture Assessment:**
-- Strengths: Clean AppHost orchestration, canonical schema, proper DI, production-ready Blazor UI
-- Gaps: Entirely data contract alignment issues in Python; zero test infrastructure
-- No architectural redesign needed; unblock gates B1/B2, stabilize orchestration, bootstrap tests
-- Phase 3 can complete on schedule with focused 2-day sprint on contract fixes
+**Impact on Bob's Plan:**
+- **P0.2 (save_document_page fix):** ✅ Done. Blocks Gate B2 removal.
+- **Status:** Now awaiting P0.1 (router contract rewrite) + P0.3 (status casing fix) for full Gate B1/B2 closure.
+- **Next coordination:** Bob reviews combined P0 fixes for sprint validation before Phase 1.5 (orchestration cleanup).
 
-**Key Decisions Made:**
-1. Python contracts: Rewrite routers to existing methods (Option A, cleaner)
-2. Status casing: Normalize to lowercase in Web; Python queries defensively
-3. ApiService: Remove entirely (zero business value, 500ms latency)
-4. LightRAG: Remove from startup WaitFor chain until integration ready
-5. Testing: xUnit + pytest phased from smoke → integration → edge cases
-6. Logging: Full ILogger<T> replacement (impact files first)
+### 2026-02-27 — Upload Path Normalization & Python Footprint Review
 
-**Coordination:**
-- Squad owns code fixes (Sprints 1-1.5): Jarvis (Python contracts), Jeff (Web/orchestration)
-- Buster owns test infrastructure bootstrap (Sprint 2, coordinated)
-- Jeff handles observability cleanup (Sprint 2.5, parallel)
-- All tracked in `.squad/decisions/inbox/bob-plan-review.md`
+**Scope:** Architecture review of P0 tasks: Upload Path Normalization + Python Footprint Minimization.
 
-**Files Modified:**
-- `PLAN.md` — comprehensive action plan (14 items, execution roadmap, success criteria)
-- `.squad/decisions/inbox/bob-plan-review.md` — decision record for squad alignment
+**Blocking Issue Found — DoclingService Path Resolution:**
+- `DoclingService.process_document()` line 32 constructs `self.uploads_path / document.file_path`
+- `uploads_path` = `/app/data/uploads` (wrong — no uploads subdirectory in contract)
+- `document.file_path` = host-side directory (e.g., `C:\Users\...\data`) — meaningless in Linux container
+- Correct construction: `Path(os.environ.get("DATA_PATH", "/app/data")) / document.filename`
+- This is the reason Gate B1 is still blocked. One-file fix in `docling_service.py`.
 
-**User Preference Confirmed:**
-- Eric values stabilization over new features ✅
-- Maintenance-first approach ✅
-- Decisions documented and reasoned ✅
+**Python Endpoint Audit — 7 endpoints marked for removal:**
+- 5 from documents router: health/concurrent-access, health/schema-sync, admin/force-sync, stats/performance, health/database (all dead/redundant)
+- 2 from processing router: status/{id} (duplicate), processed-documents (reimplements status filter)
+- 16 endpoints retained covering the full upload→process→retrieve lifecycle
 
-### 2026-02-21 — Architecture Review
+**DatabaseService Audit — 5 methods marked for removal:**
+- `get_statistics()`, `get_active_services()`, `get_file_document_sync_status()`, `force_sync_files_and_documents()`, `save_document()` — all dead code after endpoint pruning
+- Legacy compatibility layer (7 methods) justified and retained — routers depend on Document/ProcessedDocument models
+- Core pipeline (8 methods) + infra (3 methods) all needed
 
-- **Solution builds clean** on .NET 10 / Aspire SDK 13.1.0 with zero warnings.
-- **AppHost.cs** is the orchestration hub: 6 services (Web, ApiService, Python, Neo4j, Ollama, LightRAG) with proper WaitFor ordering and health checks.
-- **Canonical schema:** `files` + `document_pages` tables in SQLite, shared via bind mount between Web (EF Core) and Python (raw SQL).
-- **Critical gap:** Python routers call DatabaseService methods that don't exist (legacy method names). This breaks the processing pipeline at runtime.
-- **Status casing bug:** FileUploadController writes `"Uploaded"` but Python queries `WHERE status = 'uploaded'` — one-line fix needed.
-- **ApiService is vestigial:** Only contains weather forecast stub. Recommend removing or repurposing.
-- **LightRAG is wired but unconsumed:** Container runs, no code calls its APIs, web blocks on WaitFor(lightrag).
-- **Key file paths:**
-  - Orchestration: `src/AspireApp.AppHost/AppHost.cs`
-  - C# entities: `src/AspireApp.Web/Data/DocumentEntities.cs`
-  - C# storage: `src/AspireApp.Web/Shared/FileStorageService.cs`
-  - C# upload: `src/AspireApp.Web/Controllers/FileUploadController.cs`
-  - Python models: `src/AspireApp.PythonServices/app/models/models.py`
-  - Python DB service: `src/AspireApp.PythonServices/app/services/database_service.py`
-  - Python routers: `src/AspireApp.PythonServices/app/routers/` (documents, processing, rag)
-  - Neo4j Dockerfile: `src/AspireApp.Neo4JService/Dockerfile`
-- **User preferences:** Eric values stabilization over new features. Maintenance-first approach. Canonical decisions documented in roadmap.
-- **Top 5 priorities:** (1) Fix Python router contracts, (2) Fix status casing, (3) Decide ApiService fate, (4) Add LightRAG health check or remove from startup chain, (5) Remove legacy EF entities.
+**Contract Documentation Created:**
+- `docs/CROSS_SERVICE_CONTRACT.md` — canonical reference for C#↔Python shared state
+- Documents: shared DB schema, status lifecycle, path resolution rule, volume mounts, retained API surface, Pydantic model shapes
 
-### 2026-02-21 — Cross-Agent Findings
+**Decisions Recorded:**
+- `.squad/decisions/inbox/bob-python-footprint-p0.md` — full decision record with execution plan
 
-**From Jeff:**
-- LightRAG and Ollama have no health checks, causing webfrontend to block on WaitFor indefinitely
-- Config key mismatch: AI-Chat-Model (AppHost) vs AI-Model (Web services)
-- SemanticKernel version skew (1.71.0 vs 1.68.0-alpha connector) needs alignment
+### 2026-02-28 — Upload Path Audit Converted to Passing Regression Gate
 
-**From Jarvis:**
-- Save_document_page() signature mismatch: router passes DocumentPage object, method expects individual args
-- FK column name conflict: Python creates `file_id`, C# maps to `document_id`
-- Legacy C# entities reference non-existent tables (documents, processed_documents)
-- Requirements.txt has no version pinning
+**Scope:** Two reviewer issues — expectedFailure tests and stale contract doc.
 
-**From Buster:**
-- Zero automated tests; CI is non-functional
-- Console.WriteLine used extensively instead of ILogger
-- Broad catch(Exception) blocks everywhere
-- Cross-service contract tests are highest priority to prevent drift
+**What Changed:**
+- Removed `@unittest.expectedFailure` from both `UploadPathNormalizationAuditTests`
+- Tests now exercise the live two-arg contract: `DatabaseService.resolve_upload_path()` → `DoclingService.process_document(doc, resolved_path)`
+- Extracted shared `_run_with_resolved_path` helper to DRY test setup/teardown
+- Updated `docs/CROSS_SERVICE_CONTRACT.md`:
+  - Path resolution section documents the multi-root `resolve_upload_path()` search algorithm
+  - Endpoint table matches live routers (added `/documents/health/database`, `/processing/status/{id}`; removed phantom `/documents/status/{status}`)
+  - Section renamed from "Retained" to "Live" to reflect actual state
 
-### 2026-02-22 — Squad Orchestration Complete
+**Architecture Pattern Confirmed:**
+- Path normalization lives in `DatabaseService.resolve_upload_path()`, not in DoclingService
+- DoclingService receives a pre-resolved `Path` — clean separation of concerns
+- Regression tests validate the integration boundary between the two services
 
-**Status:** All four agents completed independent reviews; findings merged into shared decisions.md.
+**Validation:** All 4 contract audit tests pass, .NET build clean (0 warnings)
 
 **Key Decisions for Execution:**
 1. Python contracts: Rewrite routers to existing DatabaseService methods (Option A)
@@ -134,15 +131,62 @@
 
 ### 2026-02-27 — Jarvis Completes P0.2 (save_document_page Fix)
 
-**Status:** ✅ COMPLETE  
-**Commit:** `e9d90ea` on `feature/doc-upload`
+**Status:** ✅ COMPLETE | **Commit:** `e9d90ea`
+- `processing.py` invocation mismatch corrected
+- FK value corrected: `processed_doc_id` → `document_id`
 
-**What Was Fixed:**
-- `processing.py` lines 67–75: Invocation mismatch on `save_document_page()` corrected
-- Router now passes individual keyword args instead of DocumentPage object
-- FK value corrected from `processed_doc_id` to `document_id` (correct target is files.id, not processed documents)
+### 2026-02-27 — Upload Path Normalization & Python Footprint Review
 
-**Impact on Bob's Plan:**
-- **P0.2 (save_document_page fix):** ✅ Done. Blocks Gate B2 removal.
-- **Status:** Now awaiting P0.1 (router contract rewrite) + P0.3 (status casing fix) for full Gate B1/B2 closure.
-- **Next coordination:** Bob reviews combined P0 fixes for sprint validation before Phase 1.5 (orchestration cleanup).
+**Blocking Issue Found — DoclingService Path Resolution:**
+- Correct construction: `Path(os.environ.get("DATA_PATH", "/app/data")) / document.filename`
+- 7 endpoints marked for removal (dead/redundant); 16 retained (upload→process→retrieve lifecycle)
+- 5 DatabaseService methods marked for removal; 8 core + 7 legacy retained
+- Contract documentation created: `docs/CROSS_SERVICE_CONTRACT.md` 
+
+### 2026-02-28 — Upload Path Audit Converted to Passing Regression Gate
+
+**What Changed:**
+- Removed `@unittest.expectedFailure` from both `UploadPathNormalizationAuditTests`
+- Tests now exercise the live two-arg contract: `DatabaseService.resolve_upload_path()` → `DoclingService.process_document(doc, resolved_path)`
+- Updated `docs/CROSS_SERVICE_CONTRACT.md` with current route signatures
+- Regression tests validate the integration boundary between the two services
+
+**Key Files:**
+- Test file: `src/AspireApp.PythonServices/tests/test_p0_contract_audit.py`
+- Contract doc: `docs/CROSS_SERVICE_CONTRACT.md`
+- Path resolver: `src/AspireApp.PythonServices/app/services/database_service.py:370`
+
+### 2026-03-20 — P0 Decision Merge: Upload Path Normalization & Footprint Minimization Approved
+
+**Scope:** Final squad coordination session — all P0 work approved and merged into shared decision log.
+
+**Work Summary Across Squad:**
+1. **Jarvis:** Implemented upload path fix + endpoint/method pruning. Removed 7 endpoints, 5 dead methods. FastAPI surface trimmed.
+2. **Buster:** QA gates (3 phases). Initial rejection for incomplete test gate. Post-Bob revision approval for path normalization. Post-Jeff approval for footprint minimization.
+3. **Jeff:** Finished Python footprint cleanup by removing sync shims and updating canonical contract methods.
+4. **Bob (revision):** Converted upload-path audit from `expectedFailure` to passing regression gate. Aligned CROSS_SERVICE_CONTRACT.md with live contract.
+
+**Inbox → Decisions.md:** 6 files merged and deduplicated. Decisions form coherent audit trail from initial blocker through implementation to approval.
+
+**Orchestration Logs Created:** One per agent documenting spawn phases, context for successors, related decisions.
+
+**Session Log Created:** Brief summary of P0 completion, blocked issues resolved, decisions merged, next phase assignments.
+
+**Next Phase:** Jeff to maintain canonical Python contract surface methods and docs. Validation gates remain live as regression coverage.
+
+---
+
+## Cross-Agent Coordination — Scribe Merge (2026-03-20)
+
+**Session:** Roadmap Tasks Update (background spawn)
+
+**Work:** Bob completed:
+- Moved completed P0 items into Completed Work section in `roadmap/Tasks.md`
+- Updated milestone gates table (Gates A, B1, B2, E, G marked ✅ CLEAR)
+- Corrected metadata: Last Updated → 2026-03-20, Active Branch → `task/p0-python-tasks`
+
+**Decisions:** P0 completion decision merged into `.squad/decisions.md`. Upload Path Normalization and Python Footprint Minimization officially approved and archived in roadmap.
+
+**Related:** Orchestration log created at `.squad/orchestration-log/20250303T000000Z-bob.md`. Session log at `.squad/log/20250303T000000Z-roadmap-tasks-update.md`.
+
+**Status:** Ready for P1 Phase (Processing Pipeline Stabilization, Test Infrastructure Bootstrap, Docling → LightRAG Ingestion).

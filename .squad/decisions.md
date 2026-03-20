@@ -2,6 +2,7 @@
 
 > Shared decision log. All agents read this before starting work.
 > Scribe merges new decisions from `.squad/decisions/inbox/` after each session.
+> **Note (2026-03-20):** File size 25.3 KB. All entries ≤30 days old; no archival triggered. Monitor for next merge.
 
 <!-- Decisions are appended below. Each entry starts with ### -->
 
@@ -220,6 +221,85 @@ All dependencies are unpinned (`fastapi`, `uvicorn`, `neo4j`, `docling-core`, et
 fastapi==0.104.1
 uvicorn==0.24.0
 neo4j==5.14.0
+
+## P0: Upload Path Normalization & Python Footprint Minimization — Bob, Jarvis, Jeff, Buster — 2026-03-20
+
+### BLOCKING: Upload Path Normalization
+
+**Problem:** DoclingService path construction used wrong base (`/app/data/uploads` instead of `/app/data`) and wrong field (`file_path` directory instead of `file_name` filename). Result: guaranteed `FileNotFoundError`.
+
+**Decision:** Container-relative path resolution rule: `{DATA_PATH}/{file_name}` where `DATA_PATH=/app/data`. Remove `self.uploads_path` concept entirely.
+
+**Implemented by Jarvis:** Path resolver in `DoclingService.process_document()` now correctly constructs `data_mount / document.filename`. Supports both container-style and Windows-style database values.
+
+**Validation:** `test_p0_contract_audit.py` assertions converted from `expectedFailure` to live regression coverage.
+
+**Impact:** Unblocks Gate B1. Files uploaded via C# now discoverable and processable.
+
+### Python Endpoint Surface Rationalization
+
+**Decision:** Removed 7 dead endpoints:
+- `GET /documents/health/concurrent-access` (no-op pool stats)
+- `GET /documents/health/schema-sync` (always "healthy")
+- `POST /documents/admin/force-sync` (dead endpoint)
+- `GET /documents/stats/performance` (unused dashboard stats)
+- `GET /documents/health/database` (redundant with `/health`)
+- `GET /processing/status/{document_id}` (duplicate of `/documents/{document_id}/status`)
+- `GET /processing/processed-documents` (reimplements `/documents/status/completed`)
+
+**Retained (13 core + health):** Upload/process/retrieve lifecycle endpoints plus search and context retrieval.
+
+**Implemented by Jarvis & Jeff:** Endpoints removed; routers updated to canonical schema.
+
+**Impact:** Smaller attack surface, clearer contract documentation.
+
+### Python DatabaseService Footprint Minimization
+
+**Decision:** Removed 5 dead methods (only used by deleted endpoints):
+- `get_statistics()`, `get_active_services()`, `get_file_document_sync_status()`, `force_sync_files_and_documents()`, `save_document()`
+
+**Retained:** 8 core pipeline methods + 7 legacy compatibility wrappers (justified: router rewrite is P2, not P0).
+
+**Implemented by Jeff:** Sync shims and retired-schema support artifacts removed. Routers now project directly from canonical `files` and `document_pages` tables.
+
+**Impact:** Footprint minimized; compatibility layer maintained for smooth migration.
+
+### Cross-Service Contract Documentation
+
+**Deliverable:** `docs/CROSS_SERVICE_CONTRACT.md` updated with:
+1. Shared DB schema (files, document_pages) — canonical column names, types, constraints
+2. Status lifecycle: `uploaded` → `processing` → `processed` | `error`
+3. Path resolution rule: `file_path` (host) + `file_name` (container)
+4. Volume mounts: host `./data` → `/app/data` in both containers
+5. Retained API surface (16 endpoints)
+6. Ownership: C# owns upload/insert, Python owns processing/status
+
+**Impact:** Single source of truth for contract; reduces cross-service bugs.
+
+### QA Gating
+
+**Buster Review Phases:**
+1. Initial: Rejected due to incomplete test gate + contract misalignment
+2. Post-Bob revision: Approved Upload Path Normalization; footprint remains open
+3. Post-Jeff cleanup: Approved Python Footprint Minimization
+
+**Final Status:** Both P0 items approved; validation gates live; ready for production deployment.
+
+---
+
+## Decision Summary (2026-03-20 Merge)
+
+**Inbox files merged and deleted:**
+- `bob-python-footprint-p0.md` → merged to decisions
+- `jarvis-python-contract-trim.md` → merged to decisions
+- `buster-p0-qa-gate.md` → merged to decisions (context only)
+- `buster-p0-footprint-gate.md` → merged to decisions (archived in log)
+- `buster-p0-python-footprint-approval.md` → merged to decisions
+- `jeff-python-footprint-minimization.md` → merged to decisions
+
+**Deduplication:** No exact duplicates found. Decisions form coherent audit trail from initial blocker → implementation → validation → approval.
+
+**Cross-agent propagation:** Updates appended to Bob, Jarvis, Jeff, Buster history.md files.
 docling-core==1.2.0
 ```
 
@@ -255,6 +335,27 @@ LightRAG is wired in AppHost as separate container with Ollama connection and Ne
 **Decision:** Clarify LightRAG role: Is it replacing the custom Python RAG pipeline or supplementing it? Document decision and either (a) wire Python endpoints to call LightRAG, or (b) remove from AppHost/startup until integration code ready.
 
 **Impact:** Clarifies architecture. Depends on product decision.
+
+---
+
+## P0 Completion & Roadmap Update — Bob (Lead/Architect) — 2026-03-20
+
+**Scope:** Mark P0 completions in roadmap; close out Upload Path Normalization and Python Footprint Minimization
+
+### Roadmap Status: P0 Items Complete
+
+Two P0 efforts have been successfully completed and approved:
+
+1. **Upload Path Normalization (P0)** ✅ — Files uploaded via C# Web UI are now discoverable and processable by Python services
+2. **Python Footprint Minimization (P0)** ✅ — API surface rationalized, dead endpoints removed, DatabaseService methods cleaned up
+
+**Impact:** Clears milestone Gates A, B1, B2, E, G. Enables P1 (Processing Pipeline Stabilization) to proceed without path/schema concerns.
+
+**Decision:** Record P0 completions in `roadmap/Tasks.md`. Move Upload Path Normalization and Python Footprint Minimization items into Completed Work section. Update milestone gates table. Active blockers (Gates B, F, C, D) remain pending downstream P1/P2 work.
+
+**Metadata Update:** Last Updated corrected to 2026-03-20; Active Branch updated to `task/p0-python-tasks` to reflect current working baseline.
+
+---
 
 ---
 
