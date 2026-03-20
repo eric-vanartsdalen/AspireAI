@@ -140,16 +140,17 @@ C# accesses `./data` directly on the host filesystem via its configured data dir
 
 ## Pydantic Models (Python Side)
 
-These are the wire-format models returned by the API. C# consumers should match these shapes.
+These are the wire-format models returned by the live API. C# consumers should match these shapes.
 
 ```
 Document { id, filename, original_filename, file_path, file_size?, mime_type?, upload_date, processed, processing_status }
-ProcessedDocument { id?, document_id, docling_document_path, total_pages, processing_date, processing_metadata?, neo4j_node_id? }
 DocumentPage { id?, file_id, page_number, content, page_metadata?, neo4j_node_id? }
 ProcessingStatus { document_id, status, total_pages?, processed_pages?, error_message?, started_at?, completed_at? }
 SemanticQuery { query, document_ids?, limit=10, similarity_threshold=0.7 }
 PageContent { page_number, content, metadata? }
 ```
+
+`ProcessedDocument` still exists as an internal Python processing result, but it is not a persisted SQLite table and not part of the supported cross-service database footprint.
 
 ---
 

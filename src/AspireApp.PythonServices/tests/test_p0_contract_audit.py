@@ -153,7 +153,7 @@ class DatabaseContractAuditTests(unittest.TestCase):
                     os.environ["ASPIRE_DB_PATH"] = previous_db_path
                 shutil.rmtree(temp_dir, ignore_errors=True)
 
-    def test_legacy_sync_methods_report_unified_schema(self):
+    def test_database_service_exposes_canonical_files_surface(self):
         with _patched_dependencies():
             from app.services.database_service import DatabaseService
 
@@ -164,8 +164,25 @@ class DatabaseContractAuditTests(unittest.TestCase):
                 try:
                     _close_database_pools(DatabaseService)
                     service = DatabaseService()
-                    sync_status = service.get_file_document_sync_status()
-                    sync_result = service.force_sync_files_and_documents()
+                    file_id = service.create_file_record(
+                        file_name="stored-file.pdf",
+                        original_file_name="original.pdf",
+                        file_path=str(Path(temp_dir) / "uploads"),
+                        file_size=4,
+                        mime_type="application/pdf",
+                        status="uploaded",
+                    )
+
+                    document = service.get_document_by_id(file_id)
+                    unprocessed = service.list_unprocessed_documents()
+
+                    service.update_file_status(file_id, "processed")
+                    service.update_file_processing_results(
+                        file_id=file_id,
+                        docling_path="/app/data/processed/documents/1/document.json",
+                        total_pages=3,
+                    )
+                    status = service.get_processing_status(file_id)
                 finally:
                     _close_database_pools(DatabaseService)
                     if previous_db_path is None:
@@ -173,9 +190,18 @@ class DatabaseContractAuditTests(unittest.TestCase):
                     else:
                         os.environ["ASPIRE_DB_PATH"] = previous_db_path
 
-                self.assertEqual("healthy", sync_status["sync_health"])
-                self.assertEqual(sync_status["files_count"], sync_status["documents_count"])
-                self.assertTrue(sync_result["sync_performed"])
+                self.assertFalse(hasattr(service, "get_file_document_sync_status"))
+                self.assertFalse(hasattr(service, "force_sync_files_and_documents"))
+                self.assertFalse(hasattr(service, "save_document"))
+                self.assertFalse(hasattr(service, "update_processing_status"))
+                self.assertFalse(hasattr(service, "get_unprocessed_documents"))
+                self.assertFalse(hasattr(service, "get_processed_document"))
+
+                self.assertEqual(file_id, document.id)
+                self.assertEqual("uploaded", document.processing_status)
+                self.assertEqual(1, len(unprocessed))
+                self.assertEqual("processed", status.status)
+                self.assertEqual(3, status.total_pages)
 
 
 def _close_database_pools(database_service_type) -> None:

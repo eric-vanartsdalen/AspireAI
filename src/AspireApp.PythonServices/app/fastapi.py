@@ -28,11 +28,11 @@ def read_root():
         "status": "Alive",
         "version": "1.0.0",
         "endpoints": [
-            "/docs - API Documentation",
-            "/documents - Document management",
+            "/docs - API documentation",
+            "/documents - Upload inventory and per-document status",
+            "/documents/health/database - SQLite health",
             "/processing - Document processing",
-            "/rag - RAG functionality",
-            "/processing/service-info - Service capabilities"
+            "/rag - Retrieval endpoints"
         ]
     }
 

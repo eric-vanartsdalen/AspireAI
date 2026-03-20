@@ -5,14 +5,14 @@ import time
 import logging
 import stat
 import threading
-from datetime import datetime
+from datetime import UTC, datetime
 from typing import List, Optional, Dict, Any, Union
-from pathlib import Path
+from pathlib import Path, PureWindowsPath
 from contextlib import contextmanager
 import queue
 import weakref
 
-from ..models.models import Document, ProcessedDocument, DocumentPage
+from ..models.models import Document, ProcessingStatus
 
 logger = logging.getLogger(__name__)
 
@@ -129,7 +129,10 @@ class DatabaseService:
         docs_db = Path(env_path) if env_path else Path("/app/docs-database/data-resources.db")
         volume_db = Path("/app/database/data-resources.db")
 
-        if env_path:
+        if db_path:
+            self.db_path = str(Path(db_path))
+            logger.info(f"Using explicit database path: {self.db_path}")
+        elif env_path:
             self.db_path = str(docs_db)
             logger.info(f"Using database path from ASPIRE_DB_PATH: {self.db_path}")
         elif docs_db.exists() or docs_db.parent.exists():
@@ -148,6 +151,7 @@ class DatabaseService:
             self._pool = self._pools[self.db_path]
         
         self._ensure_database_schema()
+        self._runtime_data_roots = self._build_runtime_data_roots()
         
         # Statistics tracking
         self._stats = {
@@ -353,7 +357,7 @@ class DatabaseService:
                            docling_document_path, total_pages, neo4j_document_node_id,
                            source_type, source_url
                     FROM files 
-                    WHERE status = 'uploaded'
+                    WHERE LOWER(status) = 'uploaded'
                     ORDER BY uploaded_at ASC
                 """)
                 rows = cursor.fetchall()
@@ -363,6 +367,249 @@ class DatabaseService:
             logger.error(f"Error fetching unprocessed files: {e}")
             raise
 
+    def create_file_record(
+        self,
+        *,
+        file_name: str,
+        original_file_name: str,
+        file_path: str,
+        file_size: int = 0,
+        mime_type: Optional[str] = None,
+        file_hash: str = "",
+        uploaded_at: Optional[datetime] = None,
+        status: str = "uploaded",
+        source_type: str = "upload",
+        source_url: Optional[str] = None,
+    ) -> int:
+        """Create a file row using the canonical `files` contract."""
+        try:
+            normalized_status = self._normalize_file_status(status)
+            uploaded_at_value = uploaded_at
+            if isinstance(uploaded_at_value, datetime):
+                uploaded_at_value = uploaded_at_value.isoformat()
+            elif uploaded_at_value is None:
+                uploaded_at_value = datetime.now(UTC).isoformat()
+
+            with self._pool.get_connection() as conn:
+                cursor = conn.cursor()
+                cursor.execute(
+                    """
+                    INSERT INTO files (
+                        file_name,
+                        original_file_name,
+                        file_path,
+                        file_hash,
+                        file_size,
+                        mime_type,
+                        uploaded_at,
+                        status,
+                        source_type,
+                        source_url
+                    )
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        file_name,
+                        original_file_name,
+                        file_path,
+                        file_hash,
+                        file_size,
+                        mime_type,
+                        uploaded_at_value,
+                        normalized_status,
+                        source_type,
+                        source_url,
+                    ),
+                )
+                conn.commit()
+                file_id = cursor.lastrowid
+                logger.debug("Created file record %s with status '%s'", file_id, normalized_status)
+                return file_id
+        except Exception as e:
+            logger.error(f"Error creating file record for {file_name}: {e}")
+            raise
+
+    def resolve_upload_path(self, source: Union[Document, Dict[str, Any]]) -> Path:
+        """
+        Resolve the physical file path for an uploaded document.
+
+        The database stores the upload directory in `file_path` and the timestamped
+        filename in `file_name` / `Document.filename`. This helper joins them, then
+        adds container guardrails so Windows host paths such as
+        `C:\\repo\\AspireAI\\data` can be mapped to the runtime mount at `/app/data`.
+        """
+        if isinstance(source, Document):
+            stored_path = source.file_path
+            file_name = source.filename
+        else:
+            stored_path = source.get("file_path")
+            file_name = source.get("file_name")
+
+        if not stored_path:
+            raise ValueError("Cannot resolve upload path because file_path is empty.")
+
+        if not file_name:
+            raise ValueError("Cannot resolve upload path because file_name is empty.")
+
+        safe_file_name = Path(file_name.replace("\\", "/")).name
+        if safe_file_name != file_name:
+            logger.warning(
+                "Stored file_name '%s' contained directory segments; using basename '%s'.",
+                file_name,
+                safe_file_name,
+            )
+
+        candidates = self._build_upload_path_candidates(stored_path, safe_file_name)
+        for candidate in candidates:
+            if candidate.exists() and candidate.is_file():
+                resolved = candidate.resolve()
+                logger.debug(
+                    "Resolved upload path '%s' + '%s' to '%s'.",
+                    stored_path,
+                    safe_file_name,
+                    resolved,
+                )
+                return resolved
+
+        checked_paths = ", ".join(str(candidate) for candidate in candidates)
+        raise FileNotFoundError(
+            f"Unable to resolve uploaded file '{safe_file_name}' from stored path '{stored_path}'. "
+            f"Checked: {checked_paths}"
+        )
+
+    def _build_runtime_data_roots(self) -> List[Path]:
+        """Build the set of data roots that may contain uploaded files."""
+        roots: List[Path] = []
+        env_root = os.environ.get("ASPIRE_DATA_PATH")
+        if env_root:
+            roots.append(Path(env_root))
+
+        roots.extend(
+            [
+                Path("/app/data"),
+                Path(__file__).resolve().parents[4] / "data",
+                Path.cwd() / "data",
+            ]
+        )
+
+        unique_roots: List[Path] = []
+        seen: set[str] = set()
+        for root in roots:
+            normalized = str(root)
+            if normalized not in seen:
+                seen.add(normalized)
+                unique_roots.append(root)
+        return unique_roots
+
+    def _build_upload_path_candidates(self, stored_path: str, file_name: str) -> List[Path]:
+        """Generate candidate physical paths for an uploaded file."""
+        normalized_path = stored_path.strip()
+        raw_candidates = [
+            normalized_path
+            if self._path_includes_filename(normalized_path, file_name)
+            else self._combine_path(normalized_path, file_name)
+        ]
+
+        candidates: List[Path] = []
+        seen: set[str] = set()
+        for raw_candidate in raw_candidates:
+            for candidate in self._expand_runtime_candidates(raw_candidate):
+                candidate_key = str(candidate)
+                if candidate_key not in seen:
+                    seen.add(candidate_key)
+                    candidates.append(candidate)
+
+        for runtime_root in self._runtime_data_roots:
+            fallback_candidate = runtime_root / file_name
+            candidate_key = str(fallback_candidate)
+            if candidate_key not in seen:
+                seen.add(candidate_key)
+                candidates.append(fallback_candidate)
+
+        return candidates
+
+    def _expand_runtime_candidates(self, raw_path: str) -> List[Path]:
+        """Expand a stored path into direct and mount-mapped runtime candidates."""
+        candidates: List[Path] = []
+
+        direct_candidate = self._create_direct_path_candidate(raw_path)
+        if direct_candidate is not None:
+            candidates.append(direct_candidate)
+
+        relative_parts = self._extract_runtime_relative_parts(raw_path)
+        if relative_parts is not None:
+            for runtime_root in self._runtime_data_roots:
+                candidates.append(runtime_root.joinpath(*relative_parts))
+
+        return candidates
+
+    def _create_direct_path_candidate(self, raw_path: str) -> Optional[Path]:
+        """Create a direct `Path` candidate when the stored path matches the runtime OS."""
+        if self._looks_like_windows_path(raw_path) and os.name != "nt":
+            return None
+        return Path(raw_path)
+
+    def _extract_runtime_relative_parts(self, raw_path: str) -> Optional[List[str]]:
+        """
+        Extract the path relative to the shared data root.
+
+        Examples:
+        - `C:\\repo\\AspireAI\\data\\foo.pdf` -> ['foo.pdf']
+        - `C:\\repo\\AspireAI\\data\\uploads\\foo.pdf` -> ['uploads', 'foo.pdf']
+        - `/app/data/foo.pdf` -> ['foo.pdf']
+        - `uploads/foo.pdf` -> ['uploads', 'foo.pdf']
+        """
+        parts = self._split_stored_path(raw_path)
+        if not parts:
+            return None
+
+        lower_parts = [part.lower() for part in parts]
+        if "data" in lower_parts:
+            data_index = max(index for index, part in enumerate(lower_parts) if part == "data")
+            return parts[data_index + 1 :]
+
+        if lower_parts[0] in {"uploads", "processed"}:
+            return parts
+
+        if not self._looks_like_absolute_path(raw_path):
+            return parts
+
+        return None
+
+    def _split_stored_path(self, raw_path: str) -> List[str]:
+        """Split a stored path into stable segments across Windows and POSIX forms."""
+        if self._looks_like_windows_path(raw_path):
+            return [
+                part
+                for part in PureWindowsPath(raw_path).parts
+                if part not in {"\\", "/"} and not part.endswith(":\\") and not part.endswith(":")
+            ]
+
+        return [part for part in Path(raw_path).parts if part not in {"\\", "/"}]
+
+    def _combine_path(self, directory: str, file_name: str) -> str:
+        """Combine a stored directory path and file name without assuming the current OS."""
+        if directory.endswith(("\\", "/")):
+            return f"{directory}{file_name}"
+
+        if "\\" in directory and "/" not in directory:
+            return f"{directory}\\{file_name}"
+
+        return f"{directory}/{file_name}"
+
+    def _path_includes_filename(self, raw_path: str, file_name: str) -> bool:
+        """Return True when the stored path already ends with the file name."""
+        normalized = raw_path.replace("\\", "/").rstrip("/")
+        return normalized.lower().endswith(f"/{file_name.lower()}") or normalized.lower() == file_name.lower()
+
+    def _looks_like_windows_path(self, raw_path: str) -> bool:
+        """Detect Windows-style stored paths regardless of the current runtime OS."""
+        return (len(raw_path) >= 2 and raw_path[1] == ":") or ("\\" in raw_path)
+
+    def _looks_like_absolute_path(self, raw_path: str) -> bool:
+        """Detect absolute paths across Windows and POSIX styles."""
+        return raw_path.startswith("/") or self._looks_like_windows_path(raw_path)
+
     def update_file_status(self, file_id: int, status: str, error: str = None) -> None:
         """
         Update the processing status of a file.
@@ -370,39 +617,40 @@ class DatabaseService:
         Status values: 'uploaded', 'processing', 'processed', 'error'
         """
         try:
+            normalized_status = self._normalize_file_status(status)
             with self._pool.get_connection() as conn:
                 cursor = conn.cursor()
                 
-                if status == 'processing':
+                if normalized_status == 'processing':
                     cursor.execute("""
                         UPDATE files 
                         SET status = ?, 
                             processing_started_at = CURRENT_TIMESTAMP
                         WHERE id = ?
-                    """, (status, file_id))
-                elif status == 'processed':
+                    """, (normalized_status, file_id))
+                elif normalized_status == 'processed':
                     cursor.execute("""
                         UPDATE files 
                         SET status = ?, 
                             processing_completed_at = CURRENT_TIMESTAMP,
                             processing_error = NULL
                         WHERE id = ?
-                    """, (status, file_id))
-                elif status == 'error':
+                    """, (normalized_status, file_id))
+                elif normalized_status == 'error':
                     cursor.execute("""
                         UPDATE files 
                         SET status = ?, 
                             processing_completed_at = CURRENT_TIMESTAMP,
                             processing_error = ?
                         WHERE id = ?
-                    """, (status, error, file_id))
+                    """, (normalized_status, error, file_id))
                 else:
                     cursor.execute("""
                         UPDATE files SET status = ? WHERE id = ?
-                    """, (status, file_id))
+                    """, (normalized_status, file_id))
                 
                 conn.commit()
-                logger.debug(f"Updated file {file_id} status to '{status}'")
+                logger.debug(f"Updated file {file_id} status to '{normalized_status}'")
         except Exception as e:
             logger.error(f"Error updating file {file_id} status: {e}")
             raise
@@ -534,58 +782,9 @@ class DatabaseService:
             'source_url': row[16]
         }
 
-    # ==================== Backward Compatibility (Legacy Methods) ====================
-    # These methods maintain compatibility with existing code expecting Document model
-    
-    def get_all_documents(self) -> List[Document]:
-        """
-        Legacy compatibility method - converts files to Document objects.
-        For new code, use get_all_files() instead.
-        """
-        try:
-            files = self.get_all_files()
-            return [self._file_dict_to_document(f) for f in files]
-        except Exception as e:
-            logger.error(f"Error in get_all_documents: {e}")
-            raise
-
-    def save_document(self, document: Document) -> int:
-        """
-        Legacy compatibility method - saves Document as file record.
-        For new code, use direct file operations instead.
-        """
-        try:
-            with self._pool.get_connection() as conn:
-                cursor = conn.cursor()
-                cursor.execute("""
-                    INSERT INTO files 
-                    (file_name, original_file_name, file_path, file_size, mime_type, 
-                     uploaded_at, status)
-                    VALUES (?, ?, ?, ?, ?, ?, ?)
-                """, (
-                    document.filename,
-                    document.original_filename,
-                    document.file_path,
-                    document.file_size,
-                    document.mime_type,
-                    document.upload_date,
-                    self._document_status_to_file_status(document.processing_status)
-                ))
-                conn.commit()
-                file_id = cursor.lastrowid
-                logger.debug(f"Saved document as file with ID {file_id}")
-                return file_id
-        except Exception as e:
-            logger.error(f"Error saving document: {e}")
-            raise
-
-    def update_processing_status(self, doc_id: int, status: str) -> None:
-        """Legacy compatibility method - updates file status"""
-        file_status = self._document_status_to_file_status(status)
-        self.update_file_status(doc_id, file_status)
-
     def _file_dict_to_document(self, file_dict: Dict[str, Any]) -> Document:
-        """Convert file dictionary to Document model for backward compatibility"""
+        """Project a canonical `files` row into the document API response model."""
+        status = self._normalize_file_status(file_dict.get('status', 'uploaded'))
         return Document(
             id=file_dict['id'],
             filename=file_dict['file_name'],
@@ -594,110 +793,68 @@ class DatabaseService:
             file_size=file_dict['file_size'],
             mime_type=file_dict['mime_type'],
             upload_date=file_dict['uploaded_at'],
-            processed=(file_dict['status'] == 'processed'),
-            processing_status=self._file_status_to_document_status(file_dict['status'])
+            processed=(status == 'processed'),
+            processing_status=status
         )
 
-    def _document_status_to_file_status(self, doc_status: str) -> str:
-        """Convert legacy Document status to file status"""
+    def _normalize_file_status(self, status: str) -> str:
+        """Normalize incoming statuses to the canonical file lifecycle."""
+        normalized = (status or "uploaded").lower()
         status_map = {
             'pending': 'uploaded',
             'processing': 'processing',
             'completed': 'processed',
+            'processed': 'processed',
             'error': 'error',
-            'failed': 'error'
+            'failed': 'error',
+            'uploaded': 'uploaded',
         }
-        return status_map.get(doc_status.lower(), 'uploaded')
+        return status_map.get(normalized, normalized)
 
-    def _file_status_to_document_status(self, file_status: str) -> str:
-        """Convert file status to legacy Document status"""
-        status_map = {
-            'uploaded': 'pending',
-            'processing': 'processing',
-            'processed': 'completed',
-            'error': 'error'
-        }
-        return status_map.get(file_status.lower(), 'pending')
-
-    def get_document(self, document_id: int) -> Optional[Document]:
-        """Legacy compatibility: get a single Document by ID.
-        For new code, use get_file_by_id() instead."""
+    def list_documents(self) -> List[Document]:
+        """Return API document models projected from canonical `files` rows."""
         try:
-            result = self.get_file_by_id(document_id)
-            if result is None:
-                return None
-            return self._file_dict_to_document(result)
+            return [self._file_dict_to_document(file_dict) for file_dict in self.get_all_files()]
         except Exception as e:
-            logger.error(f"Error in get_document({document_id}): {e}")
+            logger.error(f"Error in list_documents: {e}")
             raise
 
-    def get_unprocessed_documents(self) -> List[Document]:
-        """Legacy compatibility: get unprocessed documents as Document objects.
-        For new code, use get_unprocessed_files() instead."""
-        try:
-            files = self.get_unprocessed_files()
-            return [self._file_dict_to_document(f) for f in files]
-        except Exception as e:
-            logger.error(f"Error in get_unprocessed_documents: {e}")
-            raise
-
-    def get_documents_by_status(self, status: str) -> List[Document]:
-        """Legacy compatibility: get documents filtered by document-style status.
-        Translates the document status to file status before querying."""
-        try:
-            file_status = self._document_status_to_file_status(status)
-            with self._pool.get_connection() as conn:
-                cursor = conn.cursor()
-                cursor.execute("""
-                    SELECT id, file_name, original_file_name, file_path, file_hash,
-                           file_size, mime_type, uploaded_at, status,
-                           processing_started_at, processing_completed_at, processing_error,
-                           docling_document_path, total_pages, neo4j_document_node_id,
-                           source_type, source_url
-                    FROM files
-                    WHERE status = ?
-                    ORDER BY uploaded_at DESC
-                """, (file_status,))
-                rows = cursor.fetchall()
-                return [self._file_dict_to_document(self._row_to_file_dict(row)) for row in rows]
-        except Exception as e:
-            logger.error(f"Error in get_documents_by_status('{status}'): {e}")
-            raise
-
-    def save_processed_document(self, processed_doc: ProcessedDocument) -> int:
-        """Legacy compatibility: persist processing results for a document.
-        Updates the existing file record with docling output and marks it processed."""
-        try:
-            self.update_file_processing_results(
-                file_id=processed_doc.document_id,
-                docling_path=processed_doc.docling_document_path,
-                total_pages=processed_doc.total_pages,
-                neo4j_node_id=processed_doc.neo4j_node_id
-            )
-            self.update_file_status(processed_doc.document_id, 'processed')
-            logger.debug(f"Saved processed document for file {processed_doc.document_id}")
-            return processed_doc.document_id
-        except Exception as e:
-            logger.error(f"Error in save_processed_document({processed_doc.document_id}): {e}")
-            raise
-
-    def get_processed_document(self, document_id: int) -> Optional[ProcessedDocument]:
-        """Legacy compatibility: retrieve ProcessedDocument for a file.
-        Returns None if the file doesn't exist or hasn't been processed."""
+    def get_document_by_id(self, document_id: int) -> Optional[Document]:
+        """Return a single API document model projected from the `files` table."""
         try:
             file_dict = self.get_file_by_id(document_id)
-            if file_dict is None or not file_dict.get('docling_document_path'):
+            if file_dict is None:
                 return None
-            return ProcessedDocument(
-                id=file_dict['id'],
-                document_id=file_dict['id'],
-                docling_document_path=file_dict['docling_document_path'],
-                total_pages=file_dict.get('total_pages') or 0,
-                processing_date=file_dict.get('processing_completed_at') or datetime.now(),
-                neo4j_node_id=file_dict.get('neo4j_document_node_id')
+            return self._file_dict_to_document(file_dict)
+        except Exception as e:
+            logger.error(f"Error in get_document_by_id({document_id}): {e}")
+            raise
+
+    def list_unprocessed_documents(self) -> List[Document]:
+        """Return document models for files still eligible for processing."""
+        try:
+            return [self._file_dict_to_document(file_dict) for file_dict in self.get_unprocessed_files()]
+        except Exception as e:
+            logger.error(f"Error in list_unprocessed_documents: {e}")
+            raise
+
+    def get_processing_status(self, document_id: int) -> Optional[ProcessingStatus]:
+        """Return processing status directly from the canonical `files` row."""
+        try:
+            file_dict = self.get_file_by_id(document_id)
+            if file_dict is None:
+                return None
+
+            return ProcessingStatus(
+                document_id=document_id,
+                status=self._normalize_file_status(file_dict.get('status')),
+                total_pages=file_dict.get('total_pages'),
+                error_message=file_dict.get('processing_error'),
+                started_at=file_dict.get('processing_started_at') or file_dict.get('uploaded_at'),
+                completed_at=file_dict.get('processing_completed_at'),
             )
         except Exception as e:
-            logger.error(f"Error in get_processed_document({document_id}): {e}")
+            logger.error(f"Error in get_processing_status({document_id}): {e}")
             raise
 
     def get_statistics(self) -> Dict[str, Any]:
@@ -718,30 +875,3 @@ class DatabaseService:
     def get_active_services(self) -> List[Dict[str, Any]]:
         """Return a list of services actively using this database."""
         return [{"name": "python-service", "type": "FastAPI", "status": "active"}]
-
-    def get_file_document_sync_status(self) -> Dict[str, Any]:
-        """Return sync status between files and documents.
-        Schema is now unified (files table only), so this always reports healthy."""
-        try:
-            with self._pool.get_connection() as conn:
-                cursor = conn.cursor()
-                cursor.execute("SELECT COUNT(*) FROM files")
-                count = cursor.fetchone()[0]
-            return {
-                "files_count": count,
-                "documents_count": count,
-                "sync_health": "healthy",
-                "unsynced_files": 0,
-                "unsynced_documents": 0
-            }
-        except Exception as e:
-            logger.error(f"Error in get_file_document_sync_status: {e}")
-            raise
-
-    def force_sync_files_and_documents(self) -> Dict[str, Any]:
-        """No-op sync since schema is now unified (files table only)."""
-        return {
-            "sync_performed": True,
-            "message": "Schema already unified - no sync needed",
-            "files_synced": 0
-        }

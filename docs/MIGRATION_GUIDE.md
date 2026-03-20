@@ -135,16 +135,15 @@ for file in unprocessed:
  db.update_file_status(file_id, 'error', error=str(e))
 ```
 
-#### Legacy Methods (Still Work)
+#### Removed compatibility wrappers
 
 ```python
-# These still work but are deprecated
-docs = db.get_all_documents() # Returns Document objects
-db.save_document(document)
-db.update_processing_status(doc_id, 'completed')
+# Legacy sync wrappers have been removed.
+# Use the canonical methods instead:
+documents = db.list_documents()
+document = db.get_document_by_id(file_id)
+status = db.get_processing_status(file_id)
 ```
-
-**Recommendation:** Migrate to new methods when updating code.
 
 ---
 

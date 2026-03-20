@@ -1,5 +1,4 @@
 import json
-import os
 from pathlib import Path
 from typing import List, Dict, Any
 from datetime import datetime
@@ -39,7 +38,6 @@ class DoclingService:
     def __init__(self, data_path: str = "/app/data"):
         self.data_path = Path(data_path)
         self.processed_path = self.data_path / "processed"
-        self.uploads_path = self.data_path / "uploads"
         
         # Ensure directories exist
         self.processed_path.mkdir(parents=True, exist_ok=True)
@@ -60,11 +58,10 @@ class DoclingService:
             print(f"   - PDF support: {'?' if PYPDF2_AVAILABLE else '?'}")
             print(f"   - DOCX support: {'?' if DOCX_AVAILABLE else '?'}")
 
-    def process_document(self, document: Document) -> tuple[ProcessedDocument, List[PageContent]]:
+    def process_document(self, document: Document, resolved_file_path: Path | str) -> tuple[ProcessedDocument, List[PageContent]]:
         """Process a document using docling or fallback processors"""
         try:
-            # Get the full file path
-            file_path = self.uploads_path / document.file_path
+            file_path = Path(resolved_file_path)
             
             if not file_path.exists():
                 raise FileNotFoundError(f"Document file not found: {file_path}")
@@ -104,6 +101,7 @@ class DoclingService:
         metadata = {
             "processor": "docling",
             "processing_timestamp": datetime.now().isoformat(),
+            "source_path": str(file_path),
             "file_size": document.file_size,
             "mime_type": document.mime_type,
             "total_pages": len(pages)
@@ -158,6 +156,7 @@ class DoclingService:
         metadata = {
             "processor": processor,
             "processing_timestamp": datetime.now().isoformat(),
+            "source_path": str(file_path),
             "file_size": document.file_size,
             "mime_type": document.mime_type,
             "total_pages": len(pages),
