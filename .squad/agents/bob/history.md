@@ -173,3 +173,20 @@
 **Session Log Created:** Brief summary of P0 completion, blocked issues resolved, decisions merged, next phase assignments.
 
 **Next Phase:** Jeff to maintain canonical Python contract surface methods and docs. Validation gates remain live as regression coverage.
+
+---
+
+## Cross-Agent Coordination — Scribe Merge (2026-03-20)
+
+**Session:** Roadmap Tasks Update (background spawn)
+
+**Work:** Bob completed:
+- Moved completed P0 items into Completed Work section in `roadmap/Tasks.md`
+- Updated milestone gates table (Gates A, B1, B2, E, G marked ✅ CLEAR)
+- Corrected metadata: Last Updated → 2026-03-20, Active Branch → `task/p0-python-tasks`
+
+**Decisions:** P0 completion decision merged into `.squad/decisions.md`. Upload Path Normalization and Python Footprint Minimization officially approved and archived in roadmap.
+
+**Related:** Orchestration log created at `.squad/orchestration-log/20250303T000000Z-bob.md`. Session log at `.squad/log/20250303T000000Z-roadmap-tasks-update.md`.
+
+**Status:** Ready for P1 Phase (Processing Pipeline Stabilization, Test Infrastructure Bootstrap, Docling → LightRAG Ingestion).

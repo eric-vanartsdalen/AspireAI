@@ -337,6 +337,27 @@ LightRAG is wired in AppHost as separate container with Ollama connection and Ne
 
 ---
 
+## P0 Completion & Roadmap Update — Bob (Lead/Architect) — 2026-03-20
+
+**Scope:** Mark P0 completions in roadmap; close out Upload Path Normalization and Python Footprint Minimization
+
+### Roadmap Status: P0 Items Complete
+
+Two P0 efforts have been successfully completed and approved:
+
+1. **Upload Path Normalization (P0)** ✅ — Files uploaded via C# Web UI are now discoverable and processable by Python services
+2. **Python Footprint Minimization (P0)** ✅ — API surface rationalized, dead endpoints removed, DatabaseService methods cleaned up
+
+**Impact:** Clears milestone Gates A, B1, B2, E, G. Enables P1 (Processing Pipeline Stabilization) to proceed without path/schema concerns.
+
+**Decision:** Record P0 completions in `roadmap/Tasks.md`. Move Upload Path Normalization and Python Footprint Minimization items into Completed Work section. Update milestone gates table. Active blockers (Gates B, F, C, D) remain pending downstream P1/P2 work.
+
+**Metadata Update:** Last Updated corrected to 2026-03-20; Active Branch updated to `task/p0-python-tasks` to reflect current working baseline.
+
+---
+
+---
+
 ## Quality Audit — Buster (QA) — 2026-02-21
 
 **Scope:** Automated test inventory, CI/CD health, code quality patterns
