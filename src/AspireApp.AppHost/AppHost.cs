@@ -5,32 +5,33 @@ using System.Threading.Tasks;
 
 public partial class Program
 {
-    public static async Task Main(string[] args)
-    {
-        // ASPIRE LOCAL SETUP
-        var builder = DistributedApplication.CreateBuilder(args);
+	public static async Task Main(string[] args)
+	{
+		// ASPIRE LOCAL SETUP
+		var builder = DistributedApplication.CreateBuilder(args);
 
-        // Config with .NET Aspire
-        var aiChatModel = builder.AddParameterFromConfiguration("AI-Chat-Model", "AI-Chat-Model");
-        var aiEmbeddings = builder.AddParameterFromConfiguration("AI-Embedding-Model", "AI-Embedding-Model");
-        var aiEndpoint = builder.AddParameterFromConfiguration("AI-Endpoint", "AI-Endpoint");
+		// Config with .NET Aspire
+		var aiChatModel = builder.AddParameterFromConfiguration("AI-Chat-Model", "AI-Chat-Model");
+		var aiEmbeddings = builder.AddParameterFromConfiguration("AI-Embedding-Model", "AI-Embedding-Model");
+		var aiEndpoint = builder.AddParameterFromConfiguration("AI-Endpoint", "AI-Endpoint");
 
-        // API Service
-        var apiService = builder.AddProject<Projects.AspireApp_ApiService>("apiservice")
-            .WithHttpHealthCheck("/health");
+		// API Service
+		var apiService = builder.AddProject<Projects.AspireApp_ApiService>("apiservice")
+			.WithHttpHealthCheck("/health");
 
-        // SETUP OLLAMA & MODEL CONTAINERS
-        var chatModelName = builder.Configuration["AI-Chat-Model"] ?? "phi4-mini:latest";
-        var embeddingModelName = builder.Configuration["AI-Embedding-Model"] ?? "nomic-embed-text:latest";
-        var ollama = builder.AddOllama("ollama")
-            .WithAnnotation(new ContainerImageAnnotation { 
-				Image = "ollama/ollama", 
+		// SETUP OLLAMA & MODEL CONTAINERS
+		var chatModelName = builder.Configuration["AI-Chat-Model"] ?? "phi4-mini:latest";
+		var embeddingModelName = builder.Configuration["AI-Embedding-Model"] ?? "nomic-embed-text:latest";
+		var ollama = builder.AddOllama("ollama")
+			.WithAnnotation(new ContainerImageAnnotation
+			{
+				Image = "ollama/ollama",
 				Tag = "latest"
 			})
 			.WithDataVolume()
 			.WithGPUSupport();
-        var appmodel = ollama.AddModel("chat", chatModelName);
-        var embeddingmodel = ollama.AddModel("embedding", embeddingModelName);
+		var appmodel = ollama.AddModel("chat", chatModelName);
+		var embeddingmodel = ollama.AddModel("embedding", embeddingModelName);
 
 		// Add a NEO4J container for graph database with caching optimizations
 		var neo4jUser = builder.AddParameter("neo4j-user", "neo4j");
@@ -45,7 +46,7 @@ public partial class Program
 		var useLightweightNeo4j = builder.Configuration["USE_LIGHTWEIGHT_NEO4J"] ?? "false";
 		var neo4jDockerfile = useLightweightNeo4j.ToLower() == "true" ? "Dockerfile.lightweight" : "Dockerfile";
 
-        var neo4jDb = builder.AddDockerfile("graph-db", "../../src/AspireApp.Neo4jService/", neo4jDockerfile)
+		var neo4jDb = builder.AddDockerfile("graph-db", "../../src/AspireApp.Neo4jService/", neo4jDockerfile)
 			.WithHttpEndpoint(port: 7474, targetPort: 7474, name: "http")  // Neo4j browser interface
 			.WithEndpoint(port: 7687, targetPort: 7687, name: "bolt")      // Neo4j bolt protocol
 			.WithBindMount("../../database/neo4j/data", "/data")           // Persistent data
@@ -67,13 +68,13 @@ public partial class Program
 			.AddDockerfile("python-service", "../../src/AspireApp.PythonServices/", pythonDockerfile)
 			.WithHttpEndpoint(port: 8000, targetPort: 8000, name: "http")
 			.WithBindMount("../../data", "/app/data")
-			.WithBindMount("../../database", "/app/database")					  // Keep host access for debugging/backup
-			.WithVolume("python-pip-cache", "/root/.cache/pip")					  // Persist pip cache
+			.WithBindMount("../../database", "/app/database")                     // Keep host access for debugging/backup
+			.WithVolume("python-pip-cache", "/root/.cache/pip")                   // Persist pip cache
 			.WithEnvironment("NEO4J_URI", neo4jDb.GetEndpoint("bolt"))
 			.WithEnvironment("NEO4J_USER", neo4jUser.Resource)
 			.WithEnvironment("NEO4J_PASSWORD", neo4jPass.Resource)
-			.WithEnvironment("PIP_CACHE_DIR", "/root/.cache/pip")				   // Use persistent pip cache
-			.WithEnvironment("DOCKER_BUILDKIT", "1")							   // Enable BuildKit for better caching
+			.WithEnvironment("PIP_CACHE_DIR", "/root/.cache/pip")                  // Use persistent pip cache
+			.WithEnvironment("DOCKER_BUILDKIT", "1")                               // Enable BuildKit for better caching
 			.WithEnvironment("ASPIRE_DB_PATH", "/app/database/data-resources.db")  // Use host-mounted path by default
 			.WithHttpHealthCheck("/health")
 			.WaitFor(neo4jDb);  // Ensure Neo4j starts before Python service
@@ -84,7 +85,7 @@ public partial class Program
 		var lightrag = builder.AddContainer("lightrag", "ghcr.io/hkuds/lightrag")
 			.WithReference(ollama)
 			.WithBindMount("../../data", "/app/data")
-            .WithEnvironment("ENTITY_TYPES", "['Person', 'Creature', 'Organization', 'Location', 'Event', 'Concept', 'Method', 'Content', 'Data', 'Artifact', 'NaturalObject']")
+			.WithEnvironment("ENTITY_TYPES", "['Person', 'Creature', 'Organization', 'Location', 'Event', 'Concept', 'Method', 'Content', 'Data', 'Artifact', 'NaturalObject']")
 			.WithEnvironment("WORKERS", "2")
 			.WithEnvironment("MAX_ASYNC", "1")
 			.WithEnvironment("WEBUI_TITLE", "Local LightRAG")
@@ -128,9 +129,9 @@ public partial class Program
 			.WithReference(appmodel)
 			.WithEnvironment("AI-Endpoint", aiEndpoint.Resource)
 			.WithEnvironment("AI-Chat-Model", aiChatModel.Resource)
-			.WithEnvironment("NEO4J_HTTP_URL", neo4jDb.GetEndpoint("http"))		// Neo4j browser endpoint
-			.WithEnvironment("NEO4J_BOLT_URL", neo4jDb.GetEndpoint("bolt"))		// Neo4j bolt endpoint
-			.WithEnvironment("NEO4J_AUTH", $"neo4j/{neo4jPassValue}")				// Neo4j credentials
+			.WithEnvironment("NEO4J_HTTP_URL", neo4jDb.GetEndpoint("http"))     // Neo4j browser endpoint
+			.WithEnvironment("NEO4J_BOLT_URL", neo4jDb.GetEndpoint("bolt"))     // Neo4j bolt endpoint
+			.WithEnvironment("NEO4J_AUTH", $"neo4j/{neo4jPassValue}")               // Neo4j credentials
 			.WithEnvironment("PYTHON_SERVICE_URL", pythonServices.GetEndpoint("http")) // Get Python service endpoint
 			.WaitFor(ollama)
 			.WaitFor(appmodel)
@@ -138,7 +139,16 @@ public partial class Program
 			.WaitFor(neo4jDb)
 			.WaitFor(pythonServices)
 			.WaitFor(lightrag);
+		// When running from the TestFixture, this causes a System.Threading.Tasks.TaskCanceledException: 'A task was canceled.'
+		try
+		{
+			await builder.Build().RunAsync();
+		}
+		catch (TaskCanceledException)
+		{
+			// Expected when running from TestFixture, ignore to allow graceful shutdown
+			Console.WriteLine("Application run was canceled, likely due to test fixture shutdown. Ignoring exception for graceful exit.");
+		}
 
-		await builder.Build().RunAsync();
-    }
+	}
 }
