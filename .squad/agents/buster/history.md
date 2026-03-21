@@ -184,3 +184,31 @@
 - **The smoke test is still red.** `dotnet test src\AspireApp.WebTest\AspireApp.WebTest.csproj` fails only `BasicAspireAppHostTests.AspireDashboardLoads` because the browser reaches a page with an empty title after `GotoAsync(_data.AspireDashboardLoginUri, ...)`; the other two WebTest smoke checks pass.
 - **Reusable QA pattern:** for Aspire dashboard browser auth, capturing the token is not enough. The Playwright test must wait for the page to settle and assert post-login state (final URL, expected heading/content, or redirect away from `/login`) instead of checking the title immediately.
 - **Recommended owner when Jeff is conflicted out:** Bob should revise this area next because the remaining gap is in Aspire dashboard orchestration/auth flow, not basic test plumbing.
+
+### 2026-03-21 — Aspire Dashboard Test Redirect Wait Approval
+
+**Status:** Complete (Bob revised after Buster rejection; Buster approved)
+
+**Context:** Jeff's infrastructure was sound (resource snapshot capture, token extraction, login URI computation), but the test assertion strategy was race-prone. After Buster's re-review rejection, Bob revised the test method with proper redirect/settle gates.
+
+**Root Cause:** Title was being polled immediately after `GotoAsync`, catching the moment between login page and Blazor hydration where `document.title` is empty.
+
+**Fix Applied by Bob:**
+1. `WaitForURLAsync(url => !url.Contains("/login"), 120s timeout)` — gates all assertions on redirect completion
+2. Explicit `PageWaitForFunctionOptions { Timeout = 60_000 }` on title poll — 60s buffer for Blazor cold-start SignalR circuit
+3. Flexible title assertion: `Contains("resources")` instead of exact match
+
+**QA Validation:**
+- `dotnet build AspireApp.sln` ✅ — 0 warnings, 0 errors
+- `dotnet test BasicAspireAppHostTests.AspireDashboardLoads` ✅ — 1 passed (~40s)
+- `dotnet test` (full suite) ✅ — all WebTest tests passing
+
+**Approved:** Buster accepts revised artifact. Dashboard test harness now complete.
+
+**Pattern for Future:** When testing Blazor Server UI redirects via Playwright:
+1. Use `WaitForURLAsync` to gate on redirect completion (check URL no longer contains `/login`)
+2. Use 60s+ timeouts for title polls (cold-start lag)
+3. Assert on flexible conditions (substring, not exact match)
+
+**Decision Logged:** "Aspire Dashboard Playwright Tests Must Wait for Auth Redirect" in `.squad/decisions.md` for team adoption.
+
