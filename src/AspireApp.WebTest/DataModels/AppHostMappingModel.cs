@@ -5,6 +5,7 @@ namespace AspireApp.WebTest.DataModels;
 public class AppHostMappingModel
 {
 	public IBrowserContext? BrowserContext { get; set; }
+	public string AspireDashboardUri { get; set; }
 	public string WebfrontendUri { get; set; } = string.Empty;
 	public string OllamaUri { get; set; } = string.Empty;
 

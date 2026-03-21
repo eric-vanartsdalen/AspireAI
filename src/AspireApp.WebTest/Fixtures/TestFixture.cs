@@ -1,4 +1,5 @@
 ﻿using Aspire.Hosting;
+using Aspire.Hosting.ApplicationModel;
 using Aspire.Hosting.Testing;
 using AspireApp.WebTest.DataModels;
 using Microsoft.Playwright;
@@ -29,6 +30,11 @@ public class TestFixture : IAsyncLifetime
 		AppHostMapping.OllamaUri = _app.GetEndpoint("ollama", "http").AbsoluteUri;
 
 		// TODO: Find if possible, the actual Aspire Dashboard URI.
+		// When Aspire Dashboard starts, the console log shows where the dashbaord is like example below.
+		// Is there a way or place to get the URL and the login token programmatically instead of having to pull and copy it from the console log?
+		// info: Aspire.Hosting.DistributedApplication[0]
+		// Login to the dashboard at https://localhost:17171/login?t=9c251823a996fa456b9c4fd2612eb5e6
+		//
 		var services = _app.Services;
 
 		// ✅ Start Playwright

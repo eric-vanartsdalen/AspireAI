@@ -17,6 +17,17 @@ public class BasicAspireAppHostTests : IClassFixture<TestFixture>
 	}
 
 	[Fact]
+	public async Task AspireDashboardLoads()
+	{
+		// Navigate to the Aspire Dashboard and check it loads by verifying the title contains "Aspire Resources"
+		IPage page = await _browserContext.NewPageAsync();
+		await page.GotoAsync(_data.AspireDashboardUri, _data.Options);
+		// Check page title equal "Aspire Resources"
+		var title = await page.TitleAsync();
+		Assert.Contains("Aspire Resources", title, StringComparison.OrdinalIgnoreCase);
+	}
+
+	[Fact]
 	public async Task WebLoads()
 	{
 		Console.WriteLine($"Navigating to Web Frontend at: {_data.WebfrontendUri}");
