@@ -7,19 +7,20 @@ namespace AspireApp.WebTest.Tests;
 public class BasicAspireAppHostTests : IClassFixture<TestFixture>
 {
 	private readonly AppHostMappingModel _data;
-	protected IPage page;
+	protected IBrowserContext _browserContext;
 
 	public BasicAspireAppHostTests(TestFixture fixture)
 	{
 		_data = fixture.AppHostMapping;
-		Assert.NotNull(_data.Page);
-		page = _data.Page;
+		Assert.NotNull(_data.BrowserContext);
+		_browserContext = _data.BrowserContext;
 	}
 
 	[Fact]
 	public async Task WebLoads()
 	{
 		Console.WriteLine($"Navigating to Web Frontend at: {_data.WebfrontendUri}");
+		IPage page = await _browserContext.NewPageAsync();
 		await page.GotoAsync(_data.WebfrontendUri, _data.Options);
 		// Check page title equal "Home"
 		var title = await page.TitleAsync();
@@ -30,6 +31,7 @@ public class BasicAspireAppHostTests : IClassFixture<TestFixture>
 	public async Task OllamaLoads()
 	{
 		Console.WriteLine($"Navigating to Ollama Frontend at: {_data.OllamaUri}");
+		IPage page = await _browserContext.NewPageAsync();
 		await page.GotoAsync(_data.OllamaUri, _data.Options);
 		// Check the page contains text "Ollama is running"
 		var content = await page.ContentAsync();

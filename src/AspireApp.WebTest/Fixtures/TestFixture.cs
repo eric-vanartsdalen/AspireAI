@@ -39,12 +39,10 @@ public class TestFixture : IAsyncLifetime
 			Headless = false
 		});
 
-		_context = await _browser.NewContextAsync(new()
+		AppHostMapping.BrowserContext = await _browser.NewContextAsync(new()
 		{
 			IgnoreHTTPSErrors = true
 		});
-
-		AppHostMapping.Page = await _context.NewPageAsync();
 	}
 
 
