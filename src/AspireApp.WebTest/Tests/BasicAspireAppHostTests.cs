@@ -13,18 +13,41 @@ public class BasicAspireAppHostTests : IClassFixture<TestFixture>
 	{
 		_data = fixture.AppHostMapping;
 		Assert.NotNull(_data.BrowserContext);
-		_browserContext = _data.BrowserContext;
+		_browserContext = _data.BrowserContext!;
 	}
 
 	[Fact]
 	public async Task AspireDashboardLoads()
 	{
-		// Navigate to the Aspire Dashboard and check it loads by verifying the title contains "Aspire Resources"
+		Assert.False(string.IsNullOrWhiteSpace(_data.AspireDashboardUri));
+		Assert.False(string.IsNullOrWhiteSpace(_data.AspireDashboardBrowserToken));
+		Assert.False(string.IsNullOrWhiteSpace(_data.AspireDashboardLoginUri));
+
 		IPage page = await _browserContext.NewPageAsync();
-		await page.GotoAsync(_data.AspireDashboardUri, _data.Options);
-		// Check page title equal "Aspire Resources"
+
+		// Navigate to the tokenized login URI. The dashboard validates the
+		// browser token, sets an auth cookie, and redirects to the root page.
+		await page.GotoAsync(_data.AspireDashboardLoginUri, _data.Options);
+
+		// Wait for the post-authentication redirect to leave /login.
+		// If GotoAsync already followed a server-side 302 this resolves immediately;
+		// otherwise it waits for the Blazor-driven redirect after token validation.
+		await page.WaitForURLAsync(
+			url => !url.Contains("/login", StringComparison.OrdinalIgnoreCase),
+			new PageWaitForURLOptions { Timeout = 120_000 });
+
+		// Blazor Server sets the page title asynchronously via <PageTitle>
+		// after the SignalR circuit initializes. Give it generous time.
+		await page.WaitForFunctionAsync(
+			"() => document.title && document.title.length > 0",
+			null,
+			new PageWaitForFunctionOptions { Timeout = 60_000 });
+
 		var title = await page.TitleAsync();
-		Assert.Contains("Aspire Resources", title, StringComparison.OrdinalIgnoreCase);
+
+		Assert.StartsWith(_data.AspireDashboardUri.TrimEnd('/'), page.Url.TrimEnd('/'), StringComparison.OrdinalIgnoreCase);
+		Assert.DoesNotContain("/login", page.Url, StringComparison.OrdinalIgnoreCase);
+		Assert.Contains("resources", title, StringComparison.OrdinalIgnoreCase);
 	}
 
 	[Fact]

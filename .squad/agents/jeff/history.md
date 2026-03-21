@@ -193,3 +193,16 @@
 
 **Next Phase:** Continue with P1 items (version pinning, Neo4j batching, etc.) or new features. Jeff to maintain canonical Python contract surface methods and docs going forward.
 
+### 2026-03-21 — Aspire Dashboard Test Auth Capture
+
+**Status:** Complete (Jeff)
+
+**Key paths:**
+- `src/AspireApp.WebTest/Fixtures/TestFixture.cs` — enables the Aspire dashboard in test runs, waits for the `aspire-dashboard` resource, and reads dashboard auth data from the resource snapshot environment variables.
+- `src/AspireApp.WebTest/DataModels/AppHostMappingModel.cs` — stores the dashboard base URL, browser token, and computed authenticated login URL.
+- `src/AspireApp.WebTest/Tests/BasicAspireAppHostTests.cs` — navigates with the authenticated login URL and asserts the redirect leaves `/login` and lands on the resources dashboard.
+
+**Patterns learned:**
+- For Aspire dashboard UI tests, use `app.ResourceNotifications.WaitForResourceHealthyAsync("aspire-dashboard")` and read `DASHBOARD__FRONTEND__PUBLICURL` plus `DASHBOARD__FRONTEND__BROWSERTOKEN` from `Snapshot.EnvironmentVariables` instead of scraping the console log output.
+- `app.GetEndpoint("aspire-dashboard", "http")` is a good fallback for the dashboard base URL, but the browser token only shows up in the dashboard resource snapshot.
+- The dashboard title is runtime-specific (`AspireApp resources` here), so tests should assert the authenticated redirect and a `"resources"` title substring rather than an exact `"Aspire Resources"` string.

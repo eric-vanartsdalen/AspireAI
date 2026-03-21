@@ -8,6 +8,10 @@ namespace AspireApp.WebTest.Fixtures;
 
 public class TestFixture : IAsyncLifetime
 {
+	private const string AspireDashboardResourceName = "aspire-dashboard";
+	private const string DashboardBrowserTokenEnvironmentVariable = "DASHBOARD__FRONTEND__BROWSERTOKEN";
+	private const string DashboardPublicUrlEnvironmentVariable = "DASHBOARD__FRONTEND__PUBLICURL";
+
 	private DistributedApplication? _app;
 
 	public AppHostMappingModel AppHostMapping { get; private set; } = new();
@@ -20,22 +24,26 @@ public class TestFixture : IAsyncLifetime
 	{
 		// ✅ Start Aspire AppHost
 		var appHost = await DistributedApplicationTestingBuilder
-			.CreateAsync<Projects.AspireApp_AppHost>();
+			.CreateAsync<Projects.AspireApp_AppHost>(
+				[],
+				static (applicationOptions, _) =>
+				{
+					applicationOptions.DisableDashboard = false;
+					applicationOptions.AllowUnsecuredTransport = true;
+				});
 
 		_app = await appHost.BuildAsync();
 		await _app.StartAsync();
 
-		// ✅ Resolve endpoint (adjust name if needed)
+		var dashboardState = await _app.ResourceNotifications.WaitForResourceHealthyAsync(AspireDashboardResourceName);
+
+		// ✅ Resolve endpoints
+		AppHostMapping.AspireDashboardUri = GetDashboardPublicUrl(_app, dashboardState);
+		AppHostMapping.AspireDashboardBrowserToken = GetRequiredEnvironmentVariable(
+			dashboardState.Snapshot.EnvironmentVariables,
+			DashboardBrowserTokenEnvironmentVariable);
 		AppHostMapping.WebfrontendUri = _app.GetEndpoint("webfrontend", "http").AbsoluteUri;
 		AppHostMapping.OllamaUri = _app.GetEndpoint("ollama", "http").AbsoluteUri;
-
-		// TODO: Find if possible, the actual Aspire Dashboard URI.
-		// When Aspire Dashboard starts, the console log shows where the dashbaord is like example below.
-		// Is there a way or place to get the URL and the login token programmatically instead of having to pull and copy it from the console log?
-		// info: Aspire.Hosting.DistributedApplication[0]
-		// Login to the dashboard at https://localhost:17171/login?t=9c251823a996fa456b9c4fd2612eb5e6
-		//
-		var services = _app.Services;
 
 		// ✅ Start Playwright
 		_playwright = await Playwright.CreateAsync();
@@ -45,10 +53,12 @@ public class TestFixture : IAsyncLifetime
 			Headless = false
 		});
 
-		AppHostMapping.BrowserContext = await _browser.NewContextAsync(new()
+		_context = await _browser.NewContextAsync(new()
 		{
 			IgnoreHTTPSErrors = true
 		});
+
+		AppHostMapping.BrowserContext = _context;
 	}
 
 
@@ -74,5 +84,36 @@ public class TestFixture : IAsyncLifetime
 	async ValueTask IAsyncDisposable.DisposeAsync()
 	{
 		await DisposeAsync();
+	}
+
+	private static string GetDashboardPublicUrl(DistributedApplication app, ResourceEvent dashboardState)
+	{
+		var publicUrl = GetEnvironmentVariable(dashboardState.Snapshot.EnvironmentVariables, DashboardPublicUrlEnvironmentVariable);
+
+		return string.IsNullOrWhiteSpace(publicUrl)
+			? app.GetEndpoint(AspireDashboardResourceName, "http").AbsoluteUri
+			: publicUrl;
+	}
+
+	private static string GetRequiredEnvironmentVariable(IEnumerable<EnvironmentVariableSnapshot> environmentVariables, string name)
+	{
+		var value = GetEnvironmentVariable(environmentVariables, name);
+
+		return !string.IsNullOrWhiteSpace(value)
+			? value
+			: throw new InvalidOperationException($"Could not find required Aspire dashboard environment variable '{name}'.");
+	}
+
+	private static string? GetEnvironmentVariable(IEnumerable<EnvironmentVariableSnapshot> environmentVariables, string name)
+	{
+		foreach (var environmentVariable in environmentVariables)
+		{
+			if (string.Equals(environmentVariable.Name, name, StringComparison.Ordinal))
+			{
+				return environmentVariable.Value;
+			}
+		}
+
+		return null;
 	}
 }
