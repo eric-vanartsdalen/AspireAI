@@ -423,5 +423,5 @@ FodyWeavers.xsd
 /data/
 /database/
 # Squad: ignore - to avoid any potential leaked information - and allow others to use their own squads
-.squad/
-.squad-templates/
+.squad/**
+.squad-templates/**

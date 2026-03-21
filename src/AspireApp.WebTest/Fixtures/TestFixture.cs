@@ -2,7 +2,9 @@
 using Aspire.Hosting.ApplicationModel;
 using Aspire.Hosting.Testing;
 using AspireApp.WebTest.DataModels;
+using Google.Protobuf.WellKnownTypes;
 using Microsoft.Playwright;
+using System.Text;
 
 namespace AspireApp.WebTest.Fixtures;
 
@@ -35,13 +37,22 @@ public class TestFixture : IAsyncLifetime
 		_app = await appHost.BuildAsync();
 		await _app.StartAsync();
 
+		// ✅ Resolve Aspire Dashboard endpoint including token
 		var dashboardState = await _app.ResourceNotifications.WaitForResourceHealthyAsync(AspireDashboardResourceName);
-
-		// ✅ Resolve endpoints
-		AppHostMapping.AspireDashboardUri = GetDashboardPublicUrl(_app, dashboardState);
-		AppHostMapping.AspireDashboardBrowserToken = GetRequiredEnvironmentVariable(
+		var _aspireDashboardUri = GetEnvironmentVariable(
+			dashboardState.Snapshot.EnvironmentVariables, 
+			DashboardPublicUrlEnvironmentVariable);
+		var _aspireDashboardBrowserToken = GetRequiredEnvironmentVariable(
 			dashboardState.Snapshot.EnvironmentVariables,
 			DashboardBrowserTokenEnvironmentVariable);
+
+		_aspireDashboardUri = _aspireDashboardUri.EndsWith("/", StringComparison.Ordinal)
+			? _aspireDashboardUri
+			: $"{_aspireDashboardUri}/";
+
+		var builder = new StringBuilder().Append(_aspireDashboardUri + "login?t=" + _aspireDashboardBrowserToken);
+		AppHostMapping.AspireDashboardLoginUri = builder.ToString();
+
 		AppHostMapping.WebfrontendUri = _app.GetEndpoint("webfrontend", "http").AbsoluteUri;
 		AppHostMapping.OllamaUri = _app.GetEndpoint("ollama", "http").AbsoluteUri;
 
@@ -84,15 +95,6 @@ public class TestFixture : IAsyncLifetime
 	async ValueTask IAsyncDisposable.DisposeAsync()
 	{
 		await DisposeAsync();
-	}
-
-	private static string GetDashboardPublicUrl(DistributedApplication app, ResourceEvent dashboardState)
-	{
-		var publicUrl = GetEnvironmentVariable(dashboardState.Snapshot.EnvironmentVariables, DashboardPublicUrlEnvironmentVariable);
-
-		return string.IsNullOrWhiteSpace(publicUrl)
-			? app.GetEndpoint(AspireDashboardResourceName, "http").AbsoluteUri
-			: publicUrl;
 	}
 
 	private static string GetRequiredEnvironmentVariable(IEnumerable<EnvironmentVariableSnapshot> environmentVariables, string name)

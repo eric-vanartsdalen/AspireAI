@@ -19,8 +19,6 @@ public class BasicAspireAppHostTests : IClassFixture<TestFixture>
 	[Fact]
 	public async Task AspireDashboardLoads()
 	{
-		Assert.False(string.IsNullOrWhiteSpace(_data.AspireDashboardUri));
-		Assert.False(string.IsNullOrWhiteSpace(_data.AspireDashboardBrowserToken));
 		Assert.False(string.IsNullOrWhiteSpace(_data.AspireDashboardLoginUri));
 
 		IPage page = await _browserContext.NewPageAsync();
@@ -45,9 +43,8 @@ public class BasicAspireAppHostTests : IClassFixture<TestFixture>
 
 		var title = await page.TitleAsync();
 
-		Assert.StartsWith(_data.AspireDashboardUri.TrimEnd('/'), page.Url.TrimEnd('/'), StringComparison.OrdinalIgnoreCase);
 		Assert.DoesNotContain("/login", page.Url, StringComparison.OrdinalIgnoreCase);
-		Assert.Contains("resources", title, StringComparison.OrdinalIgnoreCase);
+		Assert.Equivalent("AspireApp resources", title);
 	}
 
 	[Fact]
@@ -58,7 +55,7 @@ public class BasicAspireAppHostTests : IClassFixture<TestFixture>
 		await page.GotoAsync(_data.WebfrontendUri, _data.Options);
 		// Check page title equal "Home"
 		var title = await page.TitleAsync();
-		Assert.Contains("Home", title, StringComparison.OrdinalIgnoreCase);
+		Assert.Equivalent("Home", title);
 	}
 
 	[Fact]
