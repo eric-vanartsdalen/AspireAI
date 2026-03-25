@@ -9,8 +9,12 @@ public class AppHostMappingModel
 	public string AspireDashboardLoginUri { get; set; } = string.Empty;
 	public string WebfrontendUri { get; set; } = string.Empty;
 	public string OllamaUri { get; set; } = string.Empty;
+    public string GraphDBUri { get; set; } = string.Empty;
+    public string LightRagUri { get; set; } = string.Empty;
+    public string PythonServiceUri { get; set; } = string.Empty;
+    public string ApiServiceUri { get; set; } = string.Empty;
 
-	public PageGotoOptions Options { get; } = new()
+    public PageGotoOptions Options { get; } = new()
 	{
 		Timeout = 180000 // 3 minutes
 	};

@@ -57,7 +57,12 @@ public class BasicAspireAppHostTests : IClassFixture<TestFixture>
 		List<ILocator> rowLinks = (await page.Locator("table tbody tr td[col-index='5']").AllAsync()).ToList();
 		string ollamaLink = string.Empty;
 		string webFrontendLink = string.Empty;
-		for ( int i = 0; i<rowNames.Count; i++)
+        string graphDbLink = string.Empty;
+        string lightRagLink = string.Empty;
+        string pythonServiceLink = string.Empty;
+        string apiServiceLink = string.Empty;
+
+        for ( int i = 0; i<rowNames.Count; i++)
 		{
 			var name = await rowNames[i].TextContentAsync();
 			var resource = await rowResources[i].TextContentAsync();
@@ -72,21 +77,43 @@ public class BasicAspireAppHostTests : IClassFixture<TestFixture>
 			{
 				webFrontendLink = link.Trim();
 			}
-		}
+            if (name.Contains("Graph-Db", StringComparison.OrdinalIgnoreCase))
+            {
+                graphDbLink = link.Trim();
+            }
+            if(name.Contains("LightRag", StringComparison.OrdinalIgnoreCase))
+            {
+                lightRagLink = link.Trim();
+            }
+            if(name.Contains("Python-Service", StringComparison.OrdinalIgnoreCase))
+            {
+                pythonServiceLink = link.Trim();
+            }
+            if(name.Contains("ApiService", StringComparison.OrdinalIgnoreCase))
+            {
+                apiServiceLink = link.Trim();
+            }
+        }
 		// Find service for Ollama and Web Frontend and check their links are correct.
 		Assert.False(string.IsNullOrWhiteSpace(ollamaLink), "Ollama link should not be empty");
 		Assert.False(string.IsNullOrWhiteSpace(webFrontendLink), "Web Frontend link should not be empty");
-		// issue seems to be here...
-		// My hunch is that when the AspireApp.AppHost is launched from the fixture
-		// it may not be correctly picking up the configured endpoints for Ollama and Web Frontend,
-		// which results in the dashboard showing incorrect links for these resources.
-		// The test then fails when it tries to validate those links against the expected URIs from the fixture data.
-		Assert.True(ollamaLink.Contains(_data.OllamaUri, StringComparison.OrdinalIgnoreCase),
+        Assert.False(string.IsNullOrWhiteSpace(graphDbLink), "Graph-Db link should not be empty");
+        Assert.False(string.IsNullOrWhiteSpace(lightRagLink), "LightRag link should not be empty");
+        Assert.False(string.IsNullOrEmpty(pythonServiceLink), "PythonService link should not be empty");
+        Assert.False(string.IsNullOrEmpty(apiServiceLink), "ApiService link should not be empty");
+
+        Assert.True(ollamaLink.Contains(_data.OllamaUri, StringComparison.OrdinalIgnoreCase),
 			$"Ollama link ({ollamaLink}) should contain {_data.OllamaUri}");
 		Assert.True(webFrontendLink.Contains(_data.WebfrontendUri, StringComparison.OrdinalIgnoreCase), 
 			$"Web Frontend link ({webFrontendLink}) should contain {_data.WebfrontendUri}");
-
-		Console.WriteLine("Aspire Dashboard Resources");
+        Assert.True(graphDbLink.Contains(_data.GraphDBUri, StringComparison.OrdinalIgnoreCase),
+            $"Graph-Db link ({graphDbLink}) should contain {_data.GraphDBUri}");
+        Assert.True(lightRagLink.Contains(_data.LightRagUri, StringComparison.OrdinalIgnoreCase),
+            $"LightRag link ({lightRagLink}) should contain {_data.LightRagUri}");
+        Assert.True(pythonServiceLink.Contains(_data.PythonServiceUri, StringComparison.OrdinalIgnoreCase),
+            $"PythonService link ({pythonServiceLink}) should contain {_data.PythonServiceUri}");
+        Assert.True(apiServiceLink.Contains(_data.ApiServiceUri, StringComparison.OrdinalIgnoreCase),
+            $"ApiService link ({apiServiceLink}) should contain {_data.ApiServiceUri}");
 	}
 
 	[Fact]

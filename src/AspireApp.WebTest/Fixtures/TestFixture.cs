@@ -5,6 +5,7 @@ using AspireApp.WebTest.DataModels;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Playwright;
+using System.Diagnostics;
 using System.Text;
 
 namespace AspireApp.WebTest.Fixtures;
@@ -30,7 +31,7 @@ public class TestFixture : IAsyncLifetime
 		var debugMode = false;
 		var configFile = "appsettings.json";
 #if DEBUG
-		Console.WriteLine("Debug build");
+		Debug.WriteLine("Debug build");
 		configFile = "appsettings.Development.json";
 		debugMode = true;
 #else
@@ -65,43 +66,40 @@ public class TestFixture : IAsyncLifetime
 		var _aspireDashboardBrowserToken = GetRequiredEnvironmentVariable(
 			dashboardState.Snapshot.EnvironmentVariables,
 			DashboardBrowserTokenEnvironmentVariable);
-
 		_aspireDashboardUri = _aspireDashboardUri.EndsWith("/", StringComparison.Ordinal)
 			? _aspireDashboardUri
 			: $"{_aspireDashboardUri}/";
-
 		var builder = new StringBuilder().Append(_aspireDashboardUri + "login?t=" + _aspireDashboardBrowserToken);
 		AppHostMapping.AspireDashboardLoginUri = builder.ToString();
+        // Resolve and Map endpoints presented in the Aspire Dashboard itself
 		AppHostMapping.WebfrontendUri = _app.GetEndpoint("webfrontend", "https").AbsoluteUri.TrimEnd('/');
 		AppHostMapping.OllamaUri = _app.GetEndpoint("ollama", "http").AbsoluteUri.TrimEnd('/');
+        AppHostMapping.GraphDBUri = _app.GetEndpoint("graph-db", "http").AbsoluteUri.TrimEnd('/');
+        AppHostMapping.LightRagUri = _app.GetEndpoint("lightrag", "tcp").AbsoluteUri.TrimEnd('/');
+        AppHostMapping.PythonServiceUri = _app.GetEndpoint("python-service", "http").AbsoluteUri.TrimEnd('/');
+        AppHostMapping.ApiServiceUri = _app.GetEndpoint("apiservice", "https").AbsoluteUri.TrimEnd('/');
 
-		// ✅ Start Playwright
-		_playwright = await Playwright.CreateAsync();
-
+        // ✅ Start Playwright
+        _playwright = await Playwright.CreateAsync();
 		_browser = await _playwright.Chromium.LaunchAsync(new()
 		{
 			Headless = false
 		});
-
 		_context = await _browser.NewContextAsync(new()
 		{
 			IgnoreHTTPSErrors = true
 		});
-
+        // Map main browser context for tests to use.
 		AppHostMapping.BrowserContext = _context;
 	}
-
 
 	public async Task DisposeAsync()
 	{
 		if (_context != null)
 			await _context.DisposeAsync();
-
 		if (_browser != null)
 			await _browser.DisposeAsync();
-
 		_playwright?.Dispose();
-
 		if (_app != null)
 			await _app.DisposeAsync();
 	}
@@ -134,7 +132,6 @@ public class TestFixture : IAsyncLifetime
 				return environmentVariable.Value;
 			}
 		}
-
 		return null;
 	}
 
@@ -145,7 +142,7 @@ public class TestFixture : IAsyncLifetime
 		// determine mode in use
 		var debugMode = false;
 #if DEBUG
-		Console.WriteLine("Debug build");
+		Debug.WriteLine("Debug build");
 		debugMode = true;
 #else
 			Console.WriteLine("Release build");
