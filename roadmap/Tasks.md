@@ -2,10 +2,11 @@
 
 Working task breakdown for the [Plan](../plan.md). Tracks what's been accomplished and what remains.
 
+> **⚠️ Maintainer Reminder:** This roadmap should be updated as work progresses to keep status current and prevent information loss. Check this file regularly during implementation and mark items complete/blocked as they change.
+
 Note: This will be a living document.
 
 **Last Updated:** 2026-03-25
-**Active Branch:** `task/p0-python-tasks`
 
 ---
 
@@ -50,7 +51,7 @@ Note: This will be a living document.
 
 ## Active Tasks
 
-### Processing Pipeline Stabilization (P1)
+### Processing Pipeline Stabilization (P1) (Done) ✅
 
 - [x] Process uploaded records through Docling and persist page content in `document_pages`
 - [x] Persist processing timestamps and error details consistently
@@ -173,3 +174,15 @@ Note: This will be a living document.
 - [ ] Trigger Python processing ? verify row is selected even if status arrives as `Uploaded`
 - [ ] Verify processing reads file from mapped volume and writes `document_pages` rows
 - [ ] Verify status transitions end at `processed` (or `error` with `processing_error` populated)
+
+---
+
+## Implementation Challenges & Revisit Items
+
+Track issues, blockers, and future follow-up items that emerge during implementation. Revisit periodically to ensure nothing falls through the cracks.
+
+- **[Gate B Status]** Processing pipeline may fail silently if volume mounts are misconfigured; consider health check validation for file access before triggering processing
+- **[LightRAG Integration]** Need to confirm LightRAG containerization story (Docker image, Neo4j connectivity, ingestion API shape) before finalizing Docling → LightRAG handoff
+- **[AI Model Config]** Config key mismatch (`AI-Model` vs service-specific reads) indicates weak testing of environment propagation; consider Aspire contract tests
+- **[Testing Strategy]** Current test matrix is sparse; prioritize upload-to-processing happy path before expanding coverage (risk of regressions is moderate)
+- **[Performance Baseline]** Neo4j batch writes not yet profiled; if processing is slow, start here before adding vector indexing
