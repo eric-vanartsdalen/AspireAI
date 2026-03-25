@@ -27,14 +27,14 @@ async def process_document_task(
     """Background task to process a document"""
     try:
         logger.info(f"Starting processing for document {document_id}")
-        
-        # Update status to processing
-        db.update_file_status(document_id, "processing")
-        
+
         # Get document
         document = db.get_document_by_id(document_id)
         if not document:
             raise Exception("Document not found")
+
+        # Mark the attempt active after confirming the record still exists.
+        db.update_file_status(document_id, "processing")
 
         resolved_file_path = db.resolve_upload_path(document)
         
@@ -106,6 +106,9 @@ async def process_document(
         # Check if already processed
         if document.processing_status == "processed":
             raise HTTPException(status_code=400, detail="Document already processed")
+
+        if document.processing_status == "processing":
+            raise HTTPException(status_code=409, detail="Document is already processing")
         
         # Get the appropriate docling service
         docling = get_docling_service()
@@ -134,12 +137,12 @@ async def process_all_documents(
     db: DatabaseService = Depends(get_database_service),
     neo4j: Neo4jService = Depends(get_neo4j_service)
 ):
-    """Start processing all unprocessed documents"""
+    """Start processing all uploaded or retryable documents."""
     try:
         unprocessed_docs = db.list_unprocessed_documents()
         
         if not unprocessed_docs:
-            return {"message": "No unprocessed documents found"}
+            return {"message": "No uploaded or failed documents are ready for processing"}
         
         # Get the appropriate docling service
         docling = get_docling_service()

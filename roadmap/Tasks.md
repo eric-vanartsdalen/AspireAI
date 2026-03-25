@@ -4,7 +4,7 @@ Working task breakdown for the [Plan](../plan.md). Tracks what's been accomplish
 
 Note: This will be a living document.
 
-**Last Updated:** 2026-03-20
+**Last Updated:** 2026-03-25
 **Active Branch:** `task/p0-python-tasks`
 
 ---
@@ -52,10 +52,10 @@ Note: This will be a living document.
 
 ### Processing Pipeline Stabilization (P1)
 
-- [ ] Process uploaded records through Docling and persist page content in `document_pages`
-- [ ] Persist processing timestamps and error details consistently
-- [ ] Add retry behavior for failed processing records
-- [ ] Ensure processing status transitions use canonical values (`uploaded` ? `processing` ? `processed` / `error`)
+- [x] Process uploaded records through Docling and persist page content in `document_pages`
+- [x] Persist processing timestamps and error details consistently
+- [x] Add retry behavior for failed processing records
+- [x] Ensure processing status transitions use canonical values (`uploaded` ? `processing` ? `processed` / `error`)
 
 **Files:**
 - `src/AspireApp.PythonServices/app/routers/processing.py` — ensure processing consumes resolved full file path; use canonical status transitions

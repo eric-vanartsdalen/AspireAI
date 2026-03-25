@@ -346,7 +346,7 @@ class DatabaseService:
             raise
 
     def get_unprocessed_files(self) -> List[Dict[str, Any]]:
-        """Get all files that need processing (status='uploaded')"""
+        """Get all files currently eligible for processing or retry."""
         try:
             with self._pool.get_connection() as conn:
                 cursor = conn.cursor()
@@ -356,12 +356,12 @@ class DatabaseService:
                            processing_started_at, processing_completed_at, processing_error,
                            docling_document_path, total_pages, neo4j_document_node_id,
                            source_type, source_url
-                    FROM files 
-                    WHERE LOWER(status) = 'uploaded'
+                    FROM files
+                    WHERE LOWER(status) IN ('uploaded', 'error')
                     ORDER BY uploaded_at ASC
                 """)
                 rows = cursor.fetchall()
-                logger.info(f"Found {len(rows)} unprocessed files")
+                logger.info(f"Found {len(rows)} files ready for processing")
                 return [self._row_to_file_dict(row) for row in rows]
         except Exception as e:
             logger.error(f"Error fetching unprocessed files: {e}")
@@ -623,11 +623,17 @@ class DatabaseService:
                 
                 if normalized_status == 'processing':
                     cursor.execute("""
-                        UPDATE files 
-                        SET status = ?, 
-                            processing_started_at = CURRENT_TIMESTAMP
+                        UPDATE files
+                        SET status = ?,
+                            processing_started_at = CURRENT_TIMESTAMP,
+                            processing_completed_at = NULL,
+                            processing_error = NULL,
+                            docling_document_path = NULL,
+                            total_pages = NULL,
+                            neo4j_document_node_id = NULL
                         WHERE id = ?
                     """, (normalized_status, file_id))
+                    cursor.execute("DELETE FROM document_pages WHERE file_id = ?", (file_id,))
                 elif normalized_status == 'processed':
                     cursor.execute("""
                         UPDATE files 
@@ -644,6 +650,19 @@ class DatabaseService:
                             processing_error = ?
                         WHERE id = ?
                     """, (normalized_status, error, file_id))
+                elif normalized_status == 'uploaded':
+                    cursor.execute("""
+                        UPDATE files
+                        SET status = ?,
+                            processing_started_at = NULL,
+                            processing_completed_at = NULL,
+                            processing_error = NULL,
+                            docling_document_path = NULL,
+                            total_pages = NULL,
+                            neo4j_document_node_id = NULL
+                        WHERE id = ?
+                    """, (normalized_status, file_id))
+                    cursor.execute("DELETE FROM document_pages WHERE file_id = ?", (file_id,))
                 else:
                     cursor.execute("""
                         UPDATE files SET status = ? WHERE id = ?
