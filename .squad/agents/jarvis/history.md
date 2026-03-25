@@ -241,3 +241,19 @@
 
 **Key insight:** Retry safety in the canonical `files` + `document_pages` schema depends on resetting derived artifacts at the start of a new attempt. Otherwise the `(file_id, page_number)` uniqueness rule turns partial failures into duplicate-write failures on retry.
 
+### 2026-03-25 — Docling → LightRAG Handoff Clarified
+
+**Completed:**
+- Verified the LightRAG container in this repo is configured with `INPUT_DIR=/app/data/inputs` and Neo4j settings, but no repository code was triggering ingestion.
+- Confirmed the hot-folder assumption was wrong: dropping files into the shared input directory is insufficient without an explicit LightRAG ingest action.
+- Added Python-side markdown export + handoff flow so processed documents stage a LightRAG-friendly `.md` file and request `POST /documents/scan`.
+
+**Validation:**
+- `python -m compileall src\\AspireApp.PythonServices\\app`
+- `python -m compileall src\\AspireApp.PythonServices\\example-parse-document.py`
+- `python src\\AspireApp.PythonServices\\tests\\test_processing_pipeline_regression.py`
+- `python src\\AspireApp.PythonServices\\tests\\test_p0_contract_audit.py`
+- `dotnet build AspireApp.sln`
+
+**Key insight:** The safest handoff for this repo is "export markdown to the shared LightRAG input directory, then explicitly call `/documents/scan`." That keeps Docling ownership in Python while avoiding the false assumption that LightRAG watches the directory automatically.
+

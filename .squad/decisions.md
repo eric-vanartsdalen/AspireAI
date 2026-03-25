@@ -172,3 +172,39 @@ Five initial challenges captured:
 **By:** Eric VanArtsdalen (via Copilot)  
 **What:** Keep oadmap/Tasks.md updated as work progresses so status does not get lost, and track challenges or revisit-later items that may become important in future implementation.  
 **Why:** User request — captured for team memory
+---
+
+## LightRAG P1: Narrowed Scope & Explicit Wiring — Bob, Jarvis, Buster — 2026-03-25
+
+**Scope:** P1 spike review revealed auto-pickup assumption was wrong; narrowed to achievable markdown export + explicit handoff
+
+### The Problem (Bob's Finding)
+
+Original P1 spike assumed document processing would automatically detect LightRAG capability. Testing revealed this is false—LightRAG requires explicit HTTP handoff wiring.
+
+### The Solution
+
+P1 scope narrowed to:
+1. **✅ Markdown Export** — Document processor extracts chunks to markdown files
+2. **✅ LightRAG Handoff** — Python service sends HTTP POST to LightRAG endpoint
+
+### What's Deferred
+
+- ❌ Query flow proof (post-P1 follow-up)
+- ❌ Retrieval path proof (post-P1 follow-up)
+
+### Implementation
+
+Jarvis: Markdown export + HTTP handoff wiring
+Bob: Narrowed roadmap, explicit Neo4J/LightRAG wiring in AppHost
+Buster: Accepted narrowed contract after initial rejection
+
+### Impact
+
+- P1 LightRAG spike complete for markdown export + handoff
+- Auto-pickup assumption ruled out
+- Query/retrieval documented as follow-up work
+
+### Session log
+
+`.squad/log/2026-03-25T14-30-00Z-lightrag-p1-review.md`
