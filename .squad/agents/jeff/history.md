@@ -193,3 +193,45 @@
 
 **Next Phase:** Continue with P1 items (version pinning, Neo4j batching, etc.) or new features. Jeff to maintain canonical Python contract surface methods and docs going forward.
 
+### 2026-03-21 — Aspire Dashboard Test Auth Capture
+
+**Status:** Complete (Jeff)
+
+**Key paths:**
+- `src/AspireApp.WebTest/Fixtures/TestFixture.cs` — enables the Aspire dashboard in test runs, waits for the `aspire-dashboard` resource, and reads dashboard auth data from the resource snapshot environment variables.
+- `src/AspireApp.WebTest/DataModels/AppHostMappingModel.cs` — stores the dashboard base URL, browser token, and computed authenticated login URL.
+- `src/AspireApp.WebTest/Tests/BasicAspireAppHostTests.cs` — navigates with the authenticated login URL and asserts the redirect leaves `/login` and lands on the resources dashboard.
+
+**Patterns learned:**
+- For Aspire dashboard UI tests, use `app.ResourceNotifications.WaitForResourceHealthyAsync("aspire-dashboard")` and read `DASHBOARD__FRONTEND__PUBLICURL` plus `DASHBOARD__FRONTEND__BROWSERTOKEN` from `Snapshot.EnvironmentVariables` instead of scraping the console log output.
+- `app.GetEndpoint("aspire-dashboard", "http")` is a good fallback for the dashboard base URL, but the browser token only shows up in the dashboard resource snapshot.
+- The dashboard title is runtime-specific (`AspireApp resources` here), so tests should assert the authenticated redirect and a `"resources"` title substring rather than an exact `"Aspire Resources"` string.
+
+### 2026-03-21 — Aspire Dashboard Test Redirect/Title Poll Revision (Bob → Rejection → Fix)
+
+**Status:** Complete (Bob revision after Buster rejection)
+
+**Context:** Jeff's initial artifact captured dashboard URL and token correctly and populated `AppHostMappingModel.AspireDashboardLoginUri`, but Buster rejected the test because the assertion on title failed: after navigating to the login URI, `document.title` was empty when polled.
+
+**Root Cause Race Condition:**
+1. `await page.GotoAsync(aspireDashboardLoginUri)` returns after landing on login page
+2. Dashboard auth handler validates token and triggers Blazor-driven redirect: `NavigateTo("/", forceLoad: true)`
+3. Between redirect start and page fully load, the document transitions: login page → new page (empty title) → Blazor hydration (title set by `<PageTitle>` component)
+4. Original test immediately polled `document.title` on the new page before `<PageTitle>` component ran
+
+**Fix Applied (Bob):**
+1. After `GotoAsync`, added explicit gate: `await page.WaitForURLAsync(url => !url.Contains("/login"), new PageWaitForURLOptions { Timeout = 120_000 });`
+2. Added explicit timeout to title poll: `await page.WaitForFunctionAsync("() => document.title", new PageWaitForFunctionOptions { Timeout = 60_000 });`
+3. Changed title assertion from exact match to substring: `Contains("resources", StringComparison.OrdinalIgnoreCase)`
+
+**Validation:**
+- `dotnet build AspireApp.sln` ✅ — 0 warnings, 0 errors
+- `dotnet test src\AspireApp.WebTest\AspireApp.WebTest.csproj --filter BasicAspireAppHostTests.AspireDashboardLoads` ✅ — 1 passed, ~40s wall clock
+
+**Pattern Learning:** When testing Blazor Server UI redirects via Playwright, always:
+1. Gate subsequent assertions on the URL settling (no "/login" in URL)
+2. Use explicit long timeouts (60s+) for title polls to account for SignalR cold-start
+3. Assert on flexible conditions (substring/contains) rather than exact matches
+
+**Approved:** Buster accepted revised artifact. Dashboard test harness pattern documented in decisions.md for team adoption.
+

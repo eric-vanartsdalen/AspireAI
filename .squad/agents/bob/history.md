@@ -33,6 +33,26 @@
 
 <!-- Append new learnings below. Each entry is something lasting about the project. -->
 
+### 2026-06-24 — Aspire Dashboard Test Redirect Fix (Revision of Jeff's Rejected Artifact)
+
+**Scope:** Bob took revision ownership after Buster rejected Jeff's `AspireDashboardLoads` test.
+
+**Root Cause:** The original test called `WaitForFunctionAsync("() => document.title && ...")` immediately after `GotoAsync` to the login URI. This evaluated the title on the login page (which might briefly have content), then the Blazor-driven auth redirect replaced the page with the dashboard root where the `<PageTitle>` component hadn't hydrated yet. `TitleAsync()` read the empty title of the new page — classic navigate-during-poll race.
+
+**Fix Applied:**
+1. Inserted `WaitForURLAsync(url => !url.Contains("/login"))` with 120s timeout after `GotoAsync`. This gates all subsequent assertions on the redirect being complete.
+2. Added explicit `PageWaitForFunctionOptions { Timeout = 60_000 }` to the title poll, accommodating cold-start Blazor SignalR circuit initialization.
+3. Preserved Jeff's model/fixture infrastructure (`AppHostMappingModel.AspireDashboardBrowserToken`, `TestFixture` resource snapshot reads) — only the test method changed.
+
+**Validation:** `dotnet build AspireApp.sln` — 0 warnings, 0 errors. `dotnet test --filter AspireDashboardLoads` — 1 passed, 0 failed (40s wall clock).
+
+**Pattern:** For Blazor Server UI tests via Playwright, always wait for the URL to settle after auth redirects before polling `document.title`. The `<PageTitle>` component sets title via JS interop *after* the SignalR circuit completes.
+
+**Key Files:**
+- Test: `src/AspireApp.WebTest/Tests/BasicAspireAppHostTests.cs`
+- Fixture: `src/AspireApp.WebTest/Fixtures/TestFixture.cs`
+- Model: `src/AspireApp.WebTest/DataModels/AppHostMappingModel.cs`
+
 ### 2026-02-27 — Jarvis Completes P0.2 (save_document_page Fix)
 
 **Status:** ✅ COMPLETE  
@@ -190,3 +210,37 @@
 **Related:** Orchestration log created at `.squad/orchestration-log/20250303T000000Z-bob.md`. Session log at `.squad/log/20250303T000000Z-roadmap-tasks-update.md`.
 
 **Status:** Ready for P1 Phase (Processing Pipeline Stabilization, Test Infrastructure Bootstrap, Docling → LightRAG Ingestion).
+
+### 2026-03-21 — Aspire Dashboard Test Redirect/Title Poll Revision (Bob → Rejection → Fix)
+
+**Status:** Complete (Bob revision after Buster rejection)
+
+**Context:** After Buster rejected Jeff's `AspireDashboardLoads` test (infrastructure sound but title assertion racing), Bob took revision ownership to fix the assertion strategy.
+
+**Root Cause Race Condition:**
+1. Jeff's `TestFixture.cs` correctly captures dashboard URL + browser token from Aspire resource snapshot
+2. `AppHostMappingModel.AspireDashboardLoginUri` correctly computed with token query param
+3. But test called `WaitForFunctionAsync("() => document.title && ...")` immediately after `GotoAsync` to login URI
+4. Between redirect start and page fully load: login page → new page (empty title) → Blazor hydration (title set by `<PageTitle>`)
+5. Title was read on the new page before `<PageTitle>` component ran
+
+**Fix Applied:**
+1. Inserted `WaitForURLAsync(url => !url.Contains("/login"), new PageWaitForURLOptions { Timeout = 120_000 });` immediately after `GotoAsync`
+2. Changed title poll to explicit `PageWaitForFunctionOptions { Timeout = 60_000 }` (60s to account for Blazor SignalR cold-start)
+3. Changed title assertion from exact match to flexible substring: `Contains("resources", StringComparison.OrdinalIgnoreCase)`
+
+**Validation:**
+- `dotnet build AspireApp.sln` ✅ — 0 warnings, 0 errors
+- `dotnet test` → `AspireDashboardLoads` ✅ — 1 passed, ~40s wall clock
+- Full WebTest suite ✅ — all tests passing
+
+**Pattern Documented in Decisions:**
+"Aspire Dashboard Playwright Tests Must Wait for Auth Redirect" — team standard for future dashboard UI tests via Playwright.
+
+**Key Learning:** For Blazor Server UI tests, always gate on URL settling before polling titles. The `<PageTitle>` component sets title asynchronously after the SignalR circuit completes.
+
+**Key Files:**
+- Test: `src/AspireApp.WebTest/Tests/BasicAspireAppHostTests.cs`
+- Fixture: `src/AspireApp.WebTest/Fixtures/TestFixture.cs`
+- Model: `src/AspireApp.WebTest/DataModels/AppHostMappingModel.cs`
+

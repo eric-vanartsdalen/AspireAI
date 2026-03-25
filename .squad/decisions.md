@@ -2,7 +2,8 @@
 
 > Shared decision log. All agents read this before starting work.
 > Scribe merges new decisions from `.squad/decisions/inbox/` after each session.
-> **Note (2026-03-20):** File size 25.3 KB. All entries ≤30 days old; no archival triggered. Monitor for next merge.
+> **Note (2026-03-21):** Merged 4 inbox decisions (jeff-aspire-dashboard-test-auth.md, buster-aspire-dashboard-test-audit.md, buster-aspire-dashboard-auth-re-review.md, bob-dashboard-test-redirect-settle.md). File size 28.2 KB. All entries ≤30 days old. Inbox cleared.
+
 
 <!-- Decisions are appended below. Each entry starts with ### -->
 
@@ -487,5 +488,47 @@ This created a data integrity risk: C# and Python would disagree on the actual c
 - **Jarvis (Python):** Updated `DocumentPage` Pydantic model, `fix_database.py`, `diagnose_database.py`, `README.md` schema docs. Commit: 77db074.
 
 **Impact:** Fixed schema alignment. P0 Item 2 closed. No more C#↔Python column name conflicts on `document_pages`.
+
+---
+
+## Dashboard Playwright Testing — Jeff, Buster, Bob — 2026-03-21
+
+**Scope:** Aspire Dashboard authenticated navigation in WebTest suite
+
+### Aspire Dashboard Resource Snapshot Capture (Jeff Decision)
+
+**Context:** `AspireApp.WebTest` needed the Aspire dashboard URL and browser token during fixture startup so Playwright can open the authenticated dashboard page reliably.
+
+**Decision:** In Aspire integration tests, wait for the `aspire-dashboard` resource to become healthy and read `DASHBOARD__FRONTEND__PUBLICURL` plus `DASHBOARD__FRONTEND__BROWSERTOKEN` from `dashboardState.Snapshot.EnvironmentVariables`. Use `app.GetEndpoint("aspire-dashboard", "http")` only as fallback for the base dashboard URL.
+
+**Rationale:** The console log line is human-facing and should not be the test contract. The resource snapshot is runtime state owned by the running `DistributedApplication`, so it gives the same values programmatically and avoids log scraping.
+
+**Testing note:** The dashboard title is app-name specific (`AspireApp resources` in this repo), so UI assertions should verify the authenticated redirect leaves `/login` and that the title contains `resources`, not an exact `Aspire Resources` string.
+
+**Affected paths:** `src/AspireApp.WebTest/Fixtures/TestFixture.cs`, `src/AspireApp.WebTest/DataModels/AppHostMappingModel.cs`, `src/AspireApp.WebTest/Tests/BasicAspireAppHostTests.cs`
+
+**Impact:** Infrastructure sound for dashboard test harness. Foundation work complete.
+
+### Aspire Dashboard Playwright Tests Must Wait for Auth Redirect (Bob Decision)
+
+**Context:** Jeff's dashboard test artifact navigated to `/login?t=TOKEN` and immediately polled `document.title`. Buster rejected it because the page title was empty at assertion time. The Blazor-driven redirect flow (token validation → cookie set → `NavigateTo("/", forceLoad: true)`) involves a race: between `GotoAsync` returning and the redirect completing, there's a window where `document.title` reflects the login page, then goes empty on the new page before Blazor hydrates `<PageTitle>`.
+
+**Decision:** All Playwright tests that go through the Aspire Dashboard `/login?t=TOKEN` auth flow must:
+
+1. **Gate on redirect completion**: `WaitForURLAsync(url => !url.Contains("/login"))` after `GotoAsync`.
+2. **Poll the title with explicit timeout**: `WaitForFunctionAsync` must specify at least 60s timeout — the default 30s is insufficient for Blazor Server cold-start.
+3. **Assert flexibly on title content**: Use `Contains("resources")` (case-insensitive), not an exact match like `"Aspire Resources"`, since the title varies across Aspire versions.
+
+**Rationale:** `WaitForURLAsync` closes the redirect race; 60s timeout accommodates Blazor hydration latency; flexible title assertions avoid version/configuration fragility.
+
+**Implementation Status:**
+- `dotnet build AspireApp.sln` ✅
+- `dotnet test src\AspireApp.WebTest\AspireApp.WebTest.csproj` ✅
+- Targeted test `BasicAspireAppHostTests.AspireDashboardLoads` ✅
+
+**Impact:**
+- **Buster:** Accept the revised test as passing the QA gate.
+- **Jeff:** Adopt this pattern for any new Aspire Dashboard Playwright tests.
+- **All:** The `TestFixture.cs` token/URL capture infrastructure is confirmed sound — only the assertion strategy needed fixing.
 
 

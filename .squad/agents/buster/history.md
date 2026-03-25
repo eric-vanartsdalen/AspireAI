@@ -149,3 +149,66 @@
 **Session Log Created:** Scribe created brief summary of P0 completion status.
 
 **Next Phase:** P1 items ready. Validation gates remain live as regression coverage. Buster to maintain gate discipline going forward.
+
+### 2025-02-22 — Aspire Dashboard Test Audit (P1 Work)
+
+**Status:** AUDIT COMPLETE — Test cannot pass without production changes.
+
+**Key Findings:**
+- **TestFixture never populates `AspireDashboardUri`** — property declared but marked with TODO, test navigates to null/empty string.
+- **Dashboard is not a registered Aspire resource** — it's launched as side effect of `DisableDashboard = false`, not accessible via `_app.GetEndpoint()`.
+- **No public API to retrieve dashboard URL + token** — Aspire generates secure token at startup and prints to console only. No `DistributedApplication` method exposes it.
+- **DashboardEnabledAspireAppHostFactory exists but incomplete** — sets `applicationOptions.DisableDashboard = false` but doesn't capture/store dashboard URL for tests.
+- **Test lacks critical assertions** — no `WaitForLoadStateAsync()`, no auth redirect check, no health check before navigation.
+
+**5 Critical Test Gaps Identified:**
+1. Dashboard endpoint contract missing from AppHostMappingModel
+2. Token retrieval mechanism not implemented
+3. No dashboard health check before test
+4. No authentication success validation (redirect check)
+5. No page load state wait before title assertion
+
+**Guidance Provided for Jeff:**
+- Research Aspire.Hosting API for dashboard credential retrieval
+- Extend DashboardEnabledAspireAppHostFactory or modify AppHost.cs to surface dashboard URL
+- Update TestFixture.InitializeAsync() to populate AspireDashboardUri
+- Add health check + WaitForLoadStateAsync() to test
+
+**Decision File:** `.squad/decisions/inbox/buster-aspire-dashboard-test-audit.md` — documents full audit, edge cases, regression tests, and correct implementation flow.
+
+**Recommendation:** Jeff owns implementation research (Aspire API discovery); Buster validates test passes before merge. Do not merge test or fixture changes without dashboard URL extraction working.
+
+### 2026-03-21 — Aspire Dashboard Auth Re-Review
+
+- **Dashboard credentials are now surfaced in test state.** `src/AspireApp.WebTest/Fixtures/TestFixture.cs` waits for the `aspire-dashboard` resource, reads `DASHBOARD__FRONTEND__PUBLICURL` and `DASHBOARD__FRONTEND__BROWSERTOKEN`, and stores them through `src/AspireApp.WebTest/DataModels/AppHostMappingModel.cs`.
+- **The smoke test is still red.** `dotnet test src\AspireApp.WebTest\AspireApp.WebTest.csproj` fails only `BasicAspireAppHostTests.AspireDashboardLoads` because the browser reaches a page with an empty title after `GotoAsync(_data.AspireDashboardLoginUri, ...)`; the other two WebTest smoke checks pass.
+- **Reusable QA pattern:** for Aspire dashboard browser auth, capturing the token is not enough. The Playwright test must wait for the page to settle and assert post-login state (final URL, expected heading/content, or redirect away from `/login`) instead of checking the title immediately.
+- **Recommended owner when Jeff is conflicted out:** Bob should revise this area next because the remaining gap is in Aspire dashboard orchestration/auth flow, not basic test plumbing.
+
+### 2026-03-21 — Aspire Dashboard Test Redirect Wait Approval
+
+**Status:** Complete (Bob revised after Buster rejection; Buster approved)
+
+**Context:** Jeff's infrastructure was sound (resource snapshot capture, token extraction, login URI computation), but the test assertion strategy was race-prone. After Buster's re-review rejection, Bob revised the test method with proper redirect/settle gates.
+
+**Root Cause:** Title was being polled immediately after `GotoAsync`, catching the moment between login page and Blazor hydration where `document.title` is empty.
+
+**Fix Applied by Bob:**
+1. `WaitForURLAsync(url => !url.Contains("/login"), 120s timeout)` — gates all assertions on redirect completion
+2. Explicit `PageWaitForFunctionOptions { Timeout = 60_000 }` on title poll — 60s buffer for Blazor cold-start SignalR circuit
+3. Flexible title assertion: `Contains("resources")` instead of exact match
+
+**QA Validation:**
+- `dotnet build AspireApp.sln` ✅ — 0 warnings, 0 errors
+- `dotnet test BasicAspireAppHostTests.AspireDashboardLoads` ✅ — 1 passed (~40s)
+- `dotnet test` (full suite) ✅ — all WebTest tests passing
+
+**Approved:** Buster accepts revised artifact. Dashboard test harness now complete.
+
+**Pattern for Future:** When testing Blazor Server UI redirects via Playwright:
+1. Use `WaitForURLAsync` to gate on redirect completion (check URL no longer contains `/login`)
+2. Use 60s+ timeouts for title polls (cold-start lag)
+3. Assert on flexible conditions (substring, not exact match)
+
+**Decision Logged:** "Aspire Dashboard Playwright Tests Must Wait for Auth Redirect" in `.squad/decisions.md` for team adoption.
+
