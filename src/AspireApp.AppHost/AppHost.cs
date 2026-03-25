@@ -61,6 +61,9 @@ public partial class Program
 			.WithEnvironment("DOCKER_BUILDKIT", "1")                      // Enable BuildKit for Neo4j too
 			.WithHttpHealthCheck("/");
 
+		var neo4jBoltUri = ReferenceExpression.Create(
+			$"bolt://{neo4jDb.GetEndpoint("bolt").Property(EndpointProperty.HostAndPort)}");
+
 		// Setup Python services environment with optimized caching and build settings
 		var pythonDockerfile = useLightweightBuild.ToLower() == "true" ? "Dockerfile.lightweight" : "Dockerfile";
 
@@ -70,7 +73,7 @@ public partial class Program
 			.WithBindMount("../../data", "/app/data")
 			.WithBindMount("../../database", "/app/database")                     // Keep host access for debugging/backup
 			.WithVolume("python-pip-cache", "/root/.cache/pip")                   // Persist pip cache
-			.WithEnvironment("NEO4J_URI", neo4jDb.GetEndpoint("bolt"))
+			.WithEnvironment("NEO4J_URI", neo4jBoltUri)
 			.WithEnvironment("NEO4J_USER", neo4jUser.Resource)
 			.WithEnvironment("NEO4J_PASSWORD", neo4jPass.Resource)
 			.WithEnvironment("PIP_CACHE_DIR", "/root/.cache/pip")                  // Use persistent pip cache
@@ -85,6 +88,10 @@ public partial class Program
 		var lightrag = builder.AddContainer("lightrag", "ghcr.io/hkuds/lightrag")
 			.WithReference(ollama)
 			.WithBindMount("../../data", "/app/data")
+			.WithEnvironment("LIGHTRAG_KV_STORAGE", "JsonKVStorage")
+			.WithEnvironment("LIGHTRAG_DOC_STATUS_STORAGE", "JsonDocStatusStorage")
+			.WithEnvironment("LIGHTRAG_GRAPH_STORAGE", "Neo4JStorage")
+			.WithEnvironment("LIGHTRAG_VECTOR_STORAGE", "NanoVectorDBStorage")
 			.WithEnvironment("ENTITY_TYPES", "['Person', 'Creature', 'Organization', 'Location', 'Event', 'Concept', 'Method', 'Content', 'Data', 'Artifact', 'NaturalObject']")
 			.WithEnvironment("WORKERS", "2")
 			.WithEnvironment("MAX_ASYNC", "1")
@@ -105,7 +112,7 @@ public partial class Program
 			.WithEnvironment("EMBEDDING_DIM", "1024")
 			.WithEnvironment("INPUT_DIR", "/app/data/inputs")
 			.WithEnvironment("WORKING_DIR", "/app/data/rag_storage")
-			.WithEnvironment("NEO4J_URI", neo4jDb.GetEndpoint("bolt"))
+			.WithEnvironment("NEO4J_URI", neo4jBoltUri)
 			.WithEnvironment("NEO4J_USERNAME", neo4jUser.Resource)
 			.WithEnvironment("NEO4J_PASSWORD", neo4jPass.Resource)
 			.WithEnvironment("NEO4J_DATABASE", "neo4j")
@@ -116,9 +123,11 @@ public partial class Program
 			.WithEnvironment("NEO4J_MAX_CONNECTION_LIFETIME", "420")
 			.WithEnvironment("NEO4J_LIVENESS_CHECK_TIMEOUT", "30")
 			.WithEnvironment("NEO4J_KEEP_ALIVE", "true")
-			.WithEndpoint(9621, 9621)
+			.WithHttpEndpoint(port: 9621, targetPort: 9621, name: "http")
 			.WaitFor(ollama)
 			.WaitFor(neo4jDb);
+
+		pythonServices.WithEnvironment("LIGHTRAG_URL", lightrag.GetEndpoint("http"));
 
 		// Now you can reference it in the web frontend
 		builder.AddProject<Projects.AspireApp_Web>("webfrontend")
@@ -130,15 +139,14 @@ public partial class Program
 			.WithEnvironment("AI-Endpoint", aiEndpoint.Resource)
 			.WithEnvironment("AI-Chat-Model", aiChatModel.Resource)
 			.WithEnvironment("NEO4J_HTTP_URL", neo4jDb.GetEndpoint("http"))     // Neo4j browser endpoint
-			.WithEnvironment("NEO4J_BOLT_URL", neo4jDb.GetEndpoint("bolt"))     // Neo4j bolt endpoint
+			.WithEnvironment("NEO4J_BOLT_URL", neo4jBoltUri)                    // Neo4j bolt endpoint
 			.WithEnvironment("NEO4J_AUTH", $"neo4j/{neo4jPassValue}")               // Neo4j credentials
 			.WithEnvironment("PYTHON_SERVICE_URL", pythonServices.GetEndpoint("http")) // Get Python service endpoint
 			.WaitFor(ollama)
 			.WaitFor(appmodel)
 			.WaitFor(apiService)
 			.WaitFor(neo4jDb)
-			.WaitFor(pythonServices)
-			.WaitFor(lightrag);
+			.WaitFor(pythonServices);
 		// When running from the TestFixture, this causes a System.Threading.Tasks.TaskCanceledException: 'A task was canceled.'
 		try
 		{

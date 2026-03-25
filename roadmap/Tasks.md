@@ -62,11 +62,14 @@ Note: This will be a living document.
 - `src/AspireApp.PythonServices/app/routers/processing.py` — ensure processing consumes resolved full file path; use canonical status transitions
 - `src/AspireApp.PythonServices/app/services/database_service.py` — handle case variance in `get_unprocessed_files` filter
 
-### Docling ? LightRAG Ingestion (P1)
+### Docling ? LightRAG Ingestion (P1) ✅
 
-- [ ] Export Docling free-text output in a form accepted by LightRAG ingest path
-- [ ] Confirm LightRAG uses Neo4j backend and ingested records are queryable
-- [ ] Keep orchestration through Python retrieval APIs (no parallel retrieval path)
+- [x] Export Docling free-text output to markdown and stage it for LightRAG document scanning
+- [x] Prove a live LightRAG ingest ? query round-trip against the running container
+- [x] Confirm AppHost LightRAG graph storage stays on the explicit Neo4j contract at runtime
+- [x] Keep orchestration through Python retrieval APIs (no parallel retrieval path)
+
+> Status: **live proof completed**. In the running Aspire stack, a seeded document was processed through `/processing/process-document/{id}`, handed off to LightRAG, and retrieved through the new Python route `POST /rag/lightrag-query`; the response included the staged file `000007-jarvis-lightrag-proof.md` with chunk content and references. A direct Cypher check against `graph-db` also showed LightRAG-created nodes for that file path, confirming the runtime stayed on the explicit Neo4j contract. Caveat: the LightRAG pipeline still marked that proof document `failed` during merge because one relationship embedding upsert returned `NaN`, even though the chunk/entity data remained queryable.
 
 ### Chat Retrieval + Citations (P2)
 
@@ -161,9 +164,9 @@ Note: This will be a living document.
 | B1 | Processing accepts current upload-row shape (`file_path` dir + timestamped `file_name`) | ✅ |
 | B2 | Processing selection handles `Uploaded` status values without missing records | ✅ |
 | B | Processing writes `document_pages` rows successfully | ? |
-| F | Docling output ingested into LightRAG and queryable | ? |
+| F | Docling output ingested into LightRAG and queryable | ✅ |
 | G | Python SQLite/API footprint reduced and documented | ✅ |
-| C | RAG search returns references from processed content | ? |
+| C | RAG search returns references from processed content | ✅ |
 | D | Chat displays citation references from retrieval | ? |
 
 ---
@@ -182,7 +185,7 @@ Note: This will be a living document.
 Track issues, blockers, and future follow-up items that emerge during implementation. Revisit periodically to ensure nothing falls through the cracks.
 
 - **[Gate B Status]** Processing pipeline may fail silently if volume mounts are misconfigured; consider health check validation for file access before triggering processing
-- **[LightRAG Integration]** Need to confirm LightRAG containerization story (Docker image, Neo4j connectivity, ingestion API shape) before finalizing Docling → LightRAG handoff
+- **[LightRAG Merge Stability]** Live round-trip is now proven, but LightRAG can still mark a document `failed` during merge if Ollama returns `NaN` for a relationship embedding upsert; query data remained available, so this is now a targeted runtime hardening follow-up rather than an integration unknown
 - **[AI Model Config]** Config key mismatch (`AI-Model` vs service-specific reads) indicates weak testing of environment propagation; consider Aspire contract tests
 - **[Testing Strategy]** Current test matrix is sparse; prioritize upload-to-processing happy path before expanding coverage (risk of regressions is moderate)
 - **[Performance Baseline]** Neo4j batch writes not yet profiled; if processing is slow, start here before adding vector indexing

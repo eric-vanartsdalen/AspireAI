@@ -55,3 +55,19 @@ class SemanticQuery(BaseModel):
     document_ids: Optional[List[int]] = None
     limit: int = 10
     similarity_threshold: float = 0.7
+
+
+class LightRagQueryRequest(BaseModel):
+    query: str
+    mode: str = "mix"
+    top_k: int = 10
+    chunk_top_k: int = 10
+    include_references: bool = True
+    include_chunk_content: bool = True
+
+
+class LightRagQueryResponse(BaseModel):
+    status: str
+    message: str
+    data: Dict[str, Any]
+    metadata: Dict[str, Any]

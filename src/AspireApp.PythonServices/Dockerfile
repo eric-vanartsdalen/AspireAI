@@ -67,7 +67,7 @@ ENV PATH="/opt/venv/bin:$PATH"
 # Set the working directory
 WORKDIR /app
 
-# Create database and data directories with proper permissions before switching user
+# Create database and data directories with initial permissions
 RUN mkdir -p /app/database /app/docs-database /app/data/uploads /app/data/processed/documents && \
     chmod 777 /app/database /app/docs-database && \
     chown -R appuser:appuser /app && \
@@ -76,11 +76,8 @@ RUN mkdir -p /app/database /app/docs-database /app/data/uploads /app/data/proces
 # Copy the application code
 COPY --chown=appuser:appuser . .
 
-# Switch to non-root user
-USER appuser
-
 # Expose the port the app runs on
 EXPOSE 8000
 
-# Command to run the application
-CMD ["uvicorn", "app.fastapi:app", "--host", "0.0.0.0", "--port", "8000"]
+# Repair bind-mounted directory permissions at startup, then drop back to appuser.
+CMD ["sh", "-lc", "mkdir -p /app/database /app/docs-database /app/data/uploads /app/data/processed/documents /app/data/inputs && chmod 777 /app/database /app/docs-database /app/data /app/data/uploads /app/data/processed /app/data/processed/documents /app/data/inputs && exec su -s /bin/sh appuser -c 'exec /opt/venv/bin/uvicorn app.fastapi:app --host 0.0.0.0 --port 8000'"]

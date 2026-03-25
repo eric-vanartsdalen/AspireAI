@@ -9,6 +9,7 @@ from docling.datamodel.pipeline_options import PdfPipelineOptions
 from docling.backend.pypdfium2_backend import PyPdfiumDocumentBackend
 
 from ..models.models import Document, ProcessedDocument, PageContent
+from .docling_export_service import export_docling_outputs, sanitize_file_stem
 
 
 class DoclingService:
@@ -43,6 +44,14 @@ class DoclingService:
             document_json_path = doc_dir / "document.json"
             with open(document_json_path, 'w', encoding='utf-8') as f:
                 json.dump(docling_doc.export_to_dict(), f, indent=2, ensure_ascii=False)
+
+            exports_dir = doc_dir / "outputs"
+            export_paths = export_docling_outputs(
+                docling_doc,
+                exports_dir,
+                sanitize_file_stem(document.original_filename or document.filename),
+                include_json=False,
+            )
             
             # Create pages directory
             pages_dir = doc_dir / "pages"
@@ -58,7 +67,9 @@ class DoclingService:
                 "source_path": str(file_path),
                 "file_size": document.file_size,
                 "mime_type": document.mime_type,
-                "total_pages": len(pages)
+                "total_pages": len(pages),
+                "exports": export_paths,
+                "markdown_path": export_paths["markdown"],
             }
             
             # Save metadata

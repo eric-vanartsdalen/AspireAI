@@ -257,3 +257,25 @@
 
 **Key insight:** The safest handoff for this repo is "export markdown to the shared LightRAG input directory, then explicitly call `/documents/scan`." That keeps Docling ownership in Python while avoiding the false assumption that LightRAG watches the directory automatically.
 
+### 2026-03-25 — LightRAG Runtime Proof via Python Retrieval API
+
+**Completed:**
+- Fixed the runtime Neo4j contract so both the Python service and LightRAG receive an explicit `bolt://` URI instead of Aspire's raw `tcp://` endpoint reference.
+- Added a Python-side `LightRagQueryService` plus `POST /rag/lightrag-query` so retrieval stays behind the Python API boundary.
+- Hardened Python runtime checks uncovered during live verification: database directory writability probes now use unique marker files, container-style module paths no longer crash runtime data-root discovery, and the FastAPI global exception handler now returns a real JSON response.
+- Proved a live round-trip against the running Aspire stack: processed a seeded document through `/processing/process-document/{id}`, observed LightRAG stage and scan it, queried it back through `/rag/lightrag-query`, and confirmed matching LightRAG-created nodes in Neo4j for `000007-jarvis-lightrag-proof.md`.
+
+**Validation:**
+- `python -m compileall src\\AspireApp.PythonServices\\app`
+- `python src\\AspireApp.PythonServices\\tests\\test_processing_pipeline_regression.py`
+- `python src\\AspireApp.PythonServices\\tests\\test_p0_contract_audit.py`
+- `dotnet build AspireApp.sln`
+- Live Aspire run with manual HTTP verification:
+  - `GET /health`
+  - `GET /rag/health`
+  - `POST /processing/process-document/{id}`
+  - `POST /rag/lightrag-query`
+  - `POST /db/neo4j/query/v2`
+
+**Key insight:** The round-trip is now real, but LightRAG's merge phase can still mark a document `failed` if Ollama returns `NaN` for a relationship embedding upsert. Even in that state, chunk/entity data remained queryable through the Python route, so the integration proof is complete while merge stability becomes the next focused runtime hardening item.
+

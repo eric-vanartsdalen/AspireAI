@@ -75,7 +75,7 @@ public class TestFixture : IAsyncLifetime
 		AppHostMapping.WebfrontendUri = _app.GetEndpoint("webfrontend", "https").AbsoluteUri.TrimEnd('/');
 		AppHostMapping.OllamaUri = _app.GetEndpoint("ollama", "http").AbsoluteUri.TrimEnd('/');
         AppHostMapping.GraphDBUri = _app.GetEndpoint("graph-db", "http").AbsoluteUri.TrimEnd('/');
-        AppHostMapping.LightRagUri = _app.GetEndpoint("lightrag", "tcp").AbsoluteUri.TrimEnd('/');
+		AppHostMapping.LightRagUri = _app.GetEndpoint("lightrag", "http").AbsoluteUri.TrimEnd('/');
         AppHostMapping.PythonServiceUri = _app.GetEndpoint("python-service", "http").AbsoluteUri.TrimEnd('/');
         AppHostMapping.ApiServiceUri = _app.GetEndpoint("apiservice", "https").AbsoluteUri.TrimEnd('/');
 

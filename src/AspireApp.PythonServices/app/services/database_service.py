@@ -11,6 +11,7 @@ from pathlib import Path, PureWindowsPath
 from contextlib import contextmanager
 import queue
 import weakref
+from uuid import uuid4
 
 from ..models.models import Document, ProcessingStatus
 
@@ -181,12 +182,12 @@ class DatabaseService:
             except (OSError, PermissionError) as e:
                 logger.info(f"Skipping chmod on database directory (likely bind mount): {e}")
             # Check if we can write to the directory
-            test_file = db_dir / ".write_test"
+            test_file = db_dir / f".write_test_{os.getpid()}_{threading.get_ident()}_{uuid4().hex}"
             try:
-                test_file.touch()
-                with open(test_file, 'w') as f:
+                with open(test_file, 'w', encoding='utf-8') as f:
                     f.write("test")
-                test_file.unlink()
+                if test_file.exists():
+                    test_file.unlink()
                 logger.info(f"Database directory is writable: {db_dir}")
             except Exception as e:
                 logger.error(f"Database directory is not writable: {db_dir}, error: {e}")
@@ -481,16 +482,14 @@ class DatabaseService:
         """Build the set of data roots that may contain uploaded files."""
         roots: List[Path] = []
         env_root = os.environ.get("ASPIRE_DATA_PATH")
+        service_file = Path(__file__).resolve()
         if env_root:
             roots.append(Path(env_root))
 
-        roots.extend(
-            [
-                Path("/app/data"),
-                Path(__file__).resolve().parents[4] / "data",
-                Path.cwd() / "data",
-            ]
-        )
+        roots.append(Path("/app/data"))
+        if len(service_file.parents) > 4:
+            roots.append(service_file.parents[4] / "data")
+        roots.append(Path.cwd() / "data")
 
         unique_roots: List[Path] = []
         seen: set[str] = set()

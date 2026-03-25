@@ -219,3 +219,10 @@
 - **Validation gate for this area:** `python -m unittest discover -s src\AspireApp.PythonServices\tests -p "test_*.py" -v` plus `python test_database_schema.py` both pass on the current working tree.
 - **Reusable test pattern:** when workstation Python lacks FastAPI/Pydantic, stub those modules via `sys.modules`, purge cached `app.*` modules between imports, and keep SQLite scratch data under a repo-local test folder instead of OS temp paths.
 
+
+### 2026-03-25 — LightRAG P1 Proof Gate Prep
+- **Accepted state remains partial.** Markdown export, staged LightRAG handoff, and explicit AppHost HTTP/Neo4j wiring are present, but no live ingest → query proof artifact exists yet.
+- **Validated commands:** `python -m unittest discover -s src\AspireApp.PythonServices\tests -p "test_*.py" -v` ✅, `python test_database_schema.py` ✅, `dotnet build AspireApp.sln` ✅.
+- **Current evidence is still non-live.** `test_processing_pipeline_regression.py` proves handoff with a fake collaborator and a local HTTP test server; `LightRagAppHostContractTests` only inspect `AppHost.cs` source text.
+- **Remaining open item is precise now:** `src\AspireApp.PythonServices\app\routers\rag.py` still queries `Neo4jService` directly and never calls LightRAG, so “keep orchestration through Python retrieval APIs” cannot be honestly closed until a Python API-backed round-trip is demonstrated.
+- **QA closure criteria recorded:** `.squad\decisions\inbox\buster-lightrag-proof-gate.md`.

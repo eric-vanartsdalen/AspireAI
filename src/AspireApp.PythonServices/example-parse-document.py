@@ -15,6 +15,8 @@ from PIL import Image
 import io
 from datetime import datetime
 
+from app.services.docling_export_service import export_docling_outputs
+
 def free_torch_cuda_memory():
     # 1) Delete references
     # del variable  # delete any model/tensor references you no longer need
@@ -92,57 +94,10 @@ def save_document_outputs(doc, output_dir, base_filename):
     Save the Docling document in multiple formats.
     """
     outputs_dir = output_dir / "outputs"
-    outputs_dir.mkdir(exist_ok=True)
-
-    # Save as Markdown
-    markdown_path = outputs_dir / f"{base_filename}.md"
-    with open(markdown_path, 'w', encoding='utf-8') as f:
-        f.write(doc.document.export_to_markdown())
-    print(f"Saved Markdown: {markdown_path}")
-
-    # Save as JSON (document structure - try different approaches)
-    json_path = outputs_dir / f"{base_filename}.json"
-    try:
-        # Try to get document as dict if available
-        if hasattr(doc.document, 'to_dict'):
-            doc_dict = doc.document.to_dict()
-        elif hasattr(doc.document, 'dict'):
-            doc_dict = doc.document.dict()
-        else:
-            # Fallback: create a basic structure
-            doc_dict = {
-                "filename": base_filename,
-                "pages": len(doc.document.pages) if hasattr(doc.document, 'pages') else 0,
-                "export_types": ["markdown", "html"],
-                "note": "Full document structure not serializable to JSON"
-            }
-
-        with open(json_path, 'w', encoding='utf-8') as f:
-            json.dump(doc_dict, f, indent=2, ensure_ascii=False, default=str)
-        print(f"Saved JSON: {json_path}")
-    except Exception as e:
-        print(f"Could not save JSON: {e}")
-        # Create a minimal JSON with metadata
-        minimal_data = {
-            "filename": base_filename,
-            "pages": len(doc.document.pages) if hasattr(doc.document, 'pages') else 0,
-            "error": f"Could not serialize full document: {str(e)}"
-        }
-        with open(json_path, 'w', encoding='utf-8') as f:
-            json.dump(minimal_data, f, indent=2, ensure_ascii=False)
-        print(f"Saved minimal JSON: {json_path}")
-
-    # Save as HTML
-    html_path = outputs_dir / f"{base_filename}.html"
-    with open(html_path, 'w', encoding='utf-8') as f:
-        f.write(doc.document.export_to_html())
-    print(f"Saved HTML: {html_path}")
-
-    return {
-        "markdown": str(markdown_path),
-        "json": str(json_path),
-        "html": str(html_path)
-    }
+    saved_files = export_docling_outputs(doc.document, outputs_dir, base_filename)
+    for export_name, export_path in saved_files.items():
+        print(f"Saved {export_name.upper()}: {export_path}")
+    return saved_files
 
 def insert_image_blurbs_in_markdown(markdown_content, image_metadata):
     """

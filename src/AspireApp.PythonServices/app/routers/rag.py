@@ -4,7 +4,8 @@ import logging
 
 from ..services.database_service import DatabaseService
 from ..services.neo4j_service import Neo4jService
-from ..models.models import SemanticQuery
+from ..services.lightrag_query_service import LightRagQueryService
+from ..models.models import SemanticQuery, LightRagQueryRequest, LightRagQueryResponse
 
 router = APIRouter(prefix="/rag", tags=["rag"])
 logger = logging.getLogger(__name__)
@@ -16,6 +17,10 @@ def get_database_service():
 
 def get_neo4j_service():
     return Neo4jService()
+
+
+def get_lightrag_query_service():
+    return LightRagQueryService()
 
 
 @router.get("/search-documents")
@@ -121,6 +126,25 @@ async def semantic_search(
         raise HTTPException(status_code=500, detail=str(e))
 
 
+@router.post("/lightrag-query", response_model=LightRagQueryResponse)
+async def lightrag_query(
+    query: LightRagQueryRequest,
+    lightrag: LightRagQueryService = Depends(get_lightrag_query_service)
+):
+    """Query LightRAG through the Python retrieval layer."""
+    try:
+        return lightrag.query_data(query)
+    except ValueError as e:
+        logger.warning(f"Invalid LightRAG query request: {e}")
+        raise HTTPException(status_code=400, detail=str(e))
+    except RuntimeError as e:
+        logger.error(f"LightRAG query failed: {e}")
+        raise HTTPException(status_code=502, detail=str(e))
+    except Exception as e:
+        logger.error(f"Unexpected LightRAG query failure: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 @router.get("/health")
 async def rag_health_check(
     db: DatabaseService = Depends(get_database_service),
@@ -131,7 +155,7 @@ async def rag_health_check(
         # Check database
         db_healthy = True
         try:
-            db.get_all_documents()
+            db.list_documents()
         except Exception:
             db_healthy = False
         

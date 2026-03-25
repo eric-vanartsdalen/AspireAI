@@ -3,6 +3,7 @@ import logging
 
 from ..services.database_service import DatabaseService
 from ..services.service_factory import get_docling_service
+from ..services.lightrag_handoff_service import LightRagHandoffService
 from ..services.neo4j_service import Neo4jService
 from ..models.models import ProcessingStatus
 
@@ -22,7 +23,8 @@ async def process_document_task(
     document_id: int,
     db: DatabaseService,
     docling,  # Don't type hint since it could be either service
-    neo4j: Neo4jService
+    neo4j: Neo4jService,
+    lightrag_handoff: LightRagHandoffService | None = None,
 ):
     """Background task to process a document"""
     try:
@@ -40,6 +42,11 @@ async def process_document_task(
         
         # Process with docling (full or fallback)
         processed_doc, pages = docling.process_document(document, resolved_file_path)
+        _attempt_lightrag_handoff(
+            document=document,
+            processed_doc=processed_doc,
+            lightrag_handoff=lightrag_handoff or LightRagHandoffService(),
+        )
         
         # Create Neo4j nodes
         page_node_ids = []
@@ -87,6 +94,35 @@ async def process_document_task(
         logger.error(f"Error processing document {document_id}: {e}")
         db.update_file_status(document_id, "error", str(e))
         raise
+
+
+def _attempt_lightrag_handoff(document, processed_doc, lightrag_handoff: LightRagHandoffService) -> None:
+    metadata = getattr(processed_doc, "processing_metadata", None) or {}
+    markdown_path = metadata.get("markdown_path")
+
+    if not markdown_path:
+        logger.info(
+            "Skipping LightRAG handoff for document %s because no markdown export was produced",
+            document.id,
+        )
+        return
+
+    try:
+        handoff_result = lightrag_handoff.handoff_document(document, markdown_path)
+    except Exception as exc:
+        logger.warning(
+            "LightRAG handoff failed for document %s: %s",
+            document.id,
+            exc,
+        )
+        metadata["lightrag"] = {
+            "scan_requested": False,
+            "error": str(exc),
+        }
+    else:
+        metadata["lightrag"] = handoff_result
+
+    processed_doc.processing_metadata = metadata
 
 
 @router.post("/process-document/{document_id}")

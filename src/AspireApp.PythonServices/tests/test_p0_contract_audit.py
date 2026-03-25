@@ -326,6 +326,33 @@ class DatabaseContractAuditTests(unittest.TestCase):
                 self.assertIsNone(status.error_message)
                 self.assertIsNone(status.completed_at)
 
+    def test_database_service_runtime_roots_tolerate_container_style_module_paths(self):
+        with _patched_dependencies():
+            import app.services.database_service as database_service_module
+
+            DatabaseService = database_service_module.DatabaseService
+
+            with tempfile.TemporaryDirectory() as temp_dir:
+                db_path = Path(temp_dir) / "data-resources.db"
+                previous_db_path = os.environ.get("ASPIRE_DB_PATH")
+                original_file = database_service_module.__file__
+                os.environ["ASPIRE_DB_PATH"] = str(db_path)
+                try:
+                    database_service_module.__file__ = "/app/app/services/database_service.py"
+                    _close_database_pools(DatabaseService)
+                    service = DatabaseService()
+                    runtime_roots = [str(root) for root in service._runtime_data_roots]
+                finally:
+                    database_service_module.__file__ = original_file
+                    _close_database_pools(DatabaseService)
+                    if previous_db_path is None:
+                        os.environ.pop("ASPIRE_DB_PATH", None)
+                    else:
+                        os.environ["ASPIRE_DB_PATH"] = previous_db_path
+
+                normalized_roots = {root.replace("\\", "/") for root in runtime_roots}
+                self.assertIn("/app/data", normalized_roots)
+
 
 def _close_database_pools(database_service_type) -> None:
     for pool in database_service_type._pools.values():
@@ -354,11 +381,12 @@ class UploadPathNormalizationAuditTests(unittest.TestCase):
 
             fake_converter.calls.clear()
             docling = DoclingService(data_path=temp_dir)
-            docling.process_document(document, resolved_path)
+            processed_doc, _ = docling.process_document(document, resolved_path)
 
             self.assertEqual(
                 str(uploaded_file.resolve()), fake_converter.calls[-1]
             )
+            return processed_doc
         finally:
             _close_database_pools(DatabaseService)
             gc.collect()
@@ -393,9 +421,11 @@ class UploadPathNormalizationAuditTests(unittest.TestCase):
                     processing_status="pending",
                 )
 
-                self._run_with_resolved_path(
+                processed_doc = self._run_with_resolved_path(
                     fake_converter, document, temp_dir, uploaded_file
                 )
+                markdown_path = Path(processed_doc.processing_metadata["markdown_path"])
+                self.assertTrue(markdown_path.exists())
 
     def test_docling_should_guard_windows_directory_values_from_the_database(self):
         with _patched_dependencies(include_docling=True) as fake_converter:
@@ -419,9 +449,11 @@ class UploadPathNormalizationAuditTests(unittest.TestCase):
                     processing_status="pending",
                 )
 
-                self._run_with_resolved_path(
+                processed_doc = self._run_with_resolved_path(
                     fake_converter, document, temp_dir, uploaded_file
                 )
+                markdown_path = Path(processed_doc.processing_metadata["markdown_path"])
+                self.assertTrue(markdown_path.exists())
 
 
 if __name__ == "__main__":

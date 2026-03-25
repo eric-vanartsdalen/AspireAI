@@ -1,16 +1,21 @@
 import gc
+import json
 import os
 import shutil
 import sys
+import tempfile
 import types
 import unittest
 from contextlib import contextmanager
+from http.server import BaseHTTPRequestHandler, HTTPServer
 from pathlib import Path
+from threading import Thread
 from types import SimpleNamespace
 from uuid import uuid4
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
+REPO_ROOT = Path(__file__).resolve().parents[3]
 SCRATCH_ROOT = Path(__file__).resolve().parent / "_scratch_processing_pipeline"
 
 
@@ -83,10 +88,14 @@ def _install_fake_fastapi() -> None:
     def Depends(dependency):
         return dependency
 
+    def Query(default=None, **kwargs):
+        return default
+
     module.APIRouter = APIRouter
     module.HTTPException = HTTPException
     module.Depends = Depends
     module.BackgroundTasks = BackgroundTasks
+    module.Query = Query
     sys.modules["fastapi"] = module
 
 
@@ -320,6 +329,25 @@ class FakeDocling:
         return self.processed_doc, self.pages
 
 
+class FakeLightRagHandoff:
+    def __init__(self, error: Exception = None):
+        self.error = error
+        self.calls = []
+
+    def handoff_document(self, document, markdown_path):
+        self.calls.append((document, markdown_path))
+        if self.error is not None:
+            raise self.error
+        return {
+            "staged_input_path": f"/app/data/inputs/{document.id:06d}.md",
+            "scan_requested": True,
+            "scan_response": {
+                "status": "scanning_started",
+                "track_id": f"scan-{document.id}",
+            },
+        }
+
+
 class ProcessDocumentTaskRegressionTests(unittest.IsolatedAsyncioTestCase):
     async def test_process_document_task_marks_processed_and_persists_pages(self):
         with _patched_processing_dependencies():
@@ -330,6 +358,7 @@ class ProcessDocumentTaskRegressionTests(unittest.IsolatedAsyncioTestCase):
                 docling_document_path="/app/data/processed/documents/41/document.json",
                 total_pages=2,
                 neo4j_node_id=None,
+                processing_metadata={"markdown_path": "/app/data/processed/documents/41/outputs/stored-file.md"},
             )
             pages = [
                 SimpleNamespace(page_number=1, content="Page one", metadata={"section": "intro"}),
@@ -338,8 +367,9 @@ class ProcessDocumentTaskRegressionTests(unittest.IsolatedAsyncioTestCase):
             db = FakeDatabase(document=document, resolved_path=Path("C:\\app\\data\\uploads\\stored-file.pdf"))
             docling = FakeDocling(processed_doc=processed_doc, pages=pages)
             neo4j = FakeNeo4j()
+            lightrag_handoff = FakeLightRagHandoff()
 
-            await process_document_task(41, db, docling, neo4j)
+            await process_document_task(41, db, docling, neo4j, lightrag_handoff)
 
             self.assertEqual(
                 [(41, "processing", None), (41, "processed", None)],
@@ -377,6 +407,21 @@ class ProcessDocumentTaskRegressionTests(unittest.IsolatedAsyncioTestCase):
                 ],
                 db.saved_pages,
             )
+            self.assertEqual(
+                [(document, "/app/data/processed/documents/41/outputs/stored-file.md")],
+                lightrag_handoff.calls,
+            )
+            self.assertEqual(
+                {
+                    "staged_input_path": "/app/data/inputs/000041.md",
+                    "scan_requested": True,
+                    "scan_response": {
+                        "status": "scanning_started",
+                        "track_id": "scan-41",
+                    },
+                },
+                processed_doc.processing_metadata["lightrag"],
+            )
 
     async def test_process_document_task_marks_error_when_processing_fails(self):
         with _patched_processing_dependencies():
@@ -402,6 +447,188 @@ class ProcessDocumentTaskRegressionTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual([(document, db.resolved_path)], docling.calls)
             self.assertEqual([], db.processing_results)
             self.assertEqual([], db.saved_pages)
+
+    async def test_process_document_task_keeps_processing_successful_when_lightrag_handoff_fails(self):
+        with _patched_processing_dependencies():
+            from app.routers.processing import process_document_task
+
+            document = SimpleNamespace(id=88, filename="handoff-file.pdf")
+            processed_doc = SimpleNamespace(
+                docling_document_path="/app/data/processed/documents/88/document.json",
+                total_pages=1,
+                neo4j_node_id=None,
+                processing_metadata={"markdown_path": "/app/data/processed/documents/88/outputs/handoff-file.md"},
+            )
+            pages = [
+                SimpleNamespace(page_number=1, content="Page one", metadata={"section": "intro"}),
+            ]
+            db = FakeDatabase(document=document, resolved_path=Path("C:\\app\\data\\uploads\\handoff-file.pdf"))
+            docling = FakeDocling(processed_doc=processed_doc, pages=pages)
+            neo4j = FakeNeo4j()
+            lightrag_handoff = FakeLightRagHandoff(error=RuntimeError("scan endpoint unavailable"))
+
+            await process_document_task(88, db, docling, neo4j, lightrag_handoff)
+
+            self.assertEqual(
+                [(88, "processing", None), (88, "processed", None)],
+                db.status_updates,
+            )
+            self.assertEqual(
+                {
+                    "scan_requested": False,
+                    "error": "scan endpoint unavailable",
+                },
+                processed_doc.processing_metadata["lightrag"],
+            )
+
+
+class LightRagHandoffServiceTests(unittest.TestCase):
+    def test_handoff_stages_markdown_and_uses_documented_scan_endpoint(self):
+        requests_seen = []
+
+        class ScanHandler(BaseHTTPRequestHandler):
+            def do_POST(self):  # noqa: N802 - stdlib callback name
+                requests_seen.append(self.path)
+                self.send_response(200)
+                self.send_header("Content-Type", "application/json")
+                self.end_headers()
+                self.wfile.write(
+                    json.dumps(
+                        {
+                            "status": "scanning_started",
+                            "message": "Scanning process has been initiated in the background",
+                            "track_id": "scan-123",
+                        }
+                    ).encode("utf-8")
+                )
+
+            def log_message(self, format, *args):  # noqa: A003 - stdlib callback name
+                return None
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            server = HTTPServer(("127.0.0.1", 0), ScanHandler)
+            thread = Thread(target=server.serve_forever, daemon=True)
+            thread.start()
+
+            try:
+                source_markdown = Path(temp_dir) / "source.md"
+                source_markdown.write_text("# Report\n\nBody", encoding="utf-8")
+
+                with _patched_database_dependencies():
+                    from app.services.lightrag_handoff_service import LightRagHandoffService
+
+                    service = LightRagHandoffService(
+                        input_dir=Path(temp_dir) / "inputs",
+                        service_url=f"http://127.0.0.1:{server.server_port}",
+                    )
+
+                    document = SimpleNamespace(
+                        id=5,
+                        filename="stored-file.pdf",
+                        original_filename="Quarterly Report.pdf",
+                    )
+
+                    result = service.handoff_document(document, source_markdown)
+            finally:
+                server.shutdown()
+                thread.join(timeout=5)
+                server.server_close()
+
+            staged_path = Path(result["staged_input_path"])
+            self.assertTrue(staged_path.exists())
+            self.assertEqual("# Report\n\nBody", staged_path.read_text(encoding="utf-8"))
+            self.assertEqual(["/documents/scan"], requests_seen)
+            self.assertEqual("scanning_started", result["scan_response"]["status"])
+            self.assertEqual("scan-123", result["scan_response"]["track_id"])
+            self.assertTrue(staged_path.name.startswith("000005-quarterly-report"))
+
+
+class LightRagQueryServiceTests(unittest.TestCase):
+    def test_query_data_uses_documented_query_data_endpoint(self):
+        requests_seen = []
+
+        class QueryHandler(BaseHTTPRequestHandler):
+            def do_POST(self):  # noqa: N802 - stdlib callback name
+                body = self.rfile.read(int(self.headers["Content-Length"])).decode("utf-8")
+                requests_seen.append((self.path, json.loads(body)))
+                self.send_response(200)
+                self.send_header("Content-Type", "application/json")
+                self.end_headers()
+                self.wfile.write(
+                    json.dumps(
+                        {
+                            "status": "success",
+                            "message": "retrieval complete",
+                            "data": {"chunks": [{"content": "Revenue increased in Q1."}]},
+                            "metadata": {"mode": "mix"},
+                        }
+                    ).encode("utf-8")
+                )
+
+            def log_message(self, format, *args):  # noqa: A003 - stdlib callback name
+                return None
+
+        server = HTTPServer(("127.0.0.1", 0), QueryHandler)
+        thread = Thread(target=server.serve_forever, daemon=True)
+        thread.start()
+
+        try:
+            with _patched_database_dependencies():
+                from app.models.models import LightRagQueryRequest
+                from app.services.lightrag_query_service import LightRagQueryService
+
+                service = LightRagQueryService(
+                    service_url=f"http://127.0.0.1:{server.server_port}",
+                    query_timeout_seconds=5,
+                )
+
+                result = service.query_data(
+                    LightRagQueryRequest(
+                        query="quarterly revenue",
+                        mode="mix",
+                        top_k=5,
+                        chunk_top_k=3,
+                    )
+                )
+        finally:
+            server.shutdown()
+            thread.join(timeout=5)
+            server.server_close()
+
+        self.assertEqual(
+            [
+                (
+                    "/query/data",
+                    {
+                        "query": "quarterly revenue",
+                        "mode": "mix",
+                        "top_k": 5,
+                        "chunk_top_k": 3,
+                        "include_references": True,
+                        "include_chunk_content": True,
+                    },
+                )
+            ],
+            requests_seen,
+        )
+        self.assertEqual("success", result["status"])
+        self.assertEqual("retrieval complete", result["message"])
+        self.assertEqual("mix", result["metadata"]["mode"])
+
+
+class LightRagAppHostContractTests(unittest.TestCase):
+    def test_apphost_uses_http_endpoint_and_explicit_neo4j_graph_storage(self):
+        app_host_source = (REPO_ROOT / "src" / "AspireApp.AppHost" / "AppHost.cs").read_text(encoding="utf-8")
+
+        self.assertIn('.WithEnvironment("LIGHTRAG_GRAPH_STORAGE", "Neo4JStorage")', app_host_source)
+        self.assertIn('.WithHttpEndpoint(port: 9621, targetPort: 9621, name: "http")', app_host_source)
+        self.assertIn('ReferenceExpression.Create(', app_host_source)
+        self.assertIn('EndpointProperty.HostAndPort', app_host_source)
+        self.assertIn('.WithEnvironment("NEO4J_URI", neo4jBoltUri)', app_host_source)
+        self.assertIn('.WithEnvironment("NEO4J_BOLT_URL", neo4jBoltUri)', app_host_source)
+        self.assertNotIn('.WithEnvironment("NEO4J_URI", neo4jDb.GetEndpoint("bolt"))', app_host_source)
+        self.assertIn('pythonServices.WithEnvironment("LIGHTRAG_URL", lightrag.GetEndpoint("http"));', app_host_source)
+        self.assertNotIn('pythonServices.WithEnvironment("LIGHTRAG_URL", lightrag.GetEndpoint("tcp"));', app_host_source)
 
 
 if __name__ == "__main__":
