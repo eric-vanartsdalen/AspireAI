@@ -228,3 +228,16 @@
 
 **Next Phase:** Jeff owns canonical Python contract surface maintenance. Validation gates remain live.
 
+### 2026-03-25 — P1 Processing Pipeline Stabilization
+
+**Completed:**
+- Stabilized retries by clearing stale docling/Neo4j result fields and existing `document_pages` rows whenever a file re-enters `processing`.
+- Kept batch selection aligned with the canonical lifecycle by allowing both `uploaded` and `error` rows back into the processing queue.
+- Hardened the processing router so duplicate starts are rejected while a file is already in `processing`.
+
+**Validation:**
+- `python -m compileall src\\AspireApp.PythonServices\\app`
+- `python src\\AspireApp.PythonServices\\tests\\test_p0_contract_audit.py`
+
+**Key insight:** Retry safety in the canonical `files` + `document_pages` schema depends on resetting derived artifacts at the start of a new attempt. Otherwise the `(file_id, page_number)` uniqueness rule turns partial failures into duplicate-write failures on retry.
+

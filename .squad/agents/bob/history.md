@@ -244,3 +244,22 @@
 - Fixture: `src/AspireApp.WebTest/Fixtures/TestFixture.cs`
 - Model: `src/AspireApp.WebTest/DataModels/AppHostMappingModel.cs`
 
+
+### 2026-03-25 — Roadmap Maintenance & Challenge Tracking
+
+**Scope:** User directive — keep oadmap/Tasks.md updated as work progresses; track emerging implementation challenges.
+
+**Work Completed:**
+- Added maintainer reminder blockquote at top of Tasks.md (enforces active status updates)
+- Created "Implementation Challenges & Revisit Items" section:
+  - Infrastructure risks: Volume mount validation (Gate B may fail silently)
+  - Architectural unknowns: LightRAG integration surface clarity
+  - Technical debt signals: Weak env-var testing, sparse test coverage
+  - Performance: Neo4j batch write profiling not yet done
+
+**Decision Generated:**
+- **Roadmap Status Tracking & Challenge Log** — Process rule: roadmap edits happen during/immediately after task completion, not retroactively
+
+**Impact:** Roadmap is now a living document with embedded discipline. Challenges surface early for cross-team visibility. Foundation for next iteration planning.
+
+**Related:** Decision merged to .squad/decisions.md. Orchestration log at .squad/orchestration-log/2026-03-25T14-09-00Z-bob.md. Session log at .squad/log/2026-03-25T14-09-00Z-roadmap-maintenance.md.

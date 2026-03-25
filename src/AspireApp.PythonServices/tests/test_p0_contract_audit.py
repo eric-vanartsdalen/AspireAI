@@ -176,13 +176,21 @@ class DatabaseContractAuditTests(unittest.TestCase):
                     document = service.get_document_by_id(file_id)
                     unprocessed = service.list_unprocessed_documents()
 
-                    service.update_file_status(file_id, "processed")
+                    service.update_file_status(file_id, "processing")
                     service.update_file_processing_results(
                         file_id=file_id,
                         docling_path="/app/data/processed/documents/1/document.json",
                         total_pages=3,
                     )
+                    service.save_document_page(
+                        file_id=file_id,
+                        page_number=1,
+                        content="Persisted page content",
+                        metadata={"page_number": 1},
+                    )
+                    service.update_file_status(file_id, "processed")
                     status = service.get_processing_status(file_id)
+                    pages = service.get_document_pages(file_id)
                 finally:
                     _close_database_pools(DatabaseService)
                     if previous_db_path is None:
@@ -202,6 +210,121 @@ class DatabaseContractAuditTests(unittest.TestCase):
                 self.assertEqual(1, len(unprocessed))
                 self.assertEqual("processed", status.status)
                 self.assertEqual(3, status.total_pages)
+                self.assertEqual(1, len(pages))
+                self.assertEqual("Persisted page content", pages[0]["content"])
+
+    def test_unprocessed_documents_include_retryable_error_rows(self):
+        with _patched_dependencies():
+            from app.services.database_service import DatabaseService
+
+            with tempfile.TemporaryDirectory() as temp_dir:
+                db_path = Path(temp_dir) / "data-resources.db"
+                previous_db_path = os.environ.get("ASPIRE_DB_PATH")
+                os.environ["ASPIRE_DB_PATH"] = str(db_path)
+                try:
+                    _close_database_pools(DatabaseService)
+                    service = DatabaseService()
+
+                    uploaded_id = service.create_file_record(
+                        file_name="uploaded.pdf",
+                        original_file_name="uploaded.pdf",
+                        file_path=str(Path(temp_dir) / "uploads"),
+                        status="uploaded",
+                    )
+                    failed_id = service.create_file_record(
+                        file_name="failed.pdf",
+                        original_file_name="failed.pdf",
+                        file_path=str(Path(temp_dir) / "uploads"),
+                        status="uploaded",
+                    )
+                    processing_id = service.create_file_record(
+                        file_name="processing.pdf",
+                        original_file_name="processing.pdf",
+                        file_path=str(Path(temp_dir) / "uploads"),
+                        status="uploaded",
+                    )
+                    processed_id = service.create_file_record(
+                        file_name="processed.pdf",
+                        original_file_name="processed.pdf",
+                        file_path=str(Path(temp_dir) / "uploads"),
+                        status="uploaded",
+                    )
+
+                    service.update_file_status(failed_id, "processing")
+                    service.update_file_status(failed_id, "error", "boom")
+                    service.update_file_status(processing_id, "processing")
+                    service.update_file_status(processed_id, "processing")
+                    service.update_file_status(processed_id, "processed")
+
+                    retryable_ids = {
+                        doc.id for doc in service.list_unprocessed_documents()
+                    }
+                finally:
+                    _close_database_pools(DatabaseService)
+                    if previous_db_path is None:
+                        os.environ.pop("ASPIRE_DB_PATH", None)
+                    else:
+                        os.environ["ASPIRE_DB_PATH"] = previous_db_path
+
+                self.assertEqual({uploaded_id, failed_id}, retryable_ids)
+
+    def test_processing_status_resets_stale_artifacts_on_retry(self):
+        with _patched_dependencies():
+            from app.services.database_service import DatabaseService
+
+            with tempfile.TemporaryDirectory() as temp_dir:
+                db_path = Path(temp_dir) / "data-resources.db"
+                previous_db_path = os.environ.get("ASPIRE_DB_PATH")
+                os.environ["ASPIRE_DB_PATH"] = str(db_path)
+                try:
+                    _close_database_pools(DatabaseService)
+                    service = DatabaseService()
+                    file_id = service.create_file_record(
+                        file_name="retry.pdf",
+                        original_file_name="retry.pdf",
+                        file_path=str(Path(temp_dir) / "uploads"),
+                        status="uploaded",
+                    )
+
+                    service.update_file_status(file_id, "processing")
+                    service.update_file_processing_results(
+                        file_id=file_id,
+                        docling_path="/app/data/processed/documents/retry/document.json",
+                        total_pages=2,
+                        neo4j_node_id="doc-node",
+                    )
+                    service.save_document_page(
+                        file_id=file_id,
+                        page_number=1,
+                        content="Old page",
+                        metadata={"attempt": 1},
+                        neo4j_node_id="page-node",
+                    )
+                    service.update_file_status(file_id, "error", "first attempt failed")
+
+                    service.update_file_status(file_id, "processing")
+
+                    record = service.get_file_by_id(file_id)
+                    status = service.get_processing_status(file_id)
+                    pages = service.get_document_pages(file_id)
+                finally:
+                    _close_database_pools(DatabaseService)
+                    if previous_db_path is None:
+                        os.environ.pop("ASPIRE_DB_PATH", None)
+                    else:
+                        os.environ["ASPIRE_DB_PATH"] = previous_db_path
+
+                self.assertEqual("processing", record["status"])
+                self.assertIsNotNone(record["processing_started_at"])
+                self.assertIsNone(record["processing_completed_at"])
+                self.assertIsNone(record["processing_error"])
+                self.assertIsNone(record["docling_document_path"])
+                self.assertIsNone(record["total_pages"])
+                self.assertIsNone(record["neo4j_document_node_id"])
+                self.assertEqual([], pages)
+                self.assertEqual("processing", status.status)
+                self.assertIsNone(status.error_message)
+                self.assertIsNone(status.completed_at)
 
 
 def _close_database_pools(database_service_type) -> None:
