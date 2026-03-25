@@ -2,7 +2,8 @@
 using Aspire.Hosting.ApplicationModel;
 using Aspire.Hosting.Testing;
 using AspireApp.WebTest.DataModels;
-using Google.Protobuf.WellKnownTypes;
+using Microsoft.Extensions.Configuration;
+using Microsoft.Extensions.Hosting;
 using Microsoft.Playwright;
 using System.Text;
 
@@ -24,23 +25,42 @@ public class TestFixture : IAsyncLifetime
 
 	public async Task InitializeAsync()
 	{
+		var appHostContentRoot = GetAppHostContentRoot();
+		// determine mode in use
+		var debugMode = false;
+		var configFile = "appsettings.json";
+#if DEBUG
+		Console.WriteLine("Debug build");
+		configFile = "appsettings.Development.json";
+		debugMode = true;
+#else
+			Console.WriteLine("Release build");
+#endif
+		var configuration = new ConfigurationBuilder()
+			.AddJsonFile(Path.Combine(appHostContentRoot, configFile), optional: false)
+			.Build();
+		Assert.NotNull(configuration);
+
 		// ✅ Start Aspire AppHost
 		var appHost = await DistributedApplicationTestingBuilder
 			.CreateAsync<Projects.AspireApp_AppHost>(
 				[],
-				static (applicationOptions, _) =>
+				(applicationOptions, hostOptions) =>
 				{
 					applicationOptions.DisableDashboard = false;
 					applicationOptions.AllowUnsecuredTransport = true;
-				});
 
+					// Match a normal AppHost run so the dashboard sees the same config files.
+					hostOptions.ContentRootPath = appHostContentRoot;
+					hostOptions.EnvironmentName = debugMode ? Environments.Development : Environments.Production;
+				});
 		_app = await appHost.BuildAsync();
 		await _app.StartAsync();
 
 		// ✅ Resolve Aspire Dashboard endpoint including token
 		var dashboardState = await _app.ResourceNotifications.WaitForResourceHealthyAsync(AspireDashboardResourceName);
-		var _aspireDashboardUri = GetEnvironmentVariable(
-			dashboardState.Snapshot.EnvironmentVariables, 
+		var _aspireDashboardUri = GetRequiredEnvironmentVariable(
+			dashboardState.Snapshot.EnvironmentVariables,
 			DashboardPublicUrlEnvironmentVariable);
 		var _aspireDashboardBrowserToken = GetRequiredEnvironmentVariable(
 			dashboardState.Snapshot.EnvironmentVariables,
@@ -52,9 +72,8 @@ public class TestFixture : IAsyncLifetime
 
 		var builder = new StringBuilder().Append(_aspireDashboardUri + "login?t=" + _aspireDashboardBrowserToken);
 		AppHostMapping.AspireDashboardLoginUri = builder.ToString();
-
-		AppHostMapping.WebfrontendUri = _app.GetEndpoint("webfrontend", "http").AbsoluteUri;
-		AppHostMapping.OllamaUri = _app.GetEndpoint("ollama", "http").AbsoluteUri;
+		AppHostMapping.WebfrontendUri = _app.GetEndpoint("webfrontend", "https").AbsoluteUri.TrimEnd('/');
+		AppHostMapping.OllamaUri = _app.GetEndpoint("ollama", "http").AbsoluteUri.TrimEnd('/');
 
 		// ✅ Start Playwright
 		_playwright = await Playwright.CreateAsync();
@@ -117,5 +136,28 @@ public class TestFixture : IAsyncLifetime
 		}
 
 		return null;
+	}
+
+	private static string GetAppHostContentRoot()
+	{
+		var appHostContentRoot = Path.GetFullPath(
+			Path.Combine(AppContext.BaseDirectory, "..", "..", "..", "..", "AspireApp.AppHost"));
+		// determine mode in use
+		var debugMode = false;
+#if DEBUG
+		Console.WriteLine("Debug build");
+		debugMode = true;
+#else
+			Console.WriteLine("Release build");
+#endif
+		string targetConfigFilename = debugMode
+			? "appsettings.Development.json"
+			: "appsettings.json";
+		if (!File.Exists(Path.Combine(appHostContentRoot, targetConfigFilename)))
+		{
+			throw new DirectoryNotFoundException(
+				$"Could not locate the AspireApp.AppHost content root at '{appHostContentRoot}'.");
+		}
+		return appHostContentRoot;
 	}
 }

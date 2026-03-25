@@ -6,7 +6,7 @@ public class AppHostMappingModel
 {
 	public IBrowserContext? BrowserContext { get; set; }
 
-	public string AspireDashboardLoginUri { get; set; }
+	public string AspireDashboardLoginUri { get; set; } = string.Empty;
 	public string WebfrontendUri { get; set; } = string.Empty;
 	public string OllamaUri { get; set; } = string.Empty;
 
