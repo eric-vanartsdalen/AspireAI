@@ -532,3 +532,36 @@ This created a data integrity risk: C# and Python would disagree on the actual c
 - **All:** The `TestFixture.cs` token/URL capture infrastructure is confirmed sound — only the assertion strategy needed fixing.
 
 
+
+---
+
+## Processing Pipeline Retry & Lifecycle Canonicalization — Jarvis & Buster — 2026-03-25
+
+**Scope:** P1 Item 1 — Stabilize canonical uploaded to processing to processed/error lifecycle; prevent duplicate processing
+
+### Processing Retry Reset (Jarvis Decision)
+
+When a file enters processing, the Python service now resets stale processing artifacts in the same lifecycle step. That includes clearing completion/error fields, clearing docling/Neo4j output columns, and deleting any existing document_pages rows for the file.
+
+**Rationale:** Retries were not safe if a previous attempt partially persisted output before failing. The canonical schema enforces UNIQUE(file_id, page_number), so leaving old page rows behind turns recovery attempts into duplicate-write failures instead of a clean retry.
+
+**Impact:**
+- Keeps lifecycle transitions canonical: uploaded to processing to processed / error
+- Allows failed rows to re-enter batch processing without manual cleanup
+- Preserves processed rows unless an explicit new processing attempt is started
+
+### Processing Retries Stay Canonical (Buster Decision)
+
+Failed files rows must be retry-eligible for the Python processing pipeline. The next processing transition must clear stale failure markers before work resumes.
+
+**QA Expectations:**
+- Canonical lifecycle stays uploaded to processing to processed / error
+- Failed rows remain discoverable by list_unprocessed_documents()
+- Retrying a failed row clears stale processing_error and processing_completed_at
+- process_document_task() is covered for both success and failure status updates
+
+**Rationale:** Without this rule, batch reprocessing silently skips failures or reports contradictory state (processing with an old completion timestamp/error). That regression passes happy-path tests and still burns operators.
+
+**Verification Status:** All regression tests passed. Contract audit passed. Database schema validated.
+
+---

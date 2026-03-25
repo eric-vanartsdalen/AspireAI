@@ -212,3 +212,10 @@
 
 **Decision Logged:** "Aspire Dashboard Playwright Tests Must Wait for Auth Redirect" in `.squad/decisions.md` for team adoption.
 
+### 2026-03-25 — P1 Processing Pipeline Regression Gate
+
+- **Focused regression coverage exists now.** Added `src/AspireApp.PythonServices/tests/test_processing_pipeline_regression.py` with dependency-free `unittest` coverage for the processing lifecycle plus direct `process_document_task()` orchestration.
+- **Retry behavior is part of the QA contract.** Failed `files` rows must remain eligible for `list_unprocessed_documents()`, and a transition back to `processing` must clear stale completion/error fields before a rerun can be treated as clean.
+- **Validation gate for this area:** `python -m unittest discover -s src\AspireApp.PythonServices\tests -p "test_*.py" -v` plus `python test_database_schema.py` both pass on the current working tree.
+- **Reusable test pattern:** when workstation Python lacks FastAPI/Pydantic, stub those modules via `sys.modules`, purge cached `app.*` modules between imports, and keep SQLite scratch data under a repo-local test folder instead of OS temp paths.
+
