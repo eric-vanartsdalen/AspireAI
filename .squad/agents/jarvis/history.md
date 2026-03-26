@@ -5,11 +5,17 @@
 - **Stack:** C# (.NET 9), Blazor, Minimal API, Python (FastAPI), Neo4j, Ollama, Docker, Aspire
 - **Created:** 2026-02-21T23:32:00Z
 
-## Learnings
-
-<!-- Append new learnings below. Each entry is something lasting about the project. -->
-
-### 2025-02-21 — Deep Python/Neo4j Analysis
+## Learnings
+
+<!-- Append new learnings below. Each entry is something lasting about the project. -->
+
+### 2026-03-26 — SQLite Startup Schema Repair
+
+- `DatabaseService._ensure_database_schema()` must treat `CREATE TABLE IF NOT EXISTS` as create-only, not as a migration path for persisted developer databases.
+- Existing SQLite files can lag the canonical schema by a column or two (`file_hash` was the observed break); startup should add missing canonical columns before creating indexes or running column-dependent queries.
+- `src/AspireApp.PythonServices/test_services.py` is most useful as a real pytest smoke suite that surfaces database initialization failures directly instead of printing and continuing.
+
+### 2025-02-21 — Deep Python/Neo4j Analysis
 
 **Key File Paths:**
 - FastAPI entry: `src/AspireApp.PythonServices/app/fastapi.py`

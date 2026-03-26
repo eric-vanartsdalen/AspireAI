@@ -318,6 +318,14 @@ GET /processing/status/{id} (200) [after completion]
 **Pattern for Future:** When testing Blazor Server UI redirects via Playwright:
 1. Use `WaitForURLAsync` to gate on redirect completion (check URL no longer contains `/login`)
 2. Use 60s+ timeouts for title polls (cold-start lag)
+3. Prefer post-login state assertions (URL/content/title contains key token) over exact title strings
+
+### 2026-03-26 — Windows SQLite Startup Path QA
+
+- **Root cause reproduced:** local `DatabaseService()` startup was selecting `C:\app\database\data-resources.db` when `ASPIRE_DB_PATH` was unset, then failing on legacy schema/index mismatch (`no such column: file_hash`) even though the repo database at `database\data-resources.db` was canonical.
+- **Exception posture:** the startup exception was not swallowed, but the old surface was misleading because it pointed at a missing column instead of making the wrong-file / legacy-schema diagnosis explicit. The revised startup path and diagnostic text now surface the failing path, SQLite error type, and schema mismatch context.
+- **Reusable QA gate:** for environment-driven fallback bugs, do **not** patch the candidate list you want to test. Patch only the environment detectors (`_get_repository_root`, `_is_running_in_container`, `Path.cwd`) so the real ordering code runs, and add a real startup-failure assertion against a temp legacy SQLite file to verify the emitted diagnostics.
+- **Smoke harness status:** `src/AspireApp.PythonServices\test_services.py` is now a real unittest smoke harness that uses the current `DatabaseService.list_documents()` API and skips optional Docling dependencies cleanly instead of dying at import time.
 3. Assert on flexible conditions (substring, not exact match)
 
 **Decision Logged:** "Aspire Dashboard Playwright Tests Must Wait for Auth Redirect" in `.squad/decisions.md` for team adoption.
