@@ -229,7 +229,7 @@ Note: This will be a living document.
 
 - [ ] Implement the chosen trigger and wire through AppHost/Web/Python as needed
 
-- [ ] Update `FlowEndToEnd` and integration tests to cover upload → trigger → `processed` / `error`; file copy alone is not ingestion success
+- [x] Update `FlowEndToEnd` and integration tests to cover upload → trigger → `processed` / `error`; file copy alone is not ingestion success
 
 - [ ] Add UI or API visibility for queue backlog (`uploaded` / retryable `error`) and stale `processing` rows
 

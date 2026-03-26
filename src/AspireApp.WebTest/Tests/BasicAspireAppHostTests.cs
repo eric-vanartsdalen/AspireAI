@@ -5,6 +5,9 @@ using Microsoft.Playwright;
 using System.ComponentModel;
 using System.Diagnostics;
 using System.Linq.Expressions;
+using System.Net;
+using System.Text.Json;
+using System.Text.Json.Serialization;
 using Xunit.v3.Priority;
 
 namespace AspireApp.WebTest.Tests;
@@ -22,6 +25,11 @@ public class BasicAspireAppHostTests : IClassFixture<TestFixture>
     private const string DeleteButtonInCell = "td button";
     private static readonly string TestFile = Path.Combine(AppContext.BaseDirectory, "..", "..", "..", "..",
             "AspireApp.WebTest", "DataExample", "increase_green_energy_one_rooftop_at_a_time.pdf");
+    private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web);
+    private static readonly TimeSpan PythonVisibilityTimeout = TimeSpan.FromSeconds(30);
+    private static readonly TimeSpan PythonVisibilityPollInterval = TimeSpan.FromMilliseconds(500);
+    private static readonly TimeSpan ProcessingPollTimeout = TimeSpan.FromMinutes(2);
+    private static readonly TimeSpan ProcessingPollInterval = TimeSpan.FromSeconds(1);
     private readonly AppHostMappingModel _data;
     protected IBrowserContext _browserContext;
 
@@ -209,45 +217,58 @@ public class BasicAspireAppHostTests : IClassFixture<TestFixture>
     [Fact, Priority(0)]
     public async Task FlowEndToEnd()
     {
+        using var webClient = CreateWebFrontendHttpClient();
+        await DeleteExistingTestUploadsAsync(webClient);
+
         IPage page = await _browserContext.NewPageAsync();
         await page.GotoAsync(_data.WebfrontendUri, _data.Options);
         await WaitForPageLoadCompletion(page);
-        // This test is currently a placeholder as it requires setting up test data and may involve
-        // more complex interactions with the UI and backend services.
-        //
-        // Using an available PDF to test the end-to-end flow of:
-        // - uploading a document example (file is in AspireApp.Webtest DataExample directory - increase_green_energy_ one_rooftop_at_a_time.pdf)
-        // (https://github.com/Azure-Samples/azure-search-sample-data/blob/main/ai-enrichment-mixed-media/increase_green_energy_%20one_rooftop_at_a_time.pdf),
-        // STEP: Click the Upload Documents tab in the Web Frontend, upload the document, and submit it for processing.
 
         await ClickByRole(AriaRole.Link, "Upload Documents", page);
-
         await SetUploadInput(TestFile, AriaRole.Button, "Choose File", page);
 
-        await ClickByRole(AriaRole.Button, "Start Upload", page);
+        var uploadButton = page.GetByRole(AriaRole.Button, new() { Name = "Start Upload" });
+        await WaitForLocator(uploadButton);
+        await uploadButton.HoverAsync();
+        await uploadButton.ClickAsync(new LocatorClickOptions() { Delay = 250 });
+        await WaitForPageLoadCompletion(page);
 
-        IReadOnlyList<ILocator> filenameCells = await page.Locator(FileNameCell).AllAsync();
-        string filename = PullFilename(TestFile).Split(".")[0];
+        var uploadedFile = await WaitForUploadedFileAsync(webClient);
 
-        foreach (var fileCell in filenameCells)
+        Assert.True(uploadedFile.Id > 0,
+            "Upload completed, but the API-backed file state did not expose a valid document id.");
+        Assert.False(string.IsNullOrWhiteSpace(uploadedFile.FileName),
+            "Upload completed, but the API-backed file state did not expose the stored file name.");
+        Assert.Equal("uploaded", uploadedFile.Status);
+
+        var documentId = uploadedFile.Id;
+        await WaitForUploadedFileRowAsync(page, uploadedFile.FileName!);
+
+        using var pythonClient = CreatePythonServiceHttpClient();
+        var visibleDocument = await WaitForPythonDocumentVisibleAsync(pythonClient, documentId);
+        Assert.Equal(documentId, visibleDocument.Id);
+
+        var triggerEndpoint = $"processing/process-document/{documentId}";
+        using var triggerResponse = await pythonClient.PostAsync(triggerEndpoint, content: null, TestContext.Current.CancellationToken);
+        var triggerBody = await triggerResponse.Content.ReadAsStringAsync(TestContext.Current.CancellationToken);
+
+        if (!triggerResponse.IsSuccessStatusCode)
         {
-            var cellText = await fileCell.Locator(FullFilenameCell).TextContentAsync();
-            if (cellText.StartsWith(filename.Split(".")[0]))
-            {
-                Debug.WriteLine($"Found file ({cellText}) that starts with {filename}");
-            }
-            Debug.WriteLine(cellText);
+            var pythonVisibilityDiagnostic = await GetPythonDocumentVisibilityDiagnosticAsync(pythonClient, documentId);
+            Assert.Fail(
+                $"Python processing trigger '{BuildAbsoluteUri(_data.PythonServiceUri, triggerEndpoint)}' returned {(int)triggerResponse.StatusCode} {triggerResponse.ReasonPhrase}. Response: {triggerBody}{Environment.NewLine}{pythonVisibilityDiagnostic}");
         }
-        // TO_DO: After uploading the document, the test should ideally verify the subsequent steps in the processing pipeline, which may require more complex setup and interactions:
-        // - processing it with the Python service
-        // STEP: Verify the Python service received the document, processed it, and sent the expected results to the Graph DB.
 
-        // - verifying the results in the Graph DB
-        // STEP: Navigate to the Graph DB frontend, login, run a query to verify the processed data from the uploaded document is present and correct.
+        var triggerResult = DeserializeJson<ProcessingTriggerResponse>(triggerBody, $"POST /{triggerEndpoint}");
+        Assert.False(string.IsNullOrWhiteSpace(triggerResult.Message),
+            $"Python processing trigger returned success but no message. Response: {triggerBody}");
 
-        // - (eventually use Chat AI to query the ingested document in the Web Frontend.//)
-        // STEP: Navigate to the AI Chat tab in the Web Frontend, ask a question related to the content of the uploaded document, and verify the response is accurate based on the document's content.
+        var finalStatus = await PollForProcessingCompletionAsync(pythonClient, documentId);
 
+        Assert.Equal("processed", finalStatus.Status);
+        Assert.True(finalStatus.TotalPages is > 0,
+            $"Document {documentId} reached '{finalStatus.Status}' but reported no extracted pages. Status payload: {finalStatus.RawJson}");
+        Assert.NotNull(finalStatus.CompletedAt);
     }
 
     [Fact, Priority(2)]
@@ -298,6 +319,250 @@ public class BasicAspireAppHostTests : IClassFixture<TestFixture>
         {
             Debug.WriteLine($"Could not find file that starts with {filename} to delete. It may have already been deleted or never uploaded.");
         }
+    }
+
+    private HttpClient CreateWebFrontendHttpClient()
+    {
+        var handler = new HttpClientHandler
+        {
+            ServerCertificateCustomValidationCallback = HttpClientHandler.DangerousAcceptAnyServerCertificateValidator
+        };
+
+        return new HttpClient(handler)
+        {
+            BaseAddress = new Uri($"{_data.WebfrontendUri.TrimEnd('/')}/"),
+            Timeout = TimeSpan.FromSeconds(30)
+        };
+    }
+
+    private HttpClient CreatePythonServiceHttpClient()
+    {
+        return new HttpClient
+        {
+            BaseAddress = new Uri($"{_data.PythonServiceUri.TrimEnd('/')}/"),
+            Timeout = TimeSpan.FromSeconds(30)
+        };
+    }
+
+    private async Task DeleteExistingTestUploadsAsync(HttpClient webClient)
+    {
+        using var listResponse = await webClient.GetAsync("api/FileUpload", TestContext.Current.CancellationToken);
+        var listBody = await listResponse.Content.ReadAsStringAsync(TestContext.Current.CancellationToken);
+
+        Assert.True(listResponse.IsSuccessStatusCode,
+            $"Could not query existing uploads before FlowEndToEnd. GET '{BuildAbsoluteUri(_data.WebfrontendUri, "api/FileUpload")}' returned {(int)listResponse.StatusCode} {listResponse.ReasonPhrase}. Response: {listBody}");
+
+        var listResult = DeserializeJson<UploadedFilesApiResponse>(listBody, "GET /api/FileUpload");
+        Assert.True(listResult.Success, $"Existing upload query returned success=false. Response: {listBody}");
+
+        var testFileName = PullFilename(TestFile);
+        var testFilePrefix = Path.GetFileNameWithoutExtension(testFileName);
+
+        foreach (var existingFile in listResult.Files.Where(file =>
+                     string.Equals(file.SourceType, "upload", StringComparison.OrdinalIgnoreCase) &&
+                     (string.Equals(file.OriginalFileName, testFileName, StringComparison.OrdinalIgnoreCase) ||
+                      (!string.IsNullOrWhiteSpace(file.FileName) &&
+                       file.FileName.StartsWith(testFilePrefix, StringComparison.OrdinalIgnoreCase)))))
+        {
+            using var deleteResponse = await webClient.DeleteAsync($"api/FileUpload/{existingFile.Id}", TestContext.Current.CancellationToken);
+            var deleteBody = await deleteResponse.Content.ReadAsStringAsync(TestContext.Current.CancellationToken);
+
+            Assert.True(deleteResponse.IsSuccessStatusCode,
+                $"Pre-test cleanup failed for document {existingFile.Id} ('{existingFile.FileName}'). DELETE '{BuildAbsoluteUri(_data.WebfrontendUri, $"api/FileUpload/{existingFile.Id}")}' returned {(int)deleteResponse.StatusCode} {deleteResponse.ReasonPhrase}. Response: {deleteBody}");
+        }
+    }
+
+    private async Task<UploadedFileApiModel> WaitForUploadedFileAsync(HttpClient webClient, int timeoutMs = 30000)
+    {
+        var waitStopwatch = Stopwatch.StartNew();
+        var testFileName = PullFilename(TestFile);
+        string lastPayload = "<no upload state returned>";
+
+        while (waitStopwatch.ElapsedMilliseconds < timeoutMs)
+        {
+            using var listResponse = await webClient.GetAsync("api/FileUpload", TestContext.Current.CancellationToken);
+            lastPayload = await listResponse.Content.ReadAsStringAsync(TestContext.Current.CancellationToken);
+
+            Assert.True(listResponse.IsSuccessStatusCode,
+                $"Upload state query '{BuildAbsoluteUri(_data.WebfrontendUri, "api/FileUpload")}' returned {(int)listResponse.StatusCode} {listResponse.ReasonPhrase}. Response: {lastPayload}");
+
+            var listResult = DeserializeJson<UploadedFilesApiResponse>(lastPayload, "GET /api/FileUpload");
+            Assert.True(listResult.Success, $"Upload state query returned success=false. Response: {lastPayload}");
+
+            var uploadedFile = listResult.Files.FirstOrDefault(file =>
+                string.Equals(file.SourceType, "upload", StringComparison.OrdinalIgnoreCase) &&
+                string.Equals(file.OriginalFileName, testFileName, StringComparison.OrdinalIgnoreCase));
+
+            if (uploadedFile is not null)
+            {
+                return uploadedFile;
+            }
+
+            await Task.Delay(500, TestContext.Current.CancellationToken);
+        }
+
+        Assert.Fail(
+            $"Timed out after {timeoutMs}ms waiting for '{testFileName}' to appear in API-backed upload state. Last payload: {lastPayload}");
+        return default!;
+    }
+
+    private async Task<string> GetPythonDocumentVisibilityDiagnosticAsync(HttpClient pythonClient, int documentId)
+    {
+        async Task<string> QueryAsync(string endpoint)
+        {
+            try
+            {
+                using var response = await pythonClient.GetAsync(endpoint, TestContext.Current.CancellationToken);
+                var body = await response.Content.ReadAsStringAsync(TestContext.Current.CancellationToken);
+                return $"GET '{BuildAbsoluteUri(_data.PythonServiceUri, endpoint)}' -> {(int)response.StatusCode} {response.ReasonPhrase}. Response: {body}";
+            }
+            catch (Exception ex)
+            {
+                return $"GET '{BuildAbsoluteUri(_data.PythonServiceUri, endpoint)}' threw {ex.GetType().Name}: {ex.Message}";
+            }
+        }
+
+        var documentDiagnostic = await QueryAsync($"documents/{documentId}");
+        var statusDiagnostic = await QueryAsync($"processing/status/{documentId}");
+        return $"Python visibility diagnostics:{Environment.NewLine}{documentDiagnostic}{Environment.NewLine}{statusDiagnostic}";
+    }
+
+    private async Task<PythonDocumentApiResponse> WaitForPythonDocumentVisibleAsync(HttpClient pythonClient, int documentId)
+    {
+        var endpoint = $"documents/{documentId}";
+        var waitStopwatch = Stopwatch.StartNew();
+        string lastResult = "<no response received>";
+
+        while (waitStopwatch.Elapsed < PythonVisibilityTimeout)
+        {
+            try
+            {
+                using var response = await pythonClient.GetAsync(endpoint, TestContext.Current.CancellationToken);
+                var body = await response.Content.ReadAsStringAsync(TestContext.Current.CancellationToken);
+                lastResult = $"{(int)response.StatusCode} {response.ReasonPhrase}. Response: {body}";
+
+                if (response.StatusCode == HttpStatusCode.NotFound)
+                {
+                    await Task.Delay(PythonVisibilityPollInterval, TestContext.Current.CancellationToken);
+                    continue;
+                }
+
+                Assert.True(response.IsSuccessStatusCode,
+                    $"Python document endpoint '{BuildAbsoluteUri(_data.PythonServiceUri, endpoint)}' returned {(int)response.StatusCode} {response.ReasonPhrase} while waiting for uploaded document visibility. Response: {body}");
+
+                var document = DeserializeJson<PythonDocumentApiResponse>(body, $"GET /{endpoint}");
+                Assert.Equal(documentId, document.Id);
+                Assert.False(string.IsNullOrWhiteSpace(document.ProcessingStatus),
+                    $"Python document endpoint returned an empty processing_status for document {documentId}. Payload: {body}");
+
+                return document;
+            }
+            catch (Exception ex) when (ex is HttpRequestException or TaskCanceledException)
+            {
+                lastResult = $"{ex.GetType().Name}: {ex.Message}";
+                await Task.Delay(PythonVisibilityPollInterval, TestContext.Current.CancellationToken);
+            }
+        }
+
+        Assert.Fail(
+            $"Timed out after {PythonVisibilityTimeout.TotalSeconds:N0}s waiting for uploaded document {documentId} to become visible through the Python API endpoint '{BuildAbsoluteUri(_data.PythonServiceUri, endpoint)}'. Last result: {lastResult}");
+
+        return default!;
+    }
+
+    private async Task<ProcessingStatusApiResponse> PollForProcessingCompletionAsync(HttpClient pythonClient, int documentId)
+    {
+        var endpoint = $"processing/status/{documentId}";
+        var observedStatuses = new List<string>();
+        var pollStopwatch = Stopwatch.StartNew();
+        string lastPayload = "<no response received>";
+
+        while (pollStopwatch.Elapsed < ProcessingPollTimeout)
+        {
+            using var statusResponse = await pythonClient.GetAsync(endpoint, TestContext.Current.CancellationToken);
+            lastPayload = await statusResponse.Content.ReadAsStringAsync(TestContext.Current.CancellationToken);
+
+            Assert.True(statusResponse.IsSuccessStatusCode,
+                $"Python status endpoint '{BuildAbsoluteUri(_data.PythonServiceUri, endpoint)}' returned {(int)statusResponse.StatusCode} {statusResponse.ReasonPhrase}. Response: {lastPayload}");
+
+            var status = DeserializeJson<ProcessingStatusApiResponse>(lastPayload, $"GET /{endpoint}");
+            status.RawJson = lastPayload;
+
+            Assert.Equal(documentId, status.DocumentId);
+            Assert.False(string.IsNullOrWhiteSpace(status.Status),
+                $"Python status endpoint returned an empty status for document {documentId}. Payload: {lastPayload}");
+
+            observedStatuses.Add(status.Status);
+
+            if (status.Status.Equals("processed", StringComparison.OrdinalIgnoreCase))
+            {
+                return status;
+            }
+
+            if (status.Status.Equals("error", StringComparison.OrdinalIgnoreCase))
+            {
+                Assert.Fail(
+                    $"Python processing reported error for document {documentId}: {status.ErrorMessage ?? "<no error_message>"}. Status payload: {lastPayload}");
+            }
+
+            if (!status.Status.Equals("uploaded", StringComparison.OrdinalIgnoreCase) &&
+                !status.Status.Equals("processing", StringComparison.OrdinalIgnoreCase))
+            {
+                Assert.Fail(
+                    $"Python status endpoint returned unexpected status '{status.Status}' for document {documentId}. Payload: {lastPayload}");
+            }
+
+            await Task.Delay(ProcessingPollInterval, TestContext.Current.CancellationToken);
+        }
+
+        Assert.Fail(
+            $"Timed out after {ProcessingPollTimeout.TotalSeconds:N0}s waiting for document {documentId} to reach 'processed'. Observed statuses: {string.Join(" -> ", observedStatuses)}. Last payload: {lastPayload}");
+
+        return default!;
+    }
+
+    private static async Task WaitForUploadedFileRowAsync(IPage page, string fileName, int timeoutMs = 15000)
+    {
+        var waitStopwatch = Stopwatch.StartNew();
+
+        while (waitStopwatch.ElapsedMilliseconds < timeoutMs)
+        {
+            var rows = await GetDocumentSourceTableRows(page);
+
+            foreach (var row in rows)
+            {
+                var cellText = (await row.Locator(FilenameCellInRow).TextContentAsync())?.Trim();
+                if (string.Equals(cellText, fileName, StringComparison.OrdinalIgnoreCase))
+                {
+                    return;
+                }
+            }
+
+            await Task.Delay(500, TestContext.Current.CancellationToken);
+        }
+
+        Assert.Fail($"Uploaded file '{fileName}' did not appear in the Upload Documents table within {timeoutMs}ms.");
+    }
+
+    private static T DeserializeJson<T>(string payload, string endpoint)
+    {
+        try
+        {
+            var result = JsonSerializer.Deserialize<T>(payload, JsonOptions);
+            Assert.NotNull(result);
+            return result!;
+        }
+        catch (JsonException ex)
+        {
+            Assert.Fail(
+                $"Endpoint '{endpoint}' returned a payload that did not match the expected contract. Error: {ex.Message}{Environment.NewLine}Payload:{Environment.NewLine}{payload}");
+            return default!;
+        }
+    }
+
+    private static string BuildAbsoluteUri(string baseUri, string relativePath)
+    {
+        return new Uri(new Uri($"{baseUri.TrimEnd('/')}/"), relativePath).AbsoluteUri;
     }
 
     private static async Task<IReadOnlyList<ILocator>> GetDocumentSourceTableRows(IPage page)
@@ -425,5 +690,64 @@ public class BasicAspireAppHostTests : IClassFixture<TestFixture>
             page.WaitForLoadStateAsync(LoadState.DOMContentLoaded, new PageWaitForLoadStateOptions { Timeout = 10000 }),
             page.WaitForLoadStateAsync(LoadState.Load, new PageWaitForLoadStateOptions { Timeout = 10000 })
         );
+    }
+
+    private sealed class UploadedFilesApiResponse
+    {
+        public bool Success { get; set; }
+        public List<UploadedFileApiModel> Files { get; set; } = [];
+    }
+
+    private sealed class UploadedFileApiModel
+    {
+        public int Id { get; set; }
+        public string? FileName { get; set; }
+        public string? OriginalFileName { get; set; }
+        public string? SourceType { get; set; }
+        public string? Status { get; set; }
+    }
+
+    private sealed class ProcessingTriggerResponse
+    {
+        public string? Message { get; set; }
+    }
+
+    private sealed class PythonDocumentApiResponse
+    {
+        [JsonPropertyName("id")]
+        public int Id { get; set; }
+
+        [JsonPropertyName("filename")]
+        public string? FileName { get; set; }
+
+        [JsonPropertyName("original_filename")]
+        public string? OriginalFilename { get; set; }
+
+        [JsonPropertyName("processing_status")]
+        public string? ProcessingStatus { get; set; }
+    }
+
+    private sealed class ProcessingStatusApiResponse
+    {
+        [JsonPropertyName("document_id")]
+        public int DocumentId { get; set; }
+
+        [JsonPropertyName("status")]
+        public string Status { get; set; } = string.Empty;
+
+        [JsonPropertyName("total_pages")]
+        public int? TotalPages { get; set; }
+
+        [JsonPropertyName("error_message")]
+        public string? ErrorMessage { get; set; }
+
+        [JsonPropertyName("started_at")]
+        public DateTime? StartedAt { get; set; }
+
+        [JsonPropertyName("completed_at")]
+        public DateTime? CompletedAt { get; set; }
+
+        [JsonIgnore]
+        public string RawJson { get; set; } = string.Empty;
     }
 }

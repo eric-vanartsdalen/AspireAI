@@ -13,6 +13,8 @@ namespace AspireApp.WebTest.Fixtures;
 public class TestFixture : IAsyncLifetime
 {
 	private const string AspireDashboardResourceName = "aspire-dashboard";
+	private const string PythonServiceResourceName = "python-service";
+	private const string WebFrontendResourceName = "webfrontend";
 	private const string DashboardBrowserTokenEnvironmentVariable = "DASHBOARD__FRONTEND__BROWSERTOKEN";
 	private const string DashboardPublicUrlEnvironmentVariable = "DASHBOARD__FRONTEND__PUBLICURL";
 
@@ -57,6 +59,11 @@ public class TestFixture : IAsyncLifetime
 				});
 		_app = await appHost.BuildAsync();
 		await _app.StartAsync();
+
+		// Wait for the primary app surfaces used by the UI tests before
+		// capturing their dynamic endpoints from Aspire.
+		await _app.ResourceNotifications.WaitForResourceHealthyAsync(WebFrontendResourceName);
+		await _app.ResourceNotifications.WaitForResourceHealthyAsync(PythonServiceResourceName);
 
 		// ✅ Resolve Aspire Dashboard endpoint including token
 		var dashboardState = await _app.ResourceNotifications.WaitForResourceHealthyAsync(AspireDashboardResourceName);

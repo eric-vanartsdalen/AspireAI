@@ -3,6 +3,7 @@ using AspireApp.Web.Components;
 using AspireApp.Web.Components.Pages;
 using AspireApp.Web.Components.Shared;
 using AspireApp.Web.Shared;
+using Microsoft.Data.Sqlite;
 using Microsoft.EntityFrameworkCore;
 
 var builder = WebApplication.CreateBuilder(args);
@@ -31,17 +32,16 @@ builder.Services.AddHttpClient();
 
 // ADDING CONFIGURATIONS FOR STORAGE OF FILES
 // Configure SQLite database (and location)
-var connectionString = builder.Configuration.GetConnectionString("DefaultConnection") ?? "Data Source=../../database/data-resources.db";
+var rawConnectionString = builder.Configuration.GetConnectionString("DefaultConnection") ?? "Data Source=../../database/data-resources.db";
+var connectionString = ResolveSqliteConnectionString(rawConnectionString, builder.Environment.ContentRootPath);
 builder.Services.AddDbContext<UploadDbContext>(options =>
     options.UseSqlite(connectionString));
 
 // Register the FileStorageService with data directory (simplified - no bridge service needed)
-var fileUploadDataDir = builder.Configuration.GetValue<string>("FileUpload:DataDirectory");
-var dataDirectory = !string.IsNullOrEmpty(fileUploadDataDir)
-    ? Path.IsPathRooted(fileUploadDataDir)
-        ? fileUploadDataDir
-        : Path.Combine(builder.Environment.ContentRootPath, fileUploadDataDir ?? string.Empty)
-    : Path.Combine(builder.Environment.ContentRootPath, "data");
+var dataDirectory = ResolveContentRootPath(
+    builder.Configuration.GetValue<string>("FileUpload:DataDirectory"),
+    builder.Environment.ContentRootPath,
+    "data");
 
 builder.Services.AddScoped<FileStorageService>(sp =>
     new FileStorageService(
@@ -107,13 +107,7 @@ static async Task InitializeDatabaseAsync(IServiceProvider services, string conn
     try
     {
         // Create database directory if it doesn't exist
-        var dbPath = connectionString.Replace("Data Source=", "").Trim();
-        
-        // Make database path absolute if it's relative
-        if (!Path.IsPathRooted(dbPath))
-        {
-            dbPath = Path.GetFullPath(dbPath);
-        }
+        var dbPath = GetSqliteDataSource(connectionString);
         
         var dbDirectory = Path.GetDirectoryName(dbPath);
         if (!string.IsNullOrEmpty(dbDirectory) && !Directory.Exists(dbDirectory))
@@ -162,4 +156,42 @@ static async Task InitializeDatabaseAsync(IServiceProvider services, string conn
         Console.WriteLine($"Stack trace: {ex.StackTrace}");
         throw; // Re-throw to prevent application startup if database initialization fails
     }
+}
+
+static string ResolveSqliteConnectionString(string connectionString, string contentRootPath)
+{
+    var sqliteBuilder = new SqliteConnectionStringBuilder(connectionString);
+
+    if (ShouldResolveAgainstContentRoot(sqliteBuilder.DataSource))
+    {
+        sqliteBuilder.DataSource = Path.GetFullPath(
+            Path.Combine(contentRootPath, sqliteBuilder.DataSource));
+    }
+
+    return sqliteBuilder.ToString();
+}
+
+static string ResolveContentRootPath(string? configuredPath, string contentRootPath, string defaultRelativePath)
+{
+    var path = string.IsNullOrWhiteSpace(configuredPath)
+        ? defaultRelativePath
+        : configuredPath;
+
+    return Path.IsPathRooted(path)
+        ? path
+        : Path.GetFullPath(Path.Combine(contentRootPath, path));
+}
+
+static string GetSqliteDataSource(string connectionString)
+{
+    var sqliteBuilder = new SqliteConnectionStringBuilder(connectionString);
+    return sqliteBuilder.DataSource;
+}
+
+static bool ShouldResolveAgainstContentRoot(string? dataSource)
+{
+    return !string.IsNullOrWhiteSpace(dataSource)
+        && !Path.IsPathRooted(dataSource)
+        && !dataSource.Equals(":memory:", StringComparison.OrdinalIgnoreCase)
+        && !dataSource.StartsWith("file:", StringComparison.OrdinalIgnoreCase);
 }

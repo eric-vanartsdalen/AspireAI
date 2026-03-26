@@ -287,3 +287,19 @@
 
 **Documented in:** `.squad/decisions/inbox/jeff-ingestion-trigger-gap.md` for team review
 
+### 2026-03-26 — FlowEndToEnd FastAPI Proof Harness
+
+**Status:** Harness updated; live validation exposed a Python-side integration bug.
+
+**What changed:**
+- `src/AspireApp.WebTest/Tests/BasicAspireAppHostTests.cs` now clears stale copies of the sample document through the Web API, uploads through the UI, resolves the new file row from API-backed state, and then calls the Python trigger/status endpoints directly.
+- The test now fails with readable diagnostics for trigger failures, status contract problems, processing errors, or polling timeouts.
+- `BasicAspireAppHostTests.PythonServiceOpenAPILoads` still passes, so this work separates "Swagger loads" from "processing actually works."
+
+**Key learning:**
+- In this repo, the upload POST is executed by Blazor Server code (`UploadData.razor.cs` via `IHttpClientFactory`), not by browser JavaScript, so Playwright cannot wait on a browser `/api/FileUpload` response to capture the document ID.
+- The reliable pattern is: upload via UI → resolve the new row from Web API state → call Python `/processing/process-document/{id}` → poll Python `/processing/status/{id}`.
+
+**Live finding for Jarvis:**
+- The revised FlowEndToEnd test currently fails because the uploaded file row exists in the Web API state, but Python returns `404 {"detail":"Document not found"}` for `POST /processing/process-document/{id}`.
+- That points to a Python-side shared database visibility/path issue rather than a Swagger/OpenAPI issue.

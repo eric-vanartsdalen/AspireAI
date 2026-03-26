@@ -210,6 +210,7 @@ class DatabaseContractAuditTests(unittest.TestCase):
                 self.assertEqual(1, len(unprocessed))
                 self.assertEqual("processed", status.status)
                 self.assertEqual(3, status.total_pages)
+                self.assertEqual(1, status.processed_pages)
                 self.assertEqual(1, len(pages))
                 self.assertEqual("Persisted page content", pages[0]["content"])
 

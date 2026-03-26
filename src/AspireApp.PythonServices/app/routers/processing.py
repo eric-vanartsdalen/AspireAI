@@ -5,7 +5,7 @@ from ..services.database_service import DatabaseService
 from ..services.service_factory import get_docling_service
 from ..services.lightrag_handoff_service import LightRagHandoffService
 from ..services.neo4j_service import Neo4jService
-from ..models.models import ProcessingStatus
+from ..models.models import BatchProcessingStartResponse, ProcessingStartResponse, ProcessingStatus
 
 router = APIRouter(prefix="/processing", tags=["processing"])
 logger = logging.getLogger(__name__)
@@ -25,6 +25,7 @@ async def process_document_task(
     docling,  # Don't type hint since it could be either service
     neo4j: Neo4jService,
     lightrag_handoff: LightRagHandoffService | None = None,
+    mark_processing_started: bool = True,
 ):
     """Background task to process a document"""
     try:
@@ -35,8 +36,8 @@ async def process_document_task(
         if not document:
             raise Exception("Document not found")
 
-        # Mark the attempt active after confirming the record still exists.
-        db.update_file_status(document_id, "processing")
+        if mark_processing_started:
+            db.update_file_status(document_id, "processing")
 
         resolved_file_path = db.resolve_upload_path(document)
         
@@ -125,7 +126,7 @@ def _attempt_lightrag_handoff(document, processed_doc, lightrag_handoff: LightRa
     processed_doc.processing_metadata = metadata
 
 
-@router.post("/process-document/{document_id}")
+@router.post("/process-document/{document_id}", response_model=ProcessingStartResponse)
 async def process_document(
     document_id: int,
     background_tasks: BackgroundTasks,
@@ -148,6 +149,10 @@ async def process_document(
         
         # Get the appropriate docling service
         docling = get_docling_service()
+
+        # Persist the state transition before returning so polling clients can
+        # immediately observe that processing has been queued.
+        db.update_file_status(document_id, "processing")
         
         # Start background processing
         background_tasks.add_task(
@@ -155,10 +160,11 @@ async def process_document(
             document_id,
             db,
             docling,
-            neo4j
+            neo4j,
+            mark_processing_started=False,
         )
         
-        return {"message": f"Processing started for document {document_id}"}
+        return ProcessingStartResponse(message=f"Processing started for document {document_id}")
         
     except HTTPException:
         raise
@@ -167,7 +173,7 @@ async def process_document(
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@router.post("/process-all")
+@router.post("/process-all", response_model=BatchProcessingStartResponse)
 async def process_all_documents(
     background_tasks: BackgroundTasks,
     db: DatabaseService = Depends(get_database_service),
@@ -178,32 +184,39 @@ async def process_all_documents(
         unprocessed_docs = db.list_unprocessed_documents()
         
         if not unprocessed_docs:
-            return {"message": "No uploaded or failed documents are ready for processing"}
+            return BatchProcessingStartResponse(
+                message="No uploaded or failed documents are ready for processing",
+                document_ids=[],
+            )
         
         # Get the appropriate docling service
         docling = get_docling_service()
+        queued_document_ids = []
         
         # Start processing for each document
         for doc in unprocessed_docs:
+            db.update_file_status(doc.id, "processing")
             background_tasks.add_task(
                 process_document_task,
                 doc.id,
                 db,
                 docling,
-                neo4j
+                neo4j,
+                mark_processing_started=False,
             )
+            queued_document_ids.append(doc.id)
         
-        return {
-            "message": f"Started processing {len(unprocessed_docs)} documents",
-            "document_ids": [doc.id for doc in unprocessed_docs]
-        }
+        return BatchProcessingStartResponse(
+            message=f"Started processing {len(queued_document_ids)} documents",
+            document_ids=queued_document_ids,
+        )
         
     except Exception as e:
         logger.error(f"Error starting batch processing: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@router.get("/status/{document_id}")
+@router.get("/status/{document_id}", response_model=ProcessingStatus)
 async def get_processing_status(
     document_id: int,
     db: DatabaseService = Depends(get_database_service)

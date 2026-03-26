@@ -266,6 +266,74 @@ class ProcessingStatusLifecycleTests(unittest.TestCase):
             self.assertIsNone(retrying_status.completed_at)
             self.assertIsNone(retrying_status.error_message)
 
+    def test_get_document_by_id_falls_back_to_fresh_connection_when_pooled_lookup_misses_row(self):
+        with _database_service_sandbox("fresh_connection_fallback") as (service, uploads_dir):
+            file_id = service.create_file_record(
+                file_name="fresh-file.pdf",
+                original_file_name="fresh-file.pdf",
+                file_path=str(uploads_dir),
+                file_size=4,
+                mime_type="application/pdf",
+                status="uploaded",
+            )
+
+            original_get_connection = service._pool.get_connection
+
+            class StaleCursor:
+                def execute(self, *args, **kwargs):
+                    return None
+
+                def fetchone(self):
+                    return None
+
+            class StaleConnection:
+                def cursor(self):
+                    return StaleCursor()
+
+            @contextmanager
+            def stale_get_connection():
+                yield StaleConnection()
+
+            service._pool.get_connection = stale_get_connection
+            try:
+                document = service.get_document_by_id(file_id)
+            finally:
+                service._pool.get_connection = original_get_connection
+
+            self.assertIsNotNone(document)
+            self.assertEqual(file_id, document.id)
+            self.assertEqual("uploaded", document.processing_status)
+
+    def test_get_document_by_id_falls_back_to_full_scan_when_targeted_lookup_misses(self):
+        with _database_service_sandbox("full_scan_fallback") as (service, uploads_dir):
+            file_id = service.create_file_record(
+                file_name="scan-file.pdf",
+                original_file_name="scan-file.pdf",
+                file_path=str(uploads_dir),
+                file_size=4,
+                mime_type="application/pdf",
+                status="uploaded",
+            )
+
+            expected_file = service.get_all_files()[0]
+            original_fetch_file_row = service._fetch_file_row
+            original_fetch_fresh = service._fetch_file_row_from_fresh_connection
+            original_get_all_files = service.get_all_files
+
+            service._fetch_file_row = lambda conn, lookup_id: None
+            service._fetch_file_row_from_fresh_connection = lambda lookup_id: None
+            service.get_all_files = lambda: [expected_file]
+            try:
+                document = service.get_document_by_id(file_id)
+            finally:
+                service._fetch_file_row = original_fetch_file_row
+                service._fetch_file_row_from_fresh_connection = original_fetch_fresh
+                service.get_all_files = original_get_all_files
+
+            self.assertIsNotNone(document)
+            self.assertEqual(file_id, document.id)
+            self.assertEqual("uploaded", document.processing_status)
+
 
 class FakeDatabase:
     def __init__(self, document, resolved_path: Path):
@@ -346,6 +414,71 @@ class FakeLightRagHandoff:
                 "track_id": f"scan-{document.id}",
             },
         }
+
+
+class RecordingBackgroundTasks:
+    def __init__(self):
+        self.calls = []
+
+    def add_task(self, func, *args, **kwargs):
+        self.calls.append(
+            {
+                "func": func,
+                "args": args,
+                "kwargs": kwargs,
+            }
+        )
+
+
+class ProcessDocumentEndpointContractTests(unittest.IsolatedAsyncioTestCase):
+    async def test_process_document_marks_processing_before_background_task_runs(self):
+        with _patched_processing_dependencies():
+            from app.routers.processing import process_document, process_document_task
+
+            document = SimpleNamespace(id=55, filename="queued-file.pdf", processing_status="uploaded")
+            db = FakeDatabase(document=document, resolved_path=Path("C:\\app\\data\\uploads\\queued-file.pdf"))
+            background_tasks = RecordingBackgroundTasks()
+            neo4j = FakeNeo4j()
+
+            response = await process_document(55, background_tasks, db, neo4j)
+
+            self.assertEqual("Processing started for document 55", response.message)
+            self.assertEqual([(55, "processing", None)], db.status_updates)
+            self.assertEqual(1, len(background_tasks.calls))
+            self.assertIs(process_document_task, background_tasks.calls[0]["func"])
+            self.assertEqual((55, db, None, neo4j), background_tasks.calls[0]["args"])
+            self.assertEqual({"mark_processing_started": False}, background_tasks.calls[0]["kwargs"])
+
+    async def test_process_document_uses_status_codes_for_missing_or_duplicate_work(self):
+        with _patched_processing_dependencies():
+            from app.routers.processing import process_document
+            from fastapi import HTTPException
+
+            missing_db = FakeDatabase(
+                document=SimpleNamespace(id=1, filename="other.pdf", processing_status="uploaded"),
+                resolved_path=Path("C:\\app\\data\\uploads\\other.pdf"),
+            )
+            background_tasks = RecordingBackgroundTasks()
+
+            with self.assertRaises(HTTPException) as missing_error:
+                await process_document(404, background_tasks, missing_db, FakeNeo4j())
+            self.assertEqual(404, missing_error.exception.status_code)
+
+            processed_db = FakeDatabase(
+                document=SimpleNamespace(id=77, filename="done.pdf", processing_status="processed"),
+                resolved_path=Path("C:\\app\\data\\uploads\\done.pdf"),
+            )
+            with self.assertRaises(HTTPException) as processed_error:
+                await process_document(77, background_tasks, processed_db, FakeNeo4j())
+            self.assertEqual(400, processed_error.exception.status_code)
+
+            in_progress_db = FakeDatabase(
+                document=SimpleNamespace(id=88, filename="busy.pdf", processing_status="processing"),
+                resolved_path=Path("C:\\app\\data\\uploads\\busy.pdf"),
+            )
+            with self.assertRaises(HTTPException) as in_progress_error:
+                await process_document(88, background_tasks, in_progress_db, FakeNeo4j())
+            self.assertEqual(409, in_progress_error.exception.status_code)
 
 
 class ProcessDocumentTaskRegressionTests(unittest.IsolatedAsyncioTestCase):

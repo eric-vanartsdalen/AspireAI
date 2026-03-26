@@ -50,6 +50,15 @@ class ProcessingStatus(BaseModel):
     completed_at: Optional[datetime] = None
 
 
+class ProcessingStartResponse(BaseModel):
+    message: str
+
+
+class BatchProcessingStartResponse(BaseModel):
+    message: str
+    document_ids: List[int] = []
+
+
 class SemanticQuery(BaseModel):
     query: str
     document_ids: Optional[List[int]] = None

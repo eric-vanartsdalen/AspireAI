@@ -9,6 +9,9 @@ public partial class Program
 	{
 		// ASPIRE LOCAL SETUP
 		var builder = DistributedApplication.CreateBuilder(args);
+		var repositoryRoot = Path.GetFullPath(Path.Combine(builder.Environment.ContentRootPath, "..", ".."));
+		var sharedDataPath = Path.Combine(repositoryRoot, "data");
+		var sharedDatabasePath = Path.Combine(repositoryRoot, "database");
 
 		// Config with .NET Aspire
 		var aiChatModel = builder.AddParameterFromConfiguration("AI-Chat-Model", "AI-Chat-Model");
@@ -70,8 +73,8 @@ public partial class Program
 		var pythonServices = builder
 			.AddDockerfile("python-service", "../../src/AspireApp.PythonServices/", pythonDockerfile)
 			.WithHttpEndpoint(port: 8000, targetPort: 8000, name: "http")
-			.WithBindMount("../../data", "/app/data")
-			.WithBindMount("../../database", "/app/database")                     // Keep host access for debugging/backup
+			.WithBindMount(sharedDataPath, "/app/data")
+			.WithBindMount(sharedDatabasePath, "/app/database")                     // Keep host access for debugging/backup
 			.WithVolume("python-pip-cache", "/root/.cache/pip")                   // Persist pip cache
 			.WithEnvironment("NEO4J_URI", neo4jBoltUri)
 			.WithEnvironment("NEO4J_USER", neo4jUser.Resource)

@@ -279,7 +279,7 @@
 
 **Key insight:** The round-trip is now real, but LightRAG's merge phase can still mark a document `failed` if Ollama returns `NaN` for a relationship embedding upsert. Even in that state, chunk/entity data remained queryable through the Python route, so the integration proof is complete while merge stability becomes the next focused runtime hardening item.
 
-### 2026-03-26 — Ingestion Trigger Review
+### 2026-03-26 — Ingestion Trigger Review
 
 **Completed:**
 - Audited the current upload ? processing ? LightRAG trigger path against `processing.py`, `database_service.py`, `docling_service.py`, `lightrag_handoff_service.py`, `AppHost.cs`, and `BasicAspireAppHostTests`.
@@ -291,8 +291,24 @@
 - Docling persists `document.json`, `metadata.json`, markdown exports, page JSON files, and `document_pages` rows; LightRAG handoff stages markdown into `/app/data/inputs` and explicitly posts `/documents/scan`.
 - A raw shared-folder drop without a companion `files` row is ignored.
 
-**Validation:**
-- `python src\AspireApp.PythonServices\tests\test_p0_contract_audit.py`
-- `python src\AspireApp.PythonServices\tests\test_processing_pipeline_regression.py`
-- `dotnet test src\AspireApp.WebTest\AspireApp.WebTest.csproj --filter BasicAspireAppHostTests.FlowEndToEnd --nologo`
+**Validation:**
+- `python src\AspireApp.PythonServices\tests\test_p0_contract_audit.py`
+- `python src\AspireApp.PythonServices\tests\test_processing_pipeline_regression.py`
+- `dotnet test src\AspireApp.WebTest\AspireApp.WebTest.csproj --filter BasicAspireAppHostTests.FlowEndToEnd --nologo`
+
+### 2026-03-26 — FastAPI Processing Endpoint Proof Surface Hardened
+
+**Completed:**
+- Audited the live contract for `POST /processing/process-document/{id}`, `GET /processing/status/{id}`, and the `/documents/{id}/status` alias against the current SQLite-backed processing flow.
+- Added typed response models so Swagger documents the processing trigger/status shapes that WebTest should call.
+- Moved the `processing` lifecycle write to queue time so polling clients stop racing the FastAPI background task scheduler.
+- Extended `get_processing_status()` to include durable `processed_pages` counts from `document_pages`, giving tests an API-level proof that page persistence happened.
+
+**Validation:**
+- `python -m compileall src\AspireApp.PythonServices\app src\AspireApp.PythonServices\tests`
+- `python src\AspireApp.PythonServices\tests\test_p0_contract_audit.py`
+- `python src\AspireApp.PythonServices\tests\test_processing_pipeline_regression.py`
+- `dotnet test src\AspireApp.WebTest\AspireApp.WebTest.csproj --filter BasicAspireAppHostTests.PythonServiceOpenAPILoads --nologo`
+
+**Key insight:** For background FastAPI processing in this repo, the queueing endpoint must persist `status='processing'` before it returns. Otherwise immediate pollers can still observe `uploaded`, which makes an otherwise-correct end-to-end proof flap.
 

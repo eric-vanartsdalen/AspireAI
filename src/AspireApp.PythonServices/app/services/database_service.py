@@ -308,20 +308,37 @@ class DatabaseService:
         """Get file record by ID"""
         try:
             with self._pool.get_connection() as conn:
-                cursor = conn.cursor()
-                cursor.execute("""
-                    SELECT id, file_name, original_file_name, file_path, file_hash,
-                           file_size, mime_type, uploaded_at, status,
-                           processing_started_at, processing_completed_at, processing_error,
-                           docling_document_path, total_pages, neo4j_document_node_id,
-                           source_type, source_url
-                    FROM files WHERE id = ?
-                """, (file_id,))
-                row = cursor.fetchone()
-                
-                if row:
-                    return self._row_to_file_dict(row)
-                return None
+                row = self._fetch_file_row(conn, file_id)
+
+            if row is None:
+                row = self._fetch_file_row_from_fresh_connection(file_id)
+                if row is not None:
+                    logger.warning(
+                        "File %s was not visible through the pooled SQLite connection; "
+                        "a fresh connection located the row.",
+                        file_id,
+                    )
+
+            if row:
+                return self._row_to_file_dict(row)
+
+            fallback_file = next(
+                (
+                    file_dict
+                    for file_dict in self.get_all_files()
+                    if file_dict.get("id") == file_id
+                ),
+                None,
+            )
+            if fallback_file is not None:
+                logger.warning(
+                    "File %s was not visible through direct SQLite lookup; "
+                    "the fallback full-file scan located the row.",
+                    file_id,
+                )
+                return fallback_file
+
+            return None
         except Exception as e:
             logger.error(f"Error fetching file {file_id}: {e}")
             raise
@@ -800,6 +817,30 @@ class DatabaseService:
             'source_url': row[16]
         }
 
+    def _fetch_file_row(self, conn: sqlite3.Connection, file_id: int):
+        cursor = conn.cursor()
+        cursor.execute("""
+            SELECT id, file_name, original_file_name, file_path, file_hash,
+                   file_size, mime_type, uploaded_at, status,
+                   processing_started_at, processing_completed_at, processing_error,
+                   docling_document_path, total_pages, neo4j_document_node_id,
+                   source_type, source_url
+            FROM files WHERE id = ?
+        """, (file_id,))
+        return cursor.fetchone()
+
+    def _fetch_file_row_from_fresh_connection(self, file_id: int):
+        conn = sqlite3.connect(
+            self.db_path,
+            timeout=self._pool.timeout,
+            check_same_thread=False,
+        )
+        try:
+            conn.execute("PRAGMA busy_timeout=30000")
+            return self._fetch_file_row(conn, file_id)
+        finally:
+            conn.close()
+
     def _file_dict_to_document(self, file_dict: Dict[str, Any]) -> Document:
         """Project a canonical `files` row into the document API response model."""
         status = self._normalize_file_status(file_dict.get('status', 'uploaded'))
@@ -863,10 +904,21 @@ class DatabaseService:
             if file_dict is None:
                 return None
 
+            with self._pool.get_connection() as conn:
+                cursor = conn.cursor()
+                cursor.execute(
+                    "SELECT COUNT(*) FROM document_pages WHERE file_id = ?",
+                    (document_id,),
+                )
+                count_row = cursor.fetchone()
+
+            processed_pages = count_row[0] if count_row is not None else 0
+
             return ProcessingStatus(
                 document_id=document_id,
                 status=self._normalize_file_status(file_dict.get('status')),
                 total_pages=file_dict.get('total_pages'),
+                processed_pages=processed_pages,
                 error_message=file_dict.get('processing_error'),
                 started_at=file_dict.get('processing_started_at') or file_dict.get('uploaded_at'),
                 completed_at=file_dict.get('processing_completed_at'),

@@ -1,4 +1,5 @@
-﻿using Microsoft.EntityFrameworkCore;
+﻿using Microsoft.Data.Sqlite;
+using Microsoft.EntityFrameworkCore;
 using System.Security.Cryptography;
 using System.Text;
 using AspireApp.Web.Data;
@@ -135,6 +136,7 @@ public class FileStorageService(
 
             _context.Datasources.Add(fileMetadata);
             await _context.SaveChangesAsync();
+            await CheckpointDatabaseAsync();
 
             if (_logger.IsEnabled(LogLevel.Information))
             {
@@ -190,6 +192,7 @@ public class FileStorageService(
             }
 
             await _context.SaveChangesAsync();
+            await CheckpointDatabaseAsync();
 
             if (_logger.IsEnabled(LogLevel.Information))
             {
@@ -224,6 +227,7 @@ public class FileStorageService(
 
             file.FileHash = fileHash;
             await _context.SaveChangesAsync();
+            await CheckpointDatabaseAsync();
 
             if (_logger.IsEnabled(LogLevel.Information))
             {
@@ -288,6 +292,7 @@ public class FileStorageService(
             // EF Core will cascade delete related datasource_pages records
             _context.Datasources.Remove(file);
             await _context.SaveChangesAsync();
+            await CheckpointDatabaseAsync();
 
             if (_logger.IsEnabled(LogLevel.Information))
             {
@@ -380,6 +385,7 @@ public class FileStorageService(
 
             _context.Datasources.Add(fileMetadata);
             await _context.SaveChangesAsync();
+            await CheckpointDatabaseAsync();
 
             if (_logger.IsEnabled(LogLevel.Information))
             {
@@ -397,5 +403,17 @@ public class FileStorageService(
             }
             throw;
         }
+    }
+
+    private async Task CheckpointDatabaseAsync()
+    {
+        var connectionString = _context.Database.GetDbConnection().ConnectionString;
+
+        await using var checkpointConnection = new SqliteConnection(connectionString);
+        await checkpointConnection.OpenAsync();
+
+        await using var checkpointCommand = checkpointConnection.CreateCommand();
+        checkpointCommand.CommandText = "PRAGMA wal_checkpoint(TRUNCATE);";
+        await checkpointCommand.ExecuteNonQueryAsync();
     }
 }
