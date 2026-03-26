@@ -235,3 +235,55 @@
 
 **Approved:** Buster accepted revised artifact. Dashboard test harness pattern documented in decisions.md for team adoption.
 
+### 2025-11-02 — Deep Trace: Upload Flow & Ingestion Pipeline Integration Points
+
+**Status:** Complete (read-only review, no code changes)
+
+**Context:** User asked: "FlowEndToEnd test gets file uploaded and in table. Where does Docling parsing trigger? What is the clear ingestion process?"
+
+**Answer — The Gap Identified:**
+
+1. **Web UI Upload Flow (Lines 160–276 in UploadData.razor.cs):**
+   - Blazor component reads file from browser
+   - POSTs multipart data to `/api/FileUpload` endpoint
+   - FileUploadController writes bytes to `./data/{timestamp}_{uuid}.pdf` on host filesystem
+   - Writes FileMetadata row to SQLite with status="uploaded"
+   - Returns 200 OK to UI, UI refreshes file table
+   - **Test stops here** — it sees the file row and assumes ingestion continues
+
+2. **What .NET Actually Does (FileUploadController.cs lines 110–123):**
+   - `File.CopyToAsync(stream)` writes bytes to disk (line 113)
+   - `FileStorageService.AddFileAsync()` inserts one row into `files` table (line 117)
+   - Returns response (line 131)
+   - **No background job, no HTTP call, no trigger of any kind**
+
+3. **Aspire Bind Mount Visibility (AppHost.cs lines 73–74):**
+   - `./data` ↔ `/app/data` (bidirectional)
+   - `./database` ↔ `/app/database` (bidirectional)
+   - File written by .NET is **immediately visible** to Python container
+   - SQLite database shared in real-time
+
+4. **What Python Service **Expects** (processing.py lines 128–203):**
+   - Endpoint: `POST /processing/process-all`
+   - Queries `files WHERE status='uploaded'`
+   - Launches background tasks per file
+   - Calls `docling.process_document()`, creates Neo4j nodes, updates status → "processed"
+   - **But this endpoint is never called by .NET**
+
+5. **The Missing Piece:**
+   - **No orchestrated trigger** connects upload completion to processing initiation
+   - Current architecture is entirely manual: user must either:
+     - Call `/processing/process-all` via curl/Postman after upload
+     - UI must add a "Process Now" button
+     - Background polling service must exist (does not)
+   - Test validation cannot go beyond "file appears in table" without manually calling Python endpoint
+
+**Patterns & Decisions:**
+
+- **Status quo:** Ingestion is **pull-based** (Python polls or waits for manual trigger), not **push-based** (Web triggers processing)
+- **Next step for testing:** After upload, test must explicitly call Python `/processing/process-all` endpoint and poll file status until it reaches "processed"
+- **Next step for UX:** Add "Process Now" button to UI or implement background polling service in .NET
+- **Cross-service contract:** File status enum is canonical: "uploaded" (initial), "processing", "processed", "error"
+
+**Documented in:** `.squad/decisions/inbox/jeff-ingestion-trigger-gap.md` for team review
+

@@ -226,3 +226,45 @@
 - **Current evidence is still non-live.** `test_processing_pipeline_regression.py` proves handoff with a fake collaborator and a local HTTP test server; `LightRagAppHostContractTests` only inspect `AppHost.cs` source text.
 - **Remaining open item is precise now:** `src\AspireApp.PythonServices\app\routers\rag.py` still queries `Neo4jService` directly and never calls LightRAG, so “keep orchestration through Python retrieval APIs” cannot be honestly closed until a Python API-backed round-trip is demonstrated.
 - **QA closure criteria recorded:** `.squad\decisions\inbox\buster-lightrag-proof-gate.md`.
+
+### 2026-03-25 — BasicAspireAppHostTests.FlowEndToEnd E2E Ingestion Audit (READ-ONLY)
+
+**Context:** User asked Buster to audit the FlowEndToEnd test and explain the ingestion process gap. Test uploads a file and verifies the row appears in the table, but Eric doesn't see what triggers Docling or LightRAG.
+
+**QA Verdict (Read-Only):** Test is a regression risk masquerading as an end-to-end proof.
+
+**What the test proves:**
+- ✅ Upload payload accepted, C# FileUploadController.UploadFile() works, database row created, file on disk, row visible in UI table
+- ❌ Everything after upload: processing trigger, Docling invocation, page persistence, markdown export, LightRAG handoff, Neo4j ingestion
+
+**The gap:** C# upload controller does NOT call Python processing. Test never calls /process-all or /process-document/{id}. Without explicit trigger, Python processing never starts, and test passes happily with zero ingestion proof.
+
+**Why it's invisible:**
+- No test code invokes Python processing
+- No test polls processing status or waits for completion
+- No test queries document_pages table (would prove Docling extracted pages)
+- No test checks filesystem for markdown staging
+- No test verifies Neo4j node creation
+- No error detection if processing fails silently
+
+**Exact checkpoints needed to prove full pipeline:**
+1. Call POST /processing/process-all to trigger Python processing
+2. Poll GET /processing/status/{file_id} until status != "processing" (timeout after 30s)
+3. Query SQLite: assert document_pages row count > 0 (proves Docling ran)
+4. Check filesystem: assert markdown file exists at {data}/inputs/{file_id}*.md
+5. Query Neo4j: assert MATCH (d:Document {id: }) RETURN count(d) == 1
+6. Assert final status == "processed" or "error", with error message visible if failed
+
+**Observability gaps (blocking test expansion):**
+- No async wait mechanism for background processing
+- No Python endpoint to query consolidated ingestion status (need GET /processing/status/{id} returning pages_count, neo4j_node, error)
+- No filesystem introspection in test (need to read shared mount directly or add endpoint)
+- No Neo4j query capability in test (need driver or endpoint)
+
+**Plan implications:**
+- Current test must be rewritten (P1): add processing trigger, polling, database queries, status assertions
+- Consider adding observability endpoints (P1): GET /processing/status/{id}, GET /files/{id}/pages, GET /health/ingestion
+- Add edge-case tests (P2): error path (processing fails), timeout (processing hangs), cleanup (file deleted)
+- Add Neo4j verification (P2): query node creation, verify relationships
+
+**Recommendation:** Bring this test to P1 scope alongside processing pipeline stabilization. Current state is passing but untested—a regression vector.

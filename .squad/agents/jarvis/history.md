@@ -1,281 +1,298 @@
-# Project Context
-
-- **Owner:** Eric Van Artsdalen
-- **Project:** AspireAI — AI-powered document processing and RAG platform with graph database knowledge storage, orchestrated via .NET Aspire
-- **Stack:** C# (.NET 9), Blazor, Minimal API, Python (FastAPI), Neo4j, Ollama, Docker, Aspire
-- **Created:** 2026-02-21T23:32:00Z
-
-## Learnings
-
-<!-- Append new learnings below. Each entry is something lasting about the project. -->
-
-### 2025-02-21 — Deep Python/Neo4j Analysis
-
-**Key File Paths:**
-- FastAPI entry: `src/AspireApp.PythonServices/app/fastapi.py`
-- Pydantic models: `src/AspireApp.PythonServices/app/models/models.py` (6 models: Document, ProcessedDocument, DocumentPage, PageContent, ProcessingStatus, SemanticQuery)
-- Routers: `app/routers/documents.py`, `app/routers/processing.py`, `app/routers/rag.py`
-- Database service: `app/services/database_service.py` (SQLite with ConnectionPool, WAL mode)
-- Neo4j service: `app/services/neo4j_service.py` (bolt driver, lazy init, constraints at startup)
-- Docling full: `app/services/docling_service.py` / Fallback: `app/services/docling_service_fallback.py`
-- Service factory: `app/services/service_factory.py` (auto-selects full vs fallback)
-- C# entities: `src/AspireApp.Web/Data/DocumentEntities.cs` (FileMetadata → files table, DocumentPage → document_pages)
-- C# upload: `src/AspireApp.Web/Controllers/FileUploadController.cs`
-- AppHost: `src/AspireApp.AppHost/AppHost.cs`
-
-**Database Schema:**
-- Primary table: `files` (upload lifecycle: uploaded → processing → processed | error)
-- Pages table: `document_pages` (FK to files, page_number, content, metadata)
-- DB path: `/app/database/data-resources.db` (set via ASPIRE_DB_PATH env var)
-- Both C# (EF Core) and Python (raw sqlite3) read/write the same SQLite file
-
-**Neo4j Graph Schema:**
-- Nodes: `:Document` (id unique), `:Page` (id = "{doc_id}_{page_num}"), `:Chunk` (constraint exists, unused)
-- Relationships: `(Document)-[:CONTAINS]->(Page)`, `(Page)-[:PRECEDES]->(Page)`
-- Search: Basic text `CONTAINS` — no full-text index, no vector similarity
-- Container: neo4j:2025.11.2-community with APOC + GDS (both unused by Python)
-- Credentials: passed as NEO4J_URI/NEO4J_USER/NEO4J_PASSWORD env vars from AppHost
-
-**Critical Bugs Found:**
-- ~10 DatabaseService methods called by routers don't exist (get_document, get_processed_document, get_statistics, etc.)
-- save_document_page() signature mismatch (router passes DocumentPage object, method expects individual args)
-- C# FileUploadController saves status "Uploaded" (capital U), Python queries for "uploaded" (lowercase)
-- document_pages FK column: Python creates as `file_id`, C# maps to `document_id`
-
-**Contract Gaps:**
-- Python Document model field names don't match SQLite columns (filename vs file_name, upload_date vs uploaded_at)
-- Legacy _file_dict_to_document() bridges the gap but is fragile
-- C# has legacy Document/ProcessedDocument entities mapped to tables that don't exist in Python schema
-- No version pinning in requirements.txt
-
-**Pipeline Status:**
-- Upload: C# handles file upload + hash dedup → works
-- Discovery: Python finds unprocessed files → BLOCKED by status casing bug
-- Processing: Docling/fallback page extraction → BLOCKED by missing DB methods
-- Neo4j ingestion: Node/relationship creation → works but not batched
-- RAG search: Text CONTAINS only → works but slow, no embeddings
-- LightRAG: Wired as standalone container, zero code integration
-
-### 2026-02-21 — Cross-Agent Findings
-
-**From Bob:**
-- Python routers fundamentally broken: ~10 DatabaseService methods don't exist
-- Status casing mismatch ("Uploaded" vs "uploaded") is P0 priority
-- ApiService is vestigial, simplify by removing or repurposing
-
-**From Jeff:**
-- LightRAG and Ollama missing health checks — blocks webfrontend indefinitely
-- Config key mismatch (AI-Chat-Model vs AI-Model) prevents model propagation
-- SemanticKernel version skew (1.71.0 vs 1.68.0-alpha)
-
-**From Buster:**
-- Zero automated tests — processing pipeline changes are high-risk
-- Python dependencies unpinned — reproducibility issue
-- Global exception handler returns raw messages (info leak)
-
-### 2026-02-22 — Squad Orchestration Complete
-
-**Status:** All four agents completed independent reviews; findings merged into shared decisions.md.
-
-**Jarvis's Action Items (Ready to Execute):**
-1. Router contract rewrite: Use existing DatabaseService API (P0, 2 hrs)
-2. save_document_page() signature fix: Pass individual args (P0, 15 min)
-3. FK column name align: Verify/update to `file_id` (P0, 2 hrs)
-4. Pin requirements.txt versions (P1, 1 hr)
-5. Batch Neo4j operations with UNWIND (P1, 3 hrs)
-6. Add full-text index to Neo4j (P1, 2 hrs)
-7. Delete legacy C# entities (P1, 1 hr)
-
-**Dependencies:**
-- Jeff's status casing fix must land first (P0 blocker)
-- Jeff's FK column decision must be made before coding
-- All P0 items gate Sprint 1 completion
-- Phase 2 (P1 items) starts after P0 validation complete
-
-### 2026-02-21 — Deep Python Pipeline Review (Jarvis)
-
-**Completed:**
-- Analyzed all Python services, routers, DatabaseService API
-- Mapped method calls to actual implementation (30 methods exist, ~10 expected ones don't)
-- Identified 3 critical blockers (P0) + 5 high priorities (P1)
-- Documented fix order: 2–3 days to unblock pipeline
-
-**Key Decisions Made:**
-- Fix strategy for P0.1: Rewrite routers to use existing DatabaseService API instead of adding wrapper methods (cleaner)
-- Recommend batching Neo4j operations (UNWIND instead of loops) for 10–50x speedup
-- Defer vector embeddings to Phase 2; focus on full-text index first (Phase 1)
-
-**Coordination Needed:**
-- Jeff: Fix status casing in FileUploadController (P0.3)
-- Jeff: Verify FK column name in DocumentEntities.cs (P1.4)
-- Bob: Decide LightRAG role (replace or supplement Python RAG?)
-
-**Written to Squad:**
-- `.squad/decisions/inbox/jarvis-python-pipeline-review.md` — summary + fix order
-- `plan.md` (updated) — comprehensive action plan with checkpoints and success criteria
-
-**Files Modified/Created:**
-- `plan.md` — comprehensive 400-line action plan (created)
-- `.squad/decisions/inbox/jarvis-python-pipeline-review.md` — summary for squad (created)
-
-**Learnings (Lasting):**
-- DatabaseService has ~30 well-implemented methods (`get_file_by_id`, `get_unprocessed_files`, etc.) but routers expect a different ~10 (mismatch in expectations)
-- Neo4j graph schema is sound but not batched (easy optimization)
-- Full-text index commented out; easy to enable
-- requirements.txt unpinned (reproducibility risk)
-- LightRAG wired but unused (architectural drift)
-
-### 2026-02-22 — Fix save_document_page Invocation Mismatch (P0.2)
-
-**Completed:** Fixed `processing.py` lines 67-75 where `save_document_page()` was called with a `DocumentPage` object instead of individual keyword arguments.
-
-**Two bugs fixed in one edit:**
-1. **Invocation style:** Removed unnecessary `DocumentPage` construction; now passes `file_id`, `page_number`, `content`, `metadata`, `neo4j_node_id` directly.
-2. **Wrong FK value:** Changed from `processed_doc_id` (return value of `save_processed_document`) to `document_id` (the original file ID). The `document_pages.file_id` column is a FK to `files.id`, not to processed documents.
-
-**Key insight:** The `save_document_page` service method was correct all along — only the caller was wrong. The DB INSERT targets columns `(file_id, page_number, content, page_metadata, neo4j_page_node_id)` which map to the individual args, not a Pydantic object.
-
-**Commit:** `e9d90ea` on `feature/doc-upload`
-
-### 2026-02-22 — Fix DocumentPage FK Column Name Mismatch (P0.3)
-
-**Completed:** Aligned the `DocumentPage` Pydantic model and two utility scripts (`fix_database.py`, `diagnose_database.py`) to use `file_id` instead of `processed_document_id`, matching the canonical schema in `database_service.py`.
-
-**Four files changed:**
-1. `app/models/models.py` — `DocumentPage.processed_document_id` → `file_id`
-2. `fix_database.py` — `document_pages` CREATE TABLE now uses `file_id INTEGER NOT NULL` with proper FK and UNIQUE constraints
-3. `diagnose_database.py` — same CREATE TABLE fix
-4. `README.md` — schema documentation updated to match
-
-**Key insight:** The utility scripts had a doubly-wrong schema: wrong column name (`processed_document_id`) and wrong FK target (`processed_documents(id)`). The canonical table references `files(id)` with `ON DELETE CASCADE` and a `UNIQUE(file_id, page_number)` constraint. Also aligned the column name `neo4j_node_id` → `neo4j_page_node_id` to match the source of truth.
-
-**Commit:** `77db074` on `feature/doc-upload`
-
-### 2025-11-02 — P0 Item 2 Complete: DocumentPage FK Column Final Alignment
-
-**Status:** Complete (parallel work with Jeff)  
-**Commits:** Jarvis: `77db074` | Jeff: `6e5b34b`
-
-**Jarvis's Scope (Python):**
-- Updated `DocumentPage` Pydantic model: `processed_document_id` → `file_id`
-- Updated `fix_database.py` and `diagnose_database.py` CREATE TABLE statements
-- Updated `README.md` schema documentation
-
-**Jeff's Parallel Scope (C#):**
-- Changed `[Column("document_id")]` → `[Column("file_id")]` on `DocumentPage.FileId` property in `DocumentEntities.cs`
-- Updated `UploadDbContext.cs` index name: `idx_pages_document_id` → `idx_pages_file_id`
-- Build verified clean (0 errors, 0 warnings)
-
-**Result:** C#↔Python schema alignment complete. Both services now agree on FK column name `file_id` referencing `files(id)`. P0 Item 2 closed.
-
-### 2025-11-02 — P0 Item 3: Fix Router/Service Contract Mismatches
-
-**Completed:** Added 9 missing backward-compatibility methods to `DatabaseService` that routers expected but didn't exist, causing `AttributeError` at runtime.
-
-**Methods added (all in Backward Compatibility section):**
-1. `get_document()` — wraps `get_file_by_id()` → `Document`
-2. `get_unprocessed_documents()` — wraps `get_unprocessed_files()` → `List[Document]`
-3. `get_documents_by_status()` — direct query with status translation
-4. `save_processed_document()` — delegates to `update_file_processing_results()` + `update_file_status()`
-5. `get_processed_document()` — wraps `get_file_by_id()` → `ProcessedDocument`
-6. `get_statistics()` — returns `_stats` dict + `ConnectionPool` metrics
-7. `get_active_services()` — static informational response
-8. `get_file_document_sync_status()` — `COUNT(*)` on unified files table
-9. `force_sync_files_and_documents()` — no-op (schema already unified)
-
-**Pattern:** All methods follow the established wrapper convention: delegate to existing file-based internals, convert results to legacy model objects. No existing methods modified.
-
-**Key insight:** `get_statistics()` leverages the `_stats` dict already tracked by `DatabaseService.__init__()` plus `ConnectionPool` internals (`_created_connections`, `max_connections`, `_pool.qsize()`). The pool doesn't track query/transaction stats itself, but the service does via `_stats_lock`.
-
-**Impact:** Unblocks all 17 router endpoints in `documents.py` and `processing.py`.
-
-### 2026-03-20 — Upload Path Normalization + Python Footprint Trim
-
-**Completed:**
-- Added `DatabaseService.resolve_upload_path()` so Python now resolves a physical upload path from database `file_path` + `file_name`.
-- Updated both docling implementations to consume the resolved full path instead of assuming `document.file_path` is already the file.
-- Trimmed the Python API surface by removing status-filter, schema-sync, force-sync, concurrent-access, and performance endpoints; also removed `processed-documents`.
-- Replaced the database contract doc with an accurate `files` / `document_pages` + retained-endpoints reference in `docs/DATABASE_MANAGEMENT.md`.
-
-**Key decisions:**
-- Treat `file_path` as a directory contract, not a final file path.
-- Add runtime guardrails that remap stored Windows host paths under the shared `data` root to the active Python runtime data root.
-- Keep `GET /documents/health/database` and `GET /processing/service-info` because they still support monitoring and processor introspection without reintroducing the removed admin surface.
-
-**Validation:**
-- `python -m compileall app`
-- stdlib-only path-resolution check using a stubbed `pydantic` module plus a temporary SQLite file and real `data\\` fixture path
-
-**Key file paths:**
-- Path resolver: `src/AspireApp.PythonServices/app/services/database_service.py`
-- Processing orchestration: `src/AspireApp.PythonServices/app/routers/processing.py`
-- Docling readers: `src/AspireApp.PythonServices/app/services/docling_service.py`, `src/AspireApp.PythonServices/app/services/docling_service_fallback.py`
-- Contract doc: `docs/DATABASE_MANAGEMENT.md`
-
-### 2026-03-20 — P0 Decision Merge Complete
-
-**Status:** All P0 work merged into shared decisions.md and approved by squad.
-
-**Work Summary Across Squad:**
-- **Jarvis (this agent):** Implemented upload path fix + endpoint/method pruning. Removed 7 endpoints, 5 dead methods.
-- **Bob:** Post-QA revision work. Converted audit tests from `expectedFailure` to live regression. Aligned CROSS_SERVICE_CONTRACT.md.
-- **Buster:** QA gates (3 phases). Initial rejection, then approvals post-Bob and post-Jeff.
-- **Jeff:** Final Python footprint cleanup. Removed sync shims, updated canonical contract methods.
-
-**Inbox → Decisions.md:** 6 files merged. Jarvis's decisions now part of permanent squad record.
-
-**Orchestration Log Created:** `20260320T103216Z-jarvis.md` documenting spawn phases and context for successors.
-
-**Next Phase:** Jeff owns canonical Python contract surface maintenance. Validation gates remain live.
-
-### 2026-03-25 — P1 Processing Pipeline Stabilization
-
-**Completed:**
-- Stabilized retries by clearing stale docling/Neo4j result fields and existing `document_pages` rows whenever a file re-enters `processing`.
-- Kept batch selection aligned with the canonical lifecycle by allowing both `uploaded` and `error` rows back into the processing queue.
-- Hardened the processing router so duplicate starts are rejected while a file is already in `processing`.
-
-**Validation:**
-- `python -m compileall src\\AspireApp.PythonServices\\app`
-- `python src\\AspireApp.PythonServices\\tests\\test_p0_contract_audit.py`
-
-**Key insight:** Retry safety in the canonical `files` + `document_pages` schema depends on resetting derived artifacts at the start of a new attempt. Otherwise the `(file_id, page_number)` uniqueness rule turns partial failures into duplicate-write failures on retry.
-
-### 2026-03-25 — Docling → LightRAG Handoff Clarified
-
-**Completed:**
-- Verified the LightRAG container in this repo is configured with `INPUT_DIR=/app/data/inputs` and Neo4j settings, but no repository code was triggering ingestion.
-- Confirmed the hot-folder assumption was wrong: dropping files into the shared input directory is insufficient without an explicit LightRAG ingest action.
-- Added Python-side markdown export + handoff flow so processed documents stage a LightRAG-friendly `.md` file and request `POST /documents/scan`.
-
-**Validation:**
-- `python -m compileall src\\AspireApp.PythonServices\\app`
-- `python -m compileall src\\AspireApp.PythonServices\\example-parse-document.py`
-- `python src\\AspireApp.PythonServices\\tests\\test_processing_pipeline_regression.py`
-- `python src\\AspireApp.PythonServices\\tests\\test_p0_contract_audit.py`
-- `dotnet build AspireApp.sln`
-
-**Key insight:** The safest handoff for this repo is "export markdown to the shared LightRAG input directory, then explicitly call `/documents/scan`." That keeps Docling ownership in Python while avoiding the false assumption that LightRAG watches the directory automatically.
-
-### 2026-03-25 — LightRAG Runtime Proof via Python Retrieval API
-
-**Completed:**
-- Fixed the runtime Neo4j contract so both the Python service and LightRAG receive an explicit `bolt://` URI instead of Aspire's raw `tcp://` endpoint reference.
-- Added a Python-side `LightRagQueryService` plus `POST /rag/lightrag-query` so retrieval stays behind the Python API boundary.
-- Hardened Python runtime checks uncovered during live verification: database directory writability probes now use unique marker files, container-style module paths no longer crash runtime data-root discovery, and the FastAPI global exception handler now returns a real JSON response.
-- Proved a live round-trip against the running Aspire stack: processed a seeded document through `/processing/process-document/{id}`, observed LightRAG stage and scan it, queried it back through `/rag/lightrag-query`, and confirmed matching LightRAG-created nodes in Neo4j for `000007-jarvis-lightrag-proof.md`.
-
-**Validation:**
-- `python -m compileall src\\AspireApp.PythonServices\\app`
-- `python src\\AspireApp.PythonServices\\tests\\test_processing_pipeline_regression.py`
-- `python src\\AspireApp.PythonServices\\tests\\test_p0_contract_audit.py`
-- `dotnet build AspireApp.sln`
-- Live Aspire run with manual HTTP verification:
-  - `GET /health`
-  - `GET /rag/health`
-  - `POST /processing/process-document/{id}`
-  - `POST /rag/lightrag-query`
-  - `POST /db/neo4j/query/v2`
-
-**Key insight:** The round-trip is now real, but LightRAG's merge phase can still mark a document `failed` if Ollama returns `NaN` for a relationship embedding upsert. Even in that state, chunk/entity data remained queryable through the Python route, so the integration proof is complete while merge stability becomes the next focused runtime hardening item.
-
+# Project Context
+
+- **Owner:** Eric Van Artsdalen
+- **Project:** AspireAI — AI-powered document processing and RAG platform with graph database knowledge storage, orchestrated via .NET Aspire
+- **Stack:** C# (.NET 9), Blazor, Minimal API, Python (FastAPI), Neo4j, Ollama, Docker, Aspire
+- **Created:** 2026-02-21T23:32:00Z
+
+## Learnings
+
+<!-- Append new learnings below. Each entry is something lasting about the project. -->
+
+### 2025-02-21 — Deep Python/Neo4j Analysis
+
+**Key File Paths:**
+- FastAPI entry: `src/AspireApp.PythonServices/app/fastapi.py`
+- Pydantic models: `src/AspireApp.PythonServices/app/models/models.py` (6 models: Document, ProcessedDocument, DocumentPage, PageContent, ProcessingStatus, SemanticQuery)
+- Routers: `app/routers/documents.py`, `app/routers/processing.py`, `app/routers/rag.py`
+- Database service: `app/services/database_service.py` (SQLite with ConnectionPool, WAL mode)
+- Neo4j service: `app/services/neo4j_service.py` (bolt driver, lazy init, constraints at startup)
+- Docling full: `app/services/docling_service.py` / Fallback: `app/services/docling_service_fallback.py`
+- Service factory: `app/services/service_factory.py` (auto-selects full vs fallback)
+- C# entities: `src/AspireApp.Web/Data/DocumentEntities.cs` (FileMetadata → files table, DocumentPage → document_pages)
+- C# upload: `src/AspireApp.Web/Controllers/FileUploadController.cs`
+- AppHost: `src/AspireApp.AppHost/AppHost.cs`
+
+**Database Schema:**
+- Primary table: `files` (upload lifecycle: uploaded → processing → processed | error)
+- Pages table: `document_pages` (FK to files, page_number, content, metadata)
+- DB path: `/app/database/data-resources.db` (set via ASPIRE_DB_PATH env var)
+- Both C# (EF Core) and Python (raw sqlite3) read/write the same SQLite file
+
+**Neo4j Graph Schema:**
+- Nodes: `:Document` (id unique), `:Page` (id = "{doc_id}_{page_num}"), `:Chunk` (constraint exists, unused)
+- Relationships: `(Document)-[:CONTAINS]->(Page)`, `(Page)-[:PRECEDES]->(Page)`
+- Search: Basic text `CONTAINS` — no full-text index, no vector similarity
+- Container: neo4j:2025.11.2-community with APOC + GDS (both unused by Python)
+- Credentials: passed as NEO4J_URI/NEO4J_USER/NEO4J_PASSWORD env vars from AppHost
+
+**Critical Bugs Found:**
+- ~10 DatabaseService methods called by routers don't exist (get_document, get_processed_document, get_statistics, etc.)
+- save_document_page() signature mismatch (router passes DocumentPage object, method expects individual args)
+- C# FileUploadController saves status "Uploaded" (capital U), Python queries for "uploaded" (lowercase)
+- document_pages FK column: Python creates as `file_id`, C# maps to `document_id`
+
+**Contract Gaps:**
+- Python Document model field names don't match SQLite columns (filename vs file_name, upload_date vs uploaded_at)
+- Legacy _file_dict_to_document() bridges the gap but is fragile
+- C# has legacy Document/ProcessedDocument entities mapped to tables that don't exist in Python schema
+- No version pinning in requirements.txt
+
+**Pipeline Status:**
+- Upload: C# handles file upload + hash dedup → works
+- Discovery: Python finds unprocessed files → BLOCKED by status casing bug
+- Processing: Docling/fallback page extraction → BLOCKED by missing DB methods
+- Neo4j ingestion: Node/relationship creation → works but not batched
+- RAG search: Text CONTAINS only → works but slow, no embeddings
+- LightRAG: Wired as standalone container, zero code integration
+
+### 2026-02-21 — Cross-Agent Findings
+
+**From Bob:**
+- Python routers fundamentally broken: ~10 DatabaseService methods don't exist
+- Status casing mismatch ("Uploaded" vs "uploaded") is P0 priority
+- ApiService is vestigial, simplify by removing or repurposing
+
+**From Jeff:**
+- LightRAG and Ollama missing health checks — blocks webfrontend indefinitely
+- Config key mismatch (AI-Chat-Model vs AI-Model) prevents model propagation
+- SemanticKernel version skew (1.71.0 vs 1.68.0-alpha)
+
+**From Buster:**
+- Zero automated tests — processing pipeline changes are high-risk
+- Python dependencies unpinned — reproducibility issue
+- Global exception handler returns raw messages (info leak)
+
+### 2026-02-22 — Squad Orchestration Complete
+
+**Status:** All four agents completed independent reviews; findings merged into shared decisions.md.
+
+**Jarvis's Action Items (Ready to Execute):**
+1. Router contract rewrite: Use existing DatabaseService API (P0, 2 hrs)
+2. save_document_page() signature fix: Pass individual args (P0, 15 min)
+3. FK column name align: Verify/update to `file_id` (P0, 2 hrs)
+4. Pin requirements.txt versions (P1, 1 hr)
+5. Batch Neo4j operations with UNWIND (P1, 3 hrs)
+6. Add full-text index to Neo4j (P1, 2 hrs)
+7. Delete legacy C# entities (P1, 1 hr)
+
+**Dependencies:**
+- Jeff's status casing fix must land first (P0 blocker)
+- Jeff's FK column decision must be made before coding
+- All P0 items gate Sprint 1 completion
+- Phase 2 (P1 items) starts after P0 validation complete
+
+### 2026-02-21 — Deep Python Pipeline Review (Jarvis)
+
+**Completed:**
+- Analyzed all Python services, routers, DatabaseService API
+- Mapped method calls to actual implementation (30 methods exist, ~10 expected ones don't)
+- Identified 3 critical blockers (P0) + 5 high priorities (P1)
+- Documented fix order: 2–3 days to unblock pipeline
+
+**Key Decisions Made:**
+- Fix strategy for P0.1: Rewrite routers to use existing DatabaseService API instead of adding wrapper methods (cleaner)
+- Recommend batching Neo4j operations (UNWIND instead of loops) for 10–50x speedup
+- Defer vector embeddings to Phase 2; focus on full-text index first (Phase 1)
+
+**Coordination Needed:**
+- Jeff: Fix status casing in FileUploadController (P0.3)
+- Jeff: Verify FK column name in DocumentEntities.cs (P1.4)
+- Bob: Decide LightRAG role (replace or supplement Python RAG?)
+
+**Written to Squad:**
+- `.squad/decisions/inbox/jarvis-python-pipeline-review.md` — summary + fix order
+- `plan.md` (updated) — comprehensive action plan with checkpoints and success criteria
+
+**Files Modified/Created:**
+- `plan.md` — comprehensive 400-line action plan (created)
+- `.squad/decisions/inbox/jarvis-python-pipeline-review.md` — summary for squad (created)
+
+**Learnings (Lasting):**
+- DatabaseService has ~30 well-implemented methods (`get_file_by_id`, `get_unprocessed_files`, etc.) but routers expect a different ~10 (mismatch in expectations)
+- Neo4j graph schema is sound but not batched (easy optimization)
+- Full-text index commented out; easy to enable
+- requirements.txt unpinned (reproducibility risk)
+- LightRAG wired but unused (architectural drift)
+
+### 2026-02-22 — Fix save_document_page Invocation Mismatch (P0.2)
+
+**Completed:** Fixed `processing.py` lines 67-75 where `save_document_page()` was called with a `DocumentPage` object instead of individual keyword arguments.
+
+**Two bugs fixed in one edit:**
+1. **Invocation style:** Removed unnecessary `DocumentPage` construction; now passes `file_id`, `page_number`, `content`, `metadata`, `neo4j_node_id` directly.
+2. **Wrong FK value:** Changed from `processed_doc_id` (return value of `save_processed_document`) to `document_id` (the original file ID). The `document_pages.file_id` column is a FK to `files.id`, not to processed documents.
+
+**Key insight:** The `save_document_page` service method was correct all along — only the caller was wrong. The DB INSERT targets columns `(file_id, page_number, content, page_metadata, neo4j_page_node_id)` which map to the individual args, not a Pydantic object.
+
+**Commit:** `e9d90ea` on `feature/doc-upload`
+
+### 2026-02-22 — Fix DocumentPage FK Column Name Mismatch (P0.3)
+
+**Completed:** Aligned the `DocumentPage` Pydantic model and two utility scripts (`fix_database.py`, `diagnose_database.py`) to use `file_id` instead of `processed_document_id`, matching the canonical schema in `database_service.py`.
+
+**Four files changed:**
+1. `app/models/models.py` — `DocumentPage.processed_document_id` → `file_id`
+2. `fix_database.py` — `document_pages` CREATE TABLE now uses `file_id INTEGER NOT NULL` with proper FK and UNIQUE constraints
+3. `diagnose_database.py` — same CREATE TABLE fix
+4. `README.md` — schema documentation updated to match
+
+**Key insight:** The utility scripts had a doubly-wrong schema: wrong column name (`processed_document_id`) and wrong FK target (`processed_documents(id)`). The canonical table references `files(id)` with `ON DELETE CASCADE` and a `UNIQUE(file_id, page_number)` constraint. Also aligned the column name `neo4j_node_id` → `neo4j_page_node_id` to match the source of truth.
+
+**Commit:** `77db074` on `feature/doc-upload`
+
+### 2025-11-02 — P0 Item 2 Complete: DocumentPage FK Column Final Alignment
+
+**Status:** Complete (parallel work with Jeff)  
+**Commits:** Jarvis: `77db074` | Jeff: `6e5b34b`
+
+**Jarvis's Scope (Python):**
+- Updated `DocumentPage` Pydantic model: `processed_document_id` → `file_id`
+- Updated `fix_database.py` and `diagnose_database.py` CREATE TABLE statements
+- Updated `README.md` schema documentation
+
+**Jeff's Parallel Scope (C#):**
+- Changed `[Column("document_id")]` → `[Column("file_id")]` on `DocumentPage.FileId` property in `DocumentEntities.cs`
+- Updated `UploadDbContext.cs` index name: `idx_pages_document_id` → `idx_pages_file_id`
+- Build verified clean (0 errors, 0 warnings)
+
+**Result:** C#↔Python schema alignment complete. Both services now agree on FK column name `file_id` referencing `files(id)`. P0 Item 2 closed.
+
+### 2025-11-02 — P0 Item 3: Fix Router/Service Contract Mismatches
+
+**Completed:** Added 9 missing backward-compatibility methods to `DatabaseService` that routers expected but didn't exist, causing `AttributeError` at runtime.
+
+**Methods added (all in Backward Compatibility section):**
+1. `get_document()` — wraps `get_file_by_id()` → `Document`
+2. `get_unprocessed_documents()` — wraps `get_unprocessed_files()` → `List[Document]`
+3. `get_documents_by_status()` — direct query with status translation
+4. `save_processed_document()` — delegates to `update_file_processing_results()` + `update_file_status()`
+5. `get_processed_document()` — wraps `get_file_by_id()` → `ProcessedDocument`
+6. `get_statistics()` — returns `_stats` dict + `ConnectionPool` metrics
+7. `get_active_services()` — static informational response
+8. `get_file_document_sync_status()` — `COUNT(*)` on unified files table
+9. `force_sync_files_and_documents()` — no-op (schema already unified)
+
+**Pattern:** All methods follow the established wrapper convention: delegate to existing file-based internals, convert results to legacy model objects. No existing methods modified.
+
+**Key insight:** `get_statistics()` leverages the `_stats` dict already tracked by `DatabaseService.__init__()` plus `ConnectionPool` internals (`_created_connections`, `max_connections`, `_pool.qsize()`). The pool doesn't track query/transaction stats itself, but the service does via `_stats_lock`.
+
+**Impact:** Unblocks all 17 router endpoints in `documents.py` and `processing.py`.
+
+### 2026-03-20 — Upload Path Normalization + Python Footprint Trim
+
+**Completed:**
+- Added `DatabaseService.resolve_upload_path()` so Python now resolves a physical upload path from database `file_path` + `file_name`.
+- Updated both docling implementations to consume the resolved full path instead of assuming `document.file_path` is already the file.
+- Trimmed the Python API surface by removing status-filter, schema-sync, force-sync, concurrent-access, and performance endpoints; also removed `processed-documents`.
+- Replaced the database contract doc with an accurate `files` / `document_pages` + retained-endpoints reference in `docs/DATABASE_MANAGEMENT.md`.
+
+**Key decisions:**
+- Treat `file_path` as a directory contract, not a final file path.
+- Add runtime guardrails that remap stored Windows host paths under the shared `data` root to the active Python runtime data root.
+- Keep `GET /documents/health/database` and `GET /processing/service-info` because they still support monitoring and processor introspection without reintroducing the removed admin surface.
+
+**Validation:**
+- `python -m compileall app`
+- stdlib-only path-resolution check using a stubbed `pydantic` module plus a temporary SQLite file and real `data\\` fixture path
+
+**Key file paths:**
+- Path resolver: `src/AspireApp.PythonServices/app/services/database_service.py`
+- Processing orchestration: `src/AspireApp.PythonServices/app/routers/processing.py`
+- Docling readers: `src/AspireApp.PythonServices/app/services/docling_service.py`, `src/AspireApp.PythonServices/app/services/docling_service_fallback.py`
+- Contract doc: `docs/DATABASE_MANAGEMENT.md`
+
+### 2026-03-20 — P0 Decision Merge Complete
+
+**Status:** All P0 work merged into shared decisions.md and approved by squad.
+
+**Work Summary Across Squad:**
+- **Jarvis (this agent):** Implemented upload path fix + endpoint/method pruning. Removed 7 endpoints, 5 dead methods.
+- **Bob:** Post-QA revision work. Converted audit tests from `expectedFailure` to live regression. Aligned CROSS_SERVICE_CONTRACT.md.
+- **Buster:** QA gates (3 phases). Initial rejection, then approvals post-Bob and post-Jeff.
+- **Jeff:** Final Python footprint cleanup. Removed sync shims, updated canonical contract methods.
+
+**Inbox → Decisions.md:** 6 files merged. Jarvis's decisions now part of permanent squad record.
+
+**Orchestration Log Created:** `20260320T103216Z-jarvis.md` documenting spawn phases and context for successors.
+
+**Next Phase:** Jeff owns canonical Python contract surface maintenance. Validation gates remain live.
+
+### 2026-03-25 — P1 Processing Pipeline Stabilization
+
+**Completed:**
+- Stabilized retries by clearing stale docling/Neo4j result fields and existing `document_pages` rows whenever a file re-enters `processing`.
+- Kept batch selection aligned with the canonical lifecycle by allowing both `uploaded` and `error` rows back into the processing queue.
+- Hardened the processing router so duplicate starts are rejected while a file is already in `processing`.
+
+**Validation:**
+- `python -m compileall src\\AspireApp.PythonServices\\app`
+- `python src\\AspireApp.PythonServices\\tests\\test_p0_contract_audit.py`
+
+**Key insight:** Retry safety in the canonical `files` + `document_pages` schema depends on resetting derived artifacts at the start of a new attempt. Otherwise the `(file_id, page_number)` uniqueness rule turns partial failures into duplicate-write failures on retry.
+
+### 2026-03-25 — Docling → LightRAG Handoff Clarified
+
+**Completed:**
+- Verified the LightRAG container in this repo is configured with `INPUT_DIR=/app/data/inputs` and Neo4j settings, but no repository code was triggering ingestion.
+- Confirmed the hot-folder assumption was wrong: dropping files into the shared input directory is insufficient without an explicit LightRAG ingest action.
+- Added Python-side markdown export + handoff flow so processed documents stage a LightRAG-friendly `.md` file and request `POST /documents/scan`.
+
+**Validation:**
+- `python -m compileall src\\AspireApp.PythonServices\\app`
+- `python -m compileall src\\AspireApp.PythonServices\\example-parse-document.py`
+- `python src\\AspireApp.PythonServices\\tests\\test_processing_pipeline_regression.py`
+- `python src\\AspireApp.PythonServices\\tests\\test_p0_contract_audit.py`
+- `dotnet build AspireApp.sln`
+
+**Key insight:** The safest handoff for this repo is "export markdown to the shared LightRAG input directory, then explicitly call `/documents/scan`." That keeps Docling ownership in Python while avoiding the false assumption that LightRAG watches the directory automatically.
+
+### 2026-03-25 — LightRAG Runtime Proof via Python Retrieval API
+
+**Completed:**
+- Fixed the runtime Neo4j contract so both the Python service and LightRAG receive an explicit `bolt://` URI instead of Aspire's raw `tcp://` endpoint reference.
+- Added a Python-side `LightRagQueryService` plus `POST /rag/lightrag-query` so retrieval stays behind the Python API boundary.
+- Hardened Python runtime checks uncovered during live verification: database directory writability probes now use unique marker files, container-style module paths no longer crash runtime data-root discovery, and the FastAPI global exception handler now returns a real JSON response.
+- Proved a live round-trip against the running Aspire stack: processed a seeded document through `/processing/process-document/{id}`, observed LightRAG stage and scan it, queried it back through `/rag/lightrag-query`, and confirmed matching LightRAG-created nodes in Neo4j for `000007-jarvis-lightrag-proof.md`.
+
+**Validation:**
+- `python -m compileall src\\AspireApp.PythonServices\\app`
+- `python src\\AspireApp.PythonServices\\tests\\test_processing_pipeline_regression.py`
+- `python src\\AspireApp.PythonServices\\tests\\test_p0_contract_audit.py`
+- `dotnet build AspireApp.sln`
+- Live Aspire run with manual HTTP verification:
+  - `GET /health`
+  - `GET /rag/health`
+  - `POST /processing/process-document/{id}`
+  - `POST /rag/lightrag-query`
+  - `POST /db/neo4j/query/v2`
+
+**Key insight:** The round-trip is now real, but LightRAG's merge phase can still mark a document `failed` if Ollama returns `NaN` for a relationship embedding upsert. Even in that state, chunk/entity data remained queryable through the Python route, so the integration proof is complete while merge stability becomes the next focused runtime hardening item.
+
+### 2026-03-26 — Ingestion Trigger Review
+
+**Completed:**
+- Audited the current upload ? processing ? LightRAG trigger path against `processing.py`, `database_service.py`, `docling_service.py`, `lightrag_handoff_service.py`, `AppHost.cs`, and `BasicAspireAppHostTests`.
+- Updated the roadmap and contract docs so the trigger model is explicit for future UI, API, and test work.
+
+**Validated behavior:**
+- Upload only saves the file and creates a `files.status='uploaded'` row; neither the Web UI nor Python startup automatically calls `/processing/process-document/{id}` or `/processing/process-all`.
+- Python discovers work from SQLite rows with status `uploaded` or `error`, then the processing endpoints enqueue FastAPI `BackgroundTasks`.
+- Docling persists `document.json`, `metadata.json`, markdown exports, page JSON files, and `document_pages` rows; LightRAG handoff stages markdown into `/app/data/inputs` and explicitly posts `/documents/scan`.
+- A raw shared-folder drop without a companion `files` row is ignored.
+
+**Validation:**
+- `python src\AspireApp.PythonServices\tests\test_p0_contract_audit.py`
+- `python src\AspireApp.PythonServices\tests\test_processing_pipeline_regression.py`
+- `dotnet test src\AspireApp.WebTest\AspireApp.WebTest.csproj --filter BasicAspireAppHostTests.FlowEndToEnd --nologo`
+
