@@ -10,6 +10,7 @@ from contextlib import contextmanager
 from datetime import UTC, datetime
 from pathlib import Path
 from types import SimpleNamespace
+from unittest.mock import patch
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
@@ -152,6 +153,99 @@ class DatabaseContractAuditTests(unittest.TestCase):
                 else:
                     os.environ["ASPIRE_DB_PATH"] = previous_db_path
                 shutil.rmtree(temp_dir, ignore_errors=True)
+
+    def test_database_service_repairs_stale_files_schema_before_creating_indexes(self):
+        with _patched_dependencies():
+            from app.services.database_service import DatabaseService
+
+            temp_dir = Path(tempfile.mkdtemp())
+            db_path = temp_dir / "data-resources.db"
+            previous_db_path = os.environ.get("ASPIRE_DB_PATH")
+            os.environ["ASPIRE_DB_PATH"] = str(db_path)
+            try:
+                with sqlite3.connect(db_path) as conn:
+                    conn.execute(
+                        """
+                        CREATE TABLE files (
+                            id INTEGER PRIMARY KEY AUTOINCREMENT,
+                            file_name TEXT NOT NULL,
+                            original_file_name TEXT NOT NULL,
+                            file_path TEXT NOT NULL,
+                            file_size INTEGER NOT NULL DEFAULT 0,
+                            mime_type TEXT,
+                            uploaded_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                            status TEXT NOT NULL DEFAULT 'uploaded',
+                            processing_started_at DATETIME,
+                            processing_completed_at DATETIME,
+                            processing_error TEXT,
+                            docling_document_path TEXT,
+                            total_pages INTEGER,
+                            neo4j_document_node_id TEXT,
+                            source_type TEXT NOT NULL DEFAULT 'upload',
+                            source_url TEXT
+                        )
+                        """
+                    )
+                    conn.execute(
+                        """
+                        INSERT INTO files (
+                            file_name,
+                            original_file_name,
+                            file_path,
+                            file_size,
+                            mime_type,
+                            status,
+                            source_type
+                        )
+                        VALUES (?, ?, ?, ?, ?, ?, ?)
+                        """,
+                        (
+                            "legacy.pdf",
+                            "legacy.pdf",
+                            str(temp_dir / "uploads"),
+                            1,
+                            "application/pdf",
+                            "uploaded",
+                            "upload",
+                        ),
+                    )
+                    conn.commit()
+
+                _close_database_pools(DatabaseService)
+                service = DatabaseService()
+                legacy_document = service.get_document_by_id(1)
+
+                with sqlite3.connect(db_path) as conn:
+                    files_columns = {
+                        row[1] for row in conn.execute("PRAGMA table_info(files)").fetchall()
+                    }
+                    file_indexes = {
+                        row[0]
+                        for row in conn.execute(
+                            """
+                            SELECT name
+                            FROM sqlite_master
+                            WHERE type = 'index' AND tbl_name = 'files'
+                            """
+                        ).fetchall()
+                    }
+                    legacy_hash = conn.execute(
+                        "SELECT file_hash FROM files WHERE id = 1"
+                    ).fetchone()[0]
+            finally:
+                _close_database_pools(DatabaseService)
+                gc.collect()
+                if previous_db_path is None:
+                    os.environ.pop("ASPIRE_DB_PATH", None)
+                else:
+                    os.environ["ASPIRE_DB_PATH"] = previous_db_path
+                shutil.rmtree(temp_dir, ignore_errors=True)
+
+            self.assertIn("file_hash", files_columns)
+            self.assertIn("idx_files_hash", file_indexes)
+            self.assertEqual("", legacy_hash)
+            self.assertIsNotNone(legacy_document)
+            self.assertEqual("uploaded", legacy_document.processing_status)
 
     def test_database_service_exposes_canonical_files_surface(self):
         with _patched_dependencies():
@@ -353,6 +447,132 @@ class DatabaseContractAuditTests(unittest.TestCase):
 
                 normalized_roots = {root.replace("\\", "/") for root in runtime_roots}
                 self.assertIn("/app/data", normalized_roots)
+
+
+class DatabaseStartupPathAuditTests(unittest.TestCase):
+    def test_local_default_database_prefers_repo_candidate_over_app_fallback(self):
+        with _patched_dependencies():
+            import app.services.database_service as database_service_module
+
+            DatabaseService = database_service_module.DatabaseService
+
+            temp_root = Path(tempfile.mkdtemp())
+            repo_root = temp_root / "repo"
+            cwd_root = temp_root / "cwd"
+            preferred_db = repo_root / "database" / "data-resources.db"
+            cwd_db = cwd_root / "database" / "data-resources.db"
+            preferred_db.parent.mkdir(parents=True, exist_ok=True)
+            cwd_db.parent.mkdir(parents=True, exist_ok=True)
+
+            previous_db_path = os.environ.get("ASPIRE_DB_PATH")
+            if previous_db_path is not None:
+                os.environ.pop("ASPIRE_DB_PATH", None)
+
+            candidates = []
+            service = None
+            try:
+                _close_database_pools(DatabaseService)
+                with (
+                    patch.object(
+                        DatabaseService, "_get_repository_root", return_value=repo_root
+                    ),
+                    patch.object(
+                        DatabaseService, "_is_running_in_container", return_value=False
+                    ),
+                    patch.object(database_service_module.Path, "cwd", return_value=cwd_root),
+                ):
+                    candidates = DatabaseService.__new__(
+                        DatabaseService
+                    )._get_default_database_candidates()
+                    service = DatabaseService()
+
+                normalized_candidates = [
+                    (candidate_path.as_posix(), candidate_source)
+                    for candidate_path, candidate_source in candidates
+                ]
+                self.assertEqual(
+                    [
+                        (preferred_db.as_posix(), "repository"),
+                        (cwd_db.as_posix(), "cwd"),
+                        ("/app/docs-database/data-resources.db", "docs-mounted"),
+                        ("/app/database/data-resources.db", "volume-backed"),
+                    ],
+                    normalized_candidates,
+                )
+                self.assertEqual(str(preferred_db), service.db_path)
+                self.assertEqual("repository", service.db_path_source)
+                self.assertTrue(preferred_db.exists())
+                with sqlite3.connect(preferred_db) as conn:
+                    table_names = {
+                        row[0]
+                        for row in conn.execute(
+                            "SELECT name FROM sqlite_master WHERE type = 'table'"
+                        ).fetchall()
+                    }
+                self.assertIn("files", table_names)
+                self.assertIn("document_pages", table_names)
+            finally:
+                service = None
+                _close_database_pools(DatabaseService)
+                gc.collect()
+                if previous_db_path is not None:
+                    os.environ["ASPIRE_DB_PATH"] = previous_db_path
+                shutil.rmtree(temp_root, ignore_errors=True)
+
+    def test_legacy_schema_startup_failure_reports_path_and_cause(self):
+        with _patched_dependencies():
+            from app.services.database_service import DatabaseService
+
+            temp_root = Path(tempfile.mkdtemp())
+            legacy_db = temp_root / "legacy-schema.db"
+            with sqlite3.connect(legacy_db) as conn:
+                conn.execute(
+                    """
+                    CREATE TABLE files (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        file_name TEXT NOT NULL,
+                        file_path TEXT NOT NULL,
+                        file_size INTEGER NOT NULL DEFAULT 0,
+                        uploaded_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                        status TEXT DEFAULT 'uploaded'
+                    )
+                    """
+                )
+                conn.commit()
+
+            try:
+                original_ensure_required_columns = DatabaseService._ensure_required_columns
+
+                def skip_files_compatibility_migration(
+                    service, cursor, table_name, required_columns
+                ):
+                    if table_name == "files":
+                        return None
+                    return original_ensure_required_columns(
+                        service, cursor, table_name, required_columns
+                    )
+
+                _close_database_pools(DatabaseService)
+                with patch.object(
+                    DatabaseService,
+                    "_ensure_required_columns",
+                    autospec=True,
+                    side_effect=skip_files_compatibility_migration,
+                ):
+                    with self.assertRaises(RuntimeError) as context:
+                        DatabaseService(db_path=str(legacy_db))
+            finally:
+                _close_database_pools(DatabaseService)
+                gc.collect()
+                shutil.rmtree(temp_root, ignore_errors=True)
+
+            message = str(context.exception)
+            self.assertIn(str(legacy_db), message)
+            self.assertIn("no such column: file_hash", message)
+            self.assertIn("Missing canonical columns:", message)
+            self.assertIn("Table 'files' columns:", message)
+            self.assertIn("incompatible legacy schema", message)
+            self.assertIsInstance(context.exception.__cause__, sqlite3.OperationalError)
 
 
 def _close_database_pools(database_service_type) -> None:

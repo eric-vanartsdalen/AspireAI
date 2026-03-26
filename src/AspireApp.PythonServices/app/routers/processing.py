@@ -1,3 +1,6 @@
+import json
+from pathlib import Path
+
 from fastapi import APIRouter, HTTPException, Depends, BackgroundTasks
 import logging
 
@@ -48,6 +51,7 @@ async def process_document_task(
             processed_doc=processed_doc,
             lightrag_handoff=lightrag_handoff or LightRagHandoffService(),
         )
+        _persist_processing_metadata(processed_doc)
         
         # Create Neo4j nodes
         page_node_ids = []
@@ -124,6 +128,22 @@ def _attempt_lightrag_handoff(document, processed_doc, lightrag_handoff: LightRa
         metadata["lightrag"] = handoff_result
 
     processed_doc.processing_metadata = metadata
+
+
+def _persist_processing_metadata(processed_doc) -> None:
+    metadata = getattr(processed_doc, "processing_metadata", None)
+    document_path = getattr(processed_doc, "docling_document_path", None)
+    if not metadata or not document_path:
+        return
+
+    metadata_path = Path(document_path).with_name("metadata.json")
+    if not metadata_path.parent.exists():
+        return
+
+    metadata_path.write_text(
+        json.dumps(metadata, indent=2, ensure_ascii=False),
+        encoding="utf-8",
+    )
 
 
 @router.post("/process-document/{document_id}", response_model=ProcessingStartResponse)

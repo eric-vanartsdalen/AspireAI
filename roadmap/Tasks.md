@@ -143,6 +143,20 @@ Note: This will be a living document.
 
 
 
+### SQLite Startup Schema Repair (P0) ✅
+
+
+
+- [x] `DatabaseService` now repairs stale canonical `files` columns before creating dependent indexes at startup
+
+
+- [x] `test_services.py` now runs as a real pytest smoke suite and no longer masks database startup failures
+
+
+- [x] Regression coverage now exercises the stale `file_hash` upgrade path
+
+
+
 
 
 ---

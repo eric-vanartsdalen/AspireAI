@@ -1,5 +1,6 @@
 using Aspire.Hosting;
 using Aspire.Hosting.ApplicationModel;
+using Microsoft.Extensions.Configuration;
 using System.Threading;
 using System.Threading.Tasks;
 
@@ -10,8 +11,22 @@ public partial class Program
 		// ASPIRE LOCAL SETUP
 		var builder = DistributedApplication.CreateBuilder(args);
 		var repositoryRoot = Path.GetFullPath(Path.Combine(builder.Environment.ContentRootPath, "..", ".."));
-		var sharedDataPath = Path.Combine(repositoryRoot, "data");
-		var sharedDatabasePath = Path.Combine(repositoryRoot, "database");
+		var sharedDataPath = ResolveSharedPath(builder.Configuration, "SharedPaths:Data", repositoryRoot, "data");
+		var sharedDatabasePath = ResolveSharedPath(builder.Configuration, "SharedPaths:Database", repositoryRoot, "database");
+		var sharedDatabaseFileName = builder.Configuration.GetValue<string>("SharedPaths:DatabaseFileName");
+		if (string.IsNullOrWhiteSpace(sharedDatabaseFileName))
+		{
+			sharedDatabaseFileName = "data-resources.db";
+		}
+		var sharedDatabaseFile = Path.Combine(sharedDatabasePath, sharedDatabaseFileName);
+		var sharedDatabaseConnectionString = $"Data Source={sharedDatabaseFile}";
+
+		Directory.CreateDirectory(sharedDataPath);
+		Directory.CreateDirectory(sharedDatabasePath);
+		if (!File.Exists(sharedDatabaseFile))
+		{
+			using var _ = File.Create(sharedDatabaseFile);
+		}
 
 		// Config with .NET Aspire
 		var aiChatModel = builder.AddParameterFromConfiguration("AI-Chat-Model", "AI-Chat-Model");
@@ -74,23 +89,29 @@ public partial class Program
 			.AddDockerfile("python-service", "../../src/AspireApp.PythonServices/", pythonDockerfile)
 			.WithHttpEndpoint(port: 8000, targetPort: 8000, name: "http")
 			.WithBindMount(sharedDataPath, "/app/data")
-			.WithBindMount(sharedDatabasePath, "/app/database")                     // Keep host access for debugging/backup
+			.WithBindMount(sharedDatabasePath, "/app/docs-database")                // Align with Python docs-mounted candidate
 			.WithVolume("python-pip-cache", "/root/.cache/pip")                   // Persist pip cache
 			.WithEnvironment("NEO4J_URI", neo4jBoltUri)
 			.WithEnvironment("NEO4J_USER", neo4jUser.Resource)
 			.WithEnvironment("NEO4J_PASSWORD", neo4jPass.Resource)
 			.WithEnvironment("PIP_CACHE_DIR", "/root/.cache/pip")                  // Use persistent pip cache
 			.WithEnvironment("DOCKER_BUILDKIT", "1")                               // Enable BuildKit for better caching
-			.WithEnvironment("ASPIRE_DB_PATH", "/app/database/data-resources.db")  // Use host-mounted path by default
+			.WithEnvironment("ASPIRE_DB_PATH", $"/app/docs-database/{sharedDatabaseFileName}")  // Prefer docs-mounted path
 			.WithHttpHealthCheck("/health")
 			.WaitFor(neo4jDb);  // Ensure Neo4j starts before Python service
+
+		var pythonRunAsRoot = builder.Configuration.GetValue<bool>("PYTHON_RUN_AS_ROOT");
+		if (pythonRunAsRoot)
+		{
+			pythonServices.WithContainerRuntimeArgs("--user", "0");
+		}
 
 		// SETUP CONTAINER LightRAG service
 		// see: https://github.com/hkuds/LightRAG
 		// video: https://www.youtube.com/watch?v=g21royNJ4fw
 		var lightrag = builder.AddContainer("lightrag", "ghcr.io/hkuds/lightrag")
 			.WithReference(ollama)
-			.WithBindMount("../../data", "/app/data")
+			.WithBindMount(sharedDataPath, "/app/data")
 			.WithEnvironment("LIGHTRAG_KV_STORAGE", "JsonKVStorage")
 			.WithEnvironment("LIGHTRAG_DOC_STATUS_STORAGE", "JsonDocStatusStorage")
 			.WithEnvironment("LIGHTRAG_GRAPH_STORAGE", "Neo4JStorage")
@@ -141,6 +162,8 @@ public partial class Program
 			.WithReference(appmodel)
 			.WithEnvironment("AI-Endpoint", aiEndpoint.Resource)
 			.WithEnvironment("AI-Chat-Model", aiChatModel.Resource)
+			.WithEnvironment("ConnectionStrings__DefaultConnection", sharedDatabaseConnectionString)
+			.WithEnvironment("FileUpload__DataDirectory", sharedDataPath)
 			.WithEnvironment("NEO4J_HTTP_URL", neo4jDb.GetEndpoint("http"))     // Neo4j browser endpoint
 			.WithEnvironment("NEO4J_BOLT_URL", neo4jBoltUri)                    // Neo4j bolt endpoint
 			.WithEnvironment("NEO4J_AUTH", $"neo4j/{neo4jPassValue}")               // Neo4j credentials
@@ -161,5 +184,22 @@ public partial class Program
 			Console.WriteLine("Application run was canceled, likely due to test fixture shutdown. Ignoring exception for graceful exit.");
 		}
 
+	}
+
+	private static string ResolveSharedPath(
+		IConfiguration configuration,
+		string configurationKey,
+		string repositoryRoot,
+		string defaultRelativePath)
+	{
+		var configuredPath = configuration.GetValue<string>(configurationKey);
+		var candidatePath = string.IsNullOrWhiteSpace(configuredPath)
+			? Path.Combine(repositoryRoot, defaultRelativePath)
+			: configuredPath;
+
+		return Path.GetFullPath(
+			Path.IsPathRooted(candidatePath)
+				? candidatePath
+				: Path.Combine(repositoryRoot, candidatePath));
 	}
 }

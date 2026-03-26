@@ -2,6 +2,7 @@ import gc
 import json
 import os
 import shutil
+import sqlite3
 import sys
 import tempfile
 import types
@@ -11,6 +12,7 @@ from http.server import BaseHTTPRequestHandler, HTTPServer
 from pathlib import Path
 from threading import Thread
 from types import SimpleNamespace
+from unittest.mock import MagicMock, patch
 from uuid import uuid4
 
 
@@ -334,6 +336,342 @@ class ProcessingStatusLifecycleTests(unittest.TestCase):
             self.assertEqual(file_id, document.id)
             self.assertEqual("uploaded", document.processing_status)
 
+    def test_get_document_by_id_prefers_fresh_reads_for_shared_container_database(self):
+        with _database_service_sandbox("fresh_reads_for_shared_container_db") as (service, uploads_dir):
+            file_id = service.create_file_record(
+                file_name="shared-file.pdf",
+                original_file_name="shared-file.pdf",
+                file_path=str(uploads_dir),
+                file_size=4,
+                mime_type="application/pdf",
+                status="uploaded",
+            )
+
+            service.update_file_status(file_id, "processed")
+            fresh_row = service._fetch_file_row_from_fresh_connection(file_id)
+            stale_row = list(fresh_row)
+            stale_row[8] = "uploaded"
+
+            original_get_connection = service._pool.get_connection
+            original_should_prefer_fresh_reads = service._should_prefer_fresh_reads
+
+            class StaleCursor:
+                def execute(self, *args, **kwargs):
+                    return None
+
+                def fetchone(self):
+                    return tuple(stale_row)
+
+            class StaleConnection:
+                def cursor(self):
+                    return StaleCursor()
+
+            @contextmanager
+            def stale_get_connection():
+                yield StaleConnection()
+
+            service._pool.get_connection = stale_get_connection
+            service._should_prefer_fresh_reads = lambda: True
+            try:
+                document = service.get_document_by_id(file_id)
+            finally:
+                service._pool.get_connection = original_get_connection
+                service._should_prefer_fresh_reads = original_should_prefer_fresh_reads
+
+            self.assertIsNotNone(document)
+            self.assertEqual(file_id, document.id)
+            self.assertEqual("processed", document.processing_status)
+
+    def test_update_file_status_prefers_fresh_connection_for_shared_container_database(self):
+        with _database_service_sandbox("fresh_writes_for_shared_container_db") as (service, uploads_dir):
+            file_id = service.create_file_record(
+                file_name="shared-write-file.pdf",
+                original_file_name="shared-write-file.pdf",
+                file_path=str(uploads_dir),
+                file_size=4,
+                mime_type="application/pdf",
+                status="uploaded",
+            )
+
+            original_get_connection = service._pool.get_connection
+            original_should_prefer_fresh_reads = service._should_prefer_fresh_reads
+
+            @contextmanager
+            def fail_if_pool_used():
+                raise AssertionError("Shared mounted file updates should bypass the pooled connection.")
+                yield
+
+            service._pool.get_connection = fail_if_pool_used
+            service._should_prefer_fresh_reads = lambda: True
+            try:
+                service.update_file_status(file_id, "processing")
+                status = service.get_processing_status(file_id)
+            finally:
+                service._pool.get_connection = original_get_connection
+                service._should_prefer_fresh_reads = original_should_prefer_fresh_reads
+
+            self.assertEqual("processing", status.status)
+
+    def test_list_documents_falls_back_to_fresh_connection_when_pooled_lookup_misses_rows(self):
+        with _database_service_sandbox("list_documents_fresh_connection_fallback") as (service, uploads_dir):
+            file_id = service.create_file_record(
+                file_name="list-file.pdf",
+                original_file_name="list-file.pdf",
+                file_path=str(uploads_dir),
+                file_size=4,
+                mime_type="application/pdf",
+                status="uploaded",
+            )
+
+            original_get_connection = service._pool.get_connection
+
+            class StaleCursor:
+                def execute(self, *args, **kwargs):
+                    return None
+
+                def fetchall(self):
+                    return []
+
+            class StaleConnection:
+                def cursor(self):
+                    return StaleCursor()
+
+            @contextmanager
+            def stale_get_connection():
+                yield StaleConnection()
+
+            service._pool.get_connection = stale_get_connection
+            try:
+                documents = service.list_documents()
+            finally:
+                service._pool.get_connection = original_get_connection
+
+            self.assertEqual([file_id], [document.id for document in documents])
+            self.assertEqual("uploaded", documents[0].processing_status)
+
+    def test_list_unprocessed_documents_falls_back_to_fresh_connection_when_pooled_lookup_misses_rows(self):
+        with _database_service_sandbox("list_unprocessed_fresh_connection_fallback") as (service, uploads_dir):
+            file_id = service.create_file_record(
+                file_name="retry-file.pdf",
+                original_file_name="retry-file.pdf",
+                file_path=str(uploads_dir),
+                file_size=4,
+                mime_type="application/pdf",
+                status="uploaded",
+            )
+
+            original_get_connection = service._pool.get_connection
+
+            class StaleCursor:
+                def execute(self, *args, **kwargs):
+                    return None
+
+                def fetchall(self):
+                    return []
+
+            class StaleConnection:
+                def cursor(self):
+                    return StaleCursor()
+
+            @contextmanager
+            def stale_get_connection():
+                yield StaleConnection()
+
+            service._pool.get_connection = stale_get_connection
+            try:
+                documents = service.list_unprocessed_documents()
+            finally:
+                service._pool.get_connection = original_get_connection
+
+            self.assertEqual([file_id], [document.id for document in documents])
+            self.assertEqual("uploaded", documents[0].processing_status)
+
+
+class DocumentVisibilityEndpointRegressionTests(unittest.IsolatedAsyncioTestCase):
+    async def test_get_document_returns_document_when_pooled_lookup_misses_visible_row(self):
+        with _patched_processing_dependencies():
+            from app.routers.documents import get_document
+            from app.services.database_service import DatabaseService
+
+            scratch_dir = SCRATCH_ROOT / f"document_visibility_{uuid4().hex}"
+            uploads_dir = scratch_dir / "uploads"
+            uploads_dir.mkdir(parents=True, exist_ok=True)
+            db_path = scratch_dir / "data-resources.db"
+
+            previous_db_path = os.environ.get("ASPIRE_DB_PATH")
+            os.environ["ASPIRE_DB_PATH"] = str(db_path)
+
+            try:
+                _close_database_pools(DatabaseService)
+                service = DatabaseService()
+                file_id = service.create_file_record(
+                    file_name="visible-file.pdf",
+                    original_file_name="visible-file.pdf",
+                    file_path=str(uploads_dir),
+                    file_size=4,
+                    mime_type="application/pdf",
+                    status="uploaded",
+                )
+
+                original_get_connection = service._pool.get_connection
+
+                class StaleCursor:
+                    def execute(self, *args, **kwargs):
+                        return None
+
+                    def fetchone(self):
+                        return None
+
+                class StaleConnection:
+                    def cursor(self):
+                        return StaleCursor()
+
+                @contextmanager
+                def stale_get_connection():
+                    yield StaleConnection()
+
+                service._pool.get_connection = stale_get_connection
+                try:
+                    document = await get_document(file_id, db=service)
+                finally:
+                    service._pool.get_connection = original_get_connection
+            finally:
+                _close_database_pools(DatabaseService)
+                gc.collect()
+                if previous_db_path is None:
+                    os.environ.pop("ASPIRE_DB_PATH", None)
+                else:
+                    os.environ["ASPIRE_DB_PATH"] = previous_db_path
+                shutil.rmtree(scratch_dir, ignore_errors=True)
+                if SCRATCH_ROOT.exists() and not any(SCRATCH_ROOT.iterdir()):
+                    SCRATCH_ROOT.rmdir()
+
+            self.assertEqual(file_id, document.id)
+            self.assertEqual("visible-file.pdf", document.filename)
+            self.assertEqual("uploaded", document.processing_status)
+
+    async def test_get_document_returns_not_found_for_missing_document(self):
+        with _patched_processing_dependencies():
+            from app.routers.documents import get_document
+            from fastapi import HTTPException
+
+            missing_db = SimpleNamespace(get_document_by_id=lambda document_id: None)
+
+            with self.assertRaises(HTTPException) as missing_error:
+                await get_document(404, db=missing_db)
+
+            self.assertEqual(404, missing_error.exception.status_code)
+            self.assertEqual("Document not found", missing_error.exception.detail)
+
+    async def test_get_document_uses_fallback_when_env_path_is_unusable(self):
+        with _patched_processing_dependencies():
+            from app.routers.documents import get_document
+            import app.services.database_service as database_service_module
+
+            DatabaseService = database_service_module.DatabaseService
+
+            scratch_dir = SCRATCH_ROOT / f"document_visibility_fallback_{uuid4().hex}"
+            repo_root = scratch_dir / "repo"
+            env_root = scratch_dir / "env"
+            uploads_dir = repo_root / "data" / "uploads"
+            uploads_dir.mkdir(parents=True, exist_ok=True)
+            repo_db = repo_root / "database" / "data-resources.db"
+            repo_db.parent.mkdir(parents=True, exist_ok=True)
+            env_db = env_root / "database" / "data-resources.db"
+            env_db.parent.mkdir(parents=True, exist_ok=True)
+
+            previous_db_path = os.environ.get("ASPIRE_DB_PATH")
+            os.environ["ASPIRE_DB_PATH"] = str(env_db)
+            service = None
+            file_id = None
+            document = None
+            db_path = None
+            db_path_source = None
+            try:
+                _close_database_pools(DatabaseService)
+                original_create_connection = database_service_module.ConnectionPool._create_connection
+
+                def failing_create_connection(pool_self):
+                    if pool_self.db_path == str(env_db):
+                        raise sqlite3.OperationalError("disk I/O error")
+                    return original_create_connection(pool_self)
+
+                with (
+                    patch.object(
+                        database_service_module.ConnectionPool,
+                        "_create_connection",
+                        new=failing_create_connection,
+                    ),
+                    patch.object(DatabaseService, "_get_repository_root", return_value=repo_root),
+                    patch.object(DatabaseService, "_is_running_in_container", return_value=False),
+                    patch.object(database_service_module.Path, "cwd", return_value=repo_root),
+                ):
+                    service = DatabaseService()
+                    file_id = service.create_file_record(
+                        file_name="fallback-file.pdf",
+                        original_file_name="fallback-file.pdf",
+                        file_path=str(uploads_dir),
+                        file_size=4,
+                        mime_type="application/pdf",
+                        status="uploaded",
+                    )
+                    document = await get_document(file_id, db=service)
+                    db_path_source = service.db_path_source
+                    db_path = service.db_path
+            finally:
+                _close_database_pools(DatabaseService)
+                gc.collect()
+                if previous_db_path is None:
+                    os.environ.pop("ASPIRE_DB_PATH", None)
+                else:
+                    os.environ["ASPIRE_DB_PATH"] = previous_db_path
+                shutil.rmtree(scratch_dir, ignore_errors=True)
+                if SCRATCH_ROOT.exists() and not any(SCRATCH_ROOT.iterdir()):
+                    SCRATCH_ROOT.rmdir()
+
+            self.assertIsNotNone(service)
+            self.assertEqual(str(repo_db), db_path)
+            self.assertEqual("repository", db_path_source)
+            self.assertIsNotNone(file_id)
+            self.assertIsNotNone(document)
+            self.assertEqual(file_id, document.id)
+            self.assertEqual("fallback-file.pdf", document.filename)
+            self.assertEqual("uploaded", document.processing_status)
+
+
+class ConnectionPoolJournalModeTests(unittest.TestCase):
+    def test_docs_mounted_database_prefers_delete_journal_in_container(self):
+        with _patched_database_dependencies():
+            import app.services.database_service as database_service_module
+
+            mock_connection = MagicMock()
+            mock_connection.execute.return_value = None
+
+            with (
+                patch.object(
+                    database_service_module.sqlite3,
+                    "connect",
+                    return_value=mock_connection,
+                ),
+                patch.object(
+                    database_service_module.ConnectionPool,
+                    "_apply_pragma",
+                ) as apply_pragma,
+            ):
+                pool = database_service_module.ConnectionPool(
+                    "/app/docs-database/data-resources.db",
+                    prefer_delete_journal=True,
+                )
+
+                result = pool._create_connection()
+
+            self.assertIs(result, mock_connection)
+            self.assertGreaterEqual(len(apply_pragma.call_args_list), 1)
+            self.assertEqual(
+                "PRAGMA journal_mode=DELETE",
+                apply_pragma.call_args_list[0].args[1],
+            )
+
 
 class FakeDatabase:
     def __init__(self, document, resolved_path: Path):
@@ -486,23 +824,35 @@ class ProcessDocumentTaskRegressionTests(unittest.IsolatedAsyncioTestCase):
         with _patched_processing_dependencies():
             from app.routers.processing import process_document_task
 
-            document = SimpleNamespace(id=41, filename="stored-file.pdf")
-            processed_doc = SimpleNamespace(
-                docling_document_path="/app/data/processed/documents/41/document.json",
-                total_pages=2,
-                neo4j_node_id=None,
-                processing_metadata={"markdown_path": "/app/data/processed/documents/41/outputs/stored-file.md"},
-            )
-            pages = [
-                SimpleNamespace(page_number=1, content="Page one", metadata={"section": "intro"}),
-                SimpleNamespace(page_number=2, content="Page two", metadata={"section": "body"}),
-            ]
-            db = FakeDatabase(document=document, resolved_path=Path("C:\\app\\data\\uploads\\stored-file.pdf"))
-            docling = FakeDocling(processed_doc=processed_doc, pages=pages)
-            neo4j = FakeNeo4j()
-            lightrag_handoff = FakeLightRagHandoff()
+            with tempfile.TemporaryDirectory() as temp_dir:
+                doc_dir = Path(temp_dir) / "processed" / "documents" / "41"
+                outputs_dir = doc_dir / "outputs"
+                outputs_dir.mkdir(parents=True, exist_ok=True)
+                document_json_path = doc_dir / "document.json"
+                document_json_path.write_text("{}", encoding="utf-8")
+                markdown_path = outputs_dir / "stored-file.md"
+                markdown_path.write_text("# Stored file", encoding="utf-8")
 
-            await process_document_task(41, db, docling, neo4j, lightrag_handoff)
+                document = SimpleNamespace(id=41, filename="stored-file.pdf")
+                processed_doc = SimpleNamespace(
+                    docling_document_path=str(document_json_path),
+                    total_pages=2,
+                    neo4j_node_id=None,
+                    processing_metadata={"markdown_path": str(markdown_path)},
+                )
+                pages = [
+                    SimpleNamespace(page_number=1, content="Page one", metadata={"section": "intro"}),
+                    SimpleNamespace(page_number=2, content="Page two", metadata={"section": "body"}),
+                ]
+                db = FakeDatabase(document=document, resolved_path=Path("C:\\app\\data\\uploads\\stored-file.pdf"))
+                docling = FakeDocling(processed_doc=processed_doc, pages=pages)
+                neo4j = FakeNeo4j()
+                lightrag_handoff = FakeLightRagHandoff()
+
+                await process_document_task(41, db, docling, neo4j, lightrag_handoff)
+
+                metadata_path = doc_dir / "metadata.json"
+                metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
 
             self.assertEqual(
                 [(41, "processing", None), (41, "processed", None)],
@@ -541,7 +891,7 @@ class ProcessDocumentTaskRegressionTests(unittest.IsolatedAsyncioTestCase):
                 db.saved_pages,
             )
             self.assertEqual(
-                [(document, "/app/data/processed/documents/41/outputs/stored-file.md")],
+                [(document, str(markdown_path))],
                 lightrag_handoff.calls,
             )
             self.assertEqual(
@@ -554,6 +904,10 @@ class ProcessDocumentTaskRegressionTests(unittest.IsolatedAsyncioTestCase):
                     },
                 },
                 processed_doc.processing_metadata["lightrag"],
+            )
+            self.assertEqual(
+                processed_doc.processing_metadata["lightrag"],
+                metadata["lightrag"],
             )
 
     async def test_process_document_task_marks_error_when_processing_fails(self):

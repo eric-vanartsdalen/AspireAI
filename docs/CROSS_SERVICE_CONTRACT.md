@@ -8,7 +8,7 @@
 
 ## Shared Database (SQLite)
 
-Both services access the same SQLite file (`data-resources.db`) via volume mount. C# uses EF Core; Python uses raw SQL with a connection pool (WAL mode).
+Both services access the same SQLite file (`data-resources.db`) via volume mount. C# uses EF Core; Python uses raw SQL with a connection pool. For the host↔container mounted database, Python now prefers `journal_mode=DELETE` instead of `WAL` because Docker Desktop bind mounts can make WAL sidecar files unreadable across the Windows host and Linux container boundary.
 
 ### `files` Table — Source of Truth
 

@@ -407,13 +407,31 @@ public class FileStorageService(
 
     private async Task CheckpointDatabaseAsync()
     {
-        var connectionString = _context.Database.GetDbConnection().ConnectionString;
+        try
+        {
+            var connectionString = _context.Database.GetDbConnection().ConnectionString;
+            await using var checkpointConnection = new SqliteConnection(connectionString);
+            await checkpointConnection.OpenAsync();
 
-        await using var checkpointConnection = new SqliteConnection(connectionString);
-        await checkpointConnection.OpenAsync();
+            await using var journalModeCommand = checkpointConnection.CreateCommand();
+            journalModeCommand.CommandText = "PRAGMA journal_mode;";
+            var journalMode = (await journalModeCommand.ExecuteScalarAsync())?.ToString();
+            if (!string.Equals(journalMode, "wal", StringComparison.OrdinalIgnoreCase))
+            {
+                return;
+            }
 
-        await using var checkpointCommand = checkpointConnection.CreateCommand();
-        checkpointCommand.CommandText = "PRAGMA wal_checkpoint(TRUNCATE);";
-        await checkpointCommand.ExecuteNonQueryAsync();
+            await using var checkpointCommand = checkpointConnection.CreateCommand();
+            checkpointCommand.CommandText = "PRAGMA wal_checkpoint(PASSIVE);";
+            await checkpointCommand.ExecuteNonQueryAsync();
+        }
+        catch (Exception ex) when (ex is SqliteException or InvalidOperationException)
+        {
+            if (_logger.IsEnabled(LogLevel.Warning))
+            {
+                _logger.LogWarning(ex,
+                    "Skipped SQLite WAL checkpoint after updating file metadata because the shared database is in use.");
+            }
+        }
     }
 }

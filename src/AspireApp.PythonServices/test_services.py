@@ -1,44 +1,73 @@
 """
-Test the document processing functionality
+Dependency-tolerant smoke checks for Python services.
 """
 import sys
-import os
-sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+import unittest
+from importlib import import_module
+from pathlib import Path
 
-from app.services.database_service import DatabaseService
-from app.services.docling_service import DoclingService
-from app.services.neo4j_service import Neo4jService
 
-def test_services():
-    """Test all services are working"""
-    print("Testing services...")
-    
-    # Test database service
+PROJECT_ROOT = Path(__file__).resolve().parent
+REPO_ROOT = PROJECT_ROOT.parents[1]
+DATA_ROOT = REPO_ROOT / "data"
+
+if str(PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(PROJECT_ROOT))
+
+
+def _load_service(module_name: str, class_name: str, optional_package: str | None = None):
     try:
-        db = DatabaseService()
-        docs = db.get_all_documents()
-        print(f"? Database service: Found {len(docs)} documents")
-    except Exception as e:
-        print(f"? Database service error: {e}")
-    
-    # Test docling service
-    try:
-        docling = DoclingService()
-        print("? Docling service: Initialized successfully")
-    except Exception as e:
-        print(f"? Docling service error: {e}")
-    
-    # Test Neo4j service (connection might fail if not running)
-    try:
-        neo4j = Neo4jService()
-        health = neo4j.health_check()
-        if health:
-            print("? Neo4j service: Connection healthy")
-        else:
-            print("??  Neo4j service: Connection failed (expected if Neo4j not running)")
-        neo4j.close()
-    except Exception as e:
-        print(f"??  Neo4j service error: {e} (expected if Neo4j not running)")
+        module = import_module(module_name)
+    except ModuleNotFoundError as exc:
+        if optional_package and (
+            exc.name == optional_package or exc.name.startswith(f"{optional_package}.")
+        ):
+            return None, exc
+        raise
+
+    return getattr(module, class_name), None
+
+
+class ServiceSmokeTests(unittest.TestCase):
+    def test_database_service_initializes_with_current_api(self):
+        database_service, import_error = _load_service(
+            "app.services.database_service",
+            "DatabaseService",
+        )
+        self.assertIsNone(import_error)
+
+        db = database_service()
+        documents = db.list_documents()
+
+        self.assertIsInstance(documents, list)
+
+    def test_docling_service_initializes_when_docling_is_available(self):
+        docling_service, import_error = _load_service(
+            "app.services.docling_service",
+            "DoclingService",
+            optional_package="docling",
+        )
+        if import_error is not None:
+            self.skipTest(f"Optional dependency 'docling' is not installed: {import_error}")
+
+        service = docling_service(data_path=str(DATA_ROOT))
+        self.assertIsNotNone(service)
+
+    def test_neo4j_service_health_check_is_tolerant_when_driver_is_available(self):
+        neo4j_service, import_error = _load_service(
+            "app.services.neo4j_service",
+            "Neo4jService",
+            optional_package="neo4j",
+        )
+        if import_error is not None:
+            self.skipTest(f"Optional dependency 'neo4j' is not installed: {import_error}")
+
+        service = neo4j_service()
+        try:
+            self.assertIsInstance(service.health_check(), bool)
+        finally:
+            service.close()
+
 
 if __name__ == "__main__":
-    test_services()
+    unittest.main()

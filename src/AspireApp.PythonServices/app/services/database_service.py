@@ -6,7 +6,7 @@ import logging
 import stat
 import threading
 from datetime import UTC, datetime
-from typing import List, Optional, Dict, Any, Union
+from typing import Callable, List, Optional, Dict, Any, Union
 from pathlib import Path, PureWindowsPath
 from contextlib import contextmanager
 import queue
@@ -20,15 +20,52 @@ logger = logging.getLogger(__name__)
 
 class ConnectionPool:
     """Thread-safe SQLite connection pool for better concurrency"""
-    
-    def __init__(self, db_path: str, max_connections: int = 10, timeout: float = 30.0):
+
+    def __init__(
+        self,
+        db_path: str,
+        max_connections: int = 10,
+        timeout: float = 30.0,
+        *,
+        prefer_delete_journal: bool = False,
+    ):
         self.db_path = db_path
         self.max_connections = max_connections
         self.timeout = timeout
+        self.prefer_delete_journal = prefer_delete_journal
         self._pool = queue.Queue(maxsize=max_connections)
         self._lock = threading.Lock()
         self._created_connections = 0
-        
+
+    def _apply_pragma(
+        self,
+        conn: sqlite3.Connection,
+        statement: str,
+        *,
+        fallback: Optional[str] = None,
+        ignore_disk_io: bool = False,
+    ) -> None:
+        try:
+            conn.execute(statement)
+        except sqlite3.OperationalError as exc:
+            message = str(exc).lower()
+            if "disk i/o error" in message or "disk io error" in message:
+                if fallback:
+                    logger.warning(
+                        "SQLite pragma '%s' failed with disk I/O error; falling back to '%s'.",
+                        statement,
+                        fallback,
+                    )
+                    conn.execute(fallback)
+                    return
+                if ignore_disk_io:
+                    logger.warning(
+                        "SQLite pragma '%s' failed with disk I/O error; skipping.",
+                        statement,
+                    )
+                    return
+            raise
+
     def _create_connection(self) -> sqlite3.Connection:
         """Create a new connection with optimal settings"""
         conn = sqlite3.connect(
@@ -36,15 +73,22 @@ class ConnectionPool:
             timeout=self.timeout,
             check_same_thread=False  # Allow connection sharing between threads
         )
-        
+
         # Apply optimizations for concurrent access
-        conn.execute("PRAGMA journal_mode=WAL")
-        conn.execute("PRAGMA synchronous=NORMAL")
-        conn.execute("PRAGMA temp_store=memory")
-        conn.execute("PRAGMA mmap_size=268435456")  # 256MB
-        conn.execute("PRAGMA cache_size=-64000")    # 64MB cache
-        conn.execute("PRAGMA busy_timeout=30000")   # 30 second busy timeout
-        
+        if self.prefer_delete_journal:
+            self._apply_pragma(conn, "PRAGMA journal_mode=DELETE")
+        else:
+            self._apply_pragma(
+                conn,
+                "PRAGMA journal_mode=WAL",
+                fallback="PRAGMA journal_mode=DELETE",
+            )
+        self._apply_pragma(conn, "PRAGMA synchronous=NORMAL", ignore_disk_io=True)
+        self._apply_pragma(conn, "PRAGMA temp_store=memory", ignore_disk_io=True)
+        self._apply_pragma(conn, "PRAGMA mmap_size=268435456", ignore_disk_io=True)  # 256MB
+        self._apply_pragma(conn, "PRAGMA cache_size=-64000", ignore_disk_io=True)    # 64MB cache
+        self._apply_pragma(conn, "PRAGMA busy_timeout=30000", ignore_disk_io=True)   # 30 second busy timeout
+
         return conn
     
     @contextmanager
@@ -123,36 +167,30 @@ class DatabaseService:
     # Class-level pool management to ensure singleton behavior
     _pools: Dict[str, ConnectionPool] = {}
     _pools_lock = threading.Lock()
+    _files_column_definitions: Dict[str, str] = {
+        "original_file_name": "TEXT NOT NULL DEFAULT ''",
+        "file_hash": "TEXT NOT NULL DEFAULT ''",
+        "file_size": "INTEGER NOT NULL DEFAULT 0",
+        "mime_type": "TEXT",
+        "uploaded_at": "DATETIME",
+        "status": "TEXT NOT NULL DEFAULT 'uploaded'",
+        "processing_started_at": "DATETIME",
+        "processing_completed_at": "DATETIME",
+        "processing_error": "TEXT",
+        "docling_document_path": "TEXT",
+        "total_pages": "INTEGER",
+        "neo4j_document_node_id": "TEXT",
+        "source_type": "TEXT NOT NULL DEFAULT 'upload'",
+        "source_url": "TEXT",
+    }
+    _document_pages_column_definitions: Dict[str, str] = {
+        "page_metadata": "TEXT",
+        "neo4j_page_node_id": "TEXT",
+    }
     
     def __init__(self, db_path: str = None):
-        # Determine database path with env override and sensible fallbacks
-        env_path = os.environ.get("ASPIRE_DB_PATH")
-        docs_db = Path(env_path) if env_path else Path("/app/docs-database/data-resources.db")
-        volume_db = Path("/app/database/data-resources.db")
-
-        if db_path:
-            self.db_path = str(Path(db_path))
-            logger.info(f"Using explicit database path: {self.db_path}")
-        elif env_path:
-            self.db_path = str(docs_db)
-            logger.info(f"Using database path from ASPIRE_DB_PATH: {self.db_path}")
-        elif docs_db.exists() or docs_db.parent.exists():
-            self.db_path = str(docs_db)
-            logger.info(f"Using docs-mounted database path: {self.db_path}")
-        else:
-            self.db_path = str(volume_db)
-            logger.info(f"Using volume-backed database path: {self.db_path}")
-
-        self._ensure_database_directory()
-        
-        # Get or create connection pool for this database path
-        with self._pools_lock:
-            if self.db_path not in self._pools:
-                self._pools[self.db_path] = ConnectionPool(self.db_path)
-            self._pool = self._pools[self.db_path]
-        
-        self._ensure_database_schema()
-        self._runtime_data_roots = self._build_runtime_data_roots()
+        candidates = self._get_database_path_candidates(db_path)
+        self._initialize_database(candidates)
         
         # Statistics tracking
         self._stats = {
@@ -163,6 +201,165 @@ class DatabaseService:
             'last_health_check': None
         }
         self._stats_lock = threading.Lock()
+
+    def _resolve_database_path(self, db_path: Optional[str]) -> tuple[str, str]:
+        """Resolve the SQLite path while keeping local and container defaults predictable."""
+        candidates = self._get_database_path_candidates(db_path)
+        candidate_path, candidate_source = candidates[0]
+        return str(candidate_path), candidate_source
+
+    def _get_database_path_candidates(self, db_path: Optional[str]) -> List[tuple[Path, str]]:
+        """Return ordered database path candidates, including fallbacks."""
+        if db_path:
+            return [(Path(db_path), "explicit")]
+
+        candidates: List[tuple[Path, str]] = []
+        env_path = os.environ.get("ASPIRE_DB_PATH")
+        if env_path:
+            candidates.append((Path(env_path), "ASPIRE_DB_PATH"))
+
+        candidates.extend(self._get_default_database_candidates())
+
+        unique_candidates: List[tuple[Path, str]] = []
+        seen: set[str] = set()
+        for candidate_path, candidate_source in candidates:
+            candidate_key = str(candidate_path)
+            if candidate_key in seen:
+                continue
+            seen.add(candidate_key)
+            unique_candidates.append((candidate_path, candidate_source))
+
+        if not unique_candidates:
+            raise RuntimeError("No database path candidates could be resolved.")
+
+        return unique_candidates
+
+    def _initialize_database(self, candidates: List[tuple[Path, str]]) -> None:
+        """Attempt database initialization across ordered candidates."""
+        last_error: Optional[Exception] = None
+        last_message: Optional[str] = None
+
+        for candidate_path, candidate_source in candidates:
+            self.db_path = str(candidate_path)
+            self.db_path_source = candidate_source
+            self._pool = None
+            logger.info("Using %s database path: %s", self.db_path_source, self.db_path)
+
+            try:
+                self._ensure_database_directory()
+                self._ensure_connection_pool()
+                self._ensure_database_schema()
+                self._runtime_data_roots = self._build_runtime_data_roots()
+                return
+            except Exception as e:
+                last_error = e
+                last_message = self._format_initialization_failure(e)
+                logger.warning(
+                    "Database initialization failed for %s path '%s': %s",
+                    candidate_source,
+                    self.db_path,
+                    last_message,
+                )
+                self._reset_connection_pool(self.db_path)
+
+        if last_message is not None:
+            raise RuntimeError(last_message) from last_error
+
+        raise RuntimeError("Failed to initialize database; no candidates available.")
+
+    def _ensure_connection_pool(self) -> None:
+        """Ensure a connection pool exists for the active database path."""
+        prefer_delete_journal = self._should_prefer_delete_journal()
+        with self._pools_lock:
+            existing_pool = self._pools.get(self.db_path)
+            if (
+                existing_pool is None
+                or existing_pool.prefer_delete_journal != prefer_delete_journal
+            ):
+                if existing_pool is not None:
+                    existing_pool.close_all()
+                self._pools[self.db_path] = ConnectionPool(
+                    self.db_path,
+                    prefer_delete_journal=prefer_delete_journal,
+                )
+            self._pool = self._pools[self.db_path]
+
+    def _reset_connection_pool(self, db_path: str) -> None:
+        """Dispose and remove a connection pool for a failed database path."""
+        with self._pools_lock:
+            pool = self._pools.pop(db_path, None)
+        if pool is not None:
+            pool.close_all()
+
+    def _get_default_database_candidates(self) -> List[tuple[Path, str]]:
+        """Return ordered default database candidates for the current runtime."""
+        docs_db = Path("/app/docs-database/data-resources.db")
+        volume_db = Path("/app/database/data-resources.db")
+        repo_root = self._get_repository_root()
+        repo_db = repo_root / "database" / "data-resources.db" if repo_root else None
+        cwd_db = Path.cwd() / "database" / "data-resources.db"
+
+        if self._is_running_in_container():
+            ordered_candidates = [
+                (docs_db, "docs-mounted"),
+                (volume_db, "volume-backed"),
+                (repo_db, "repository"),
+                (cwd_db, "cwd"),
+            ]
+        else:
+            ordered_candidates = [
+                (repo_db, "repository"),
+                (cwd_db, "cwd"),
+                (docs_db, "docs-mounted"),
+                (volume_db, "volume-backed"),
+            ]
+
+        candidates: List[tuple[Path, str]] = []
+        seen: set[str] = set()
+        for candidate_path, candidate_source in ordered_candidates:
+            if candidate_path is None:
+                continue
+            candidate_key = str(candidate_path)
+            if candidate_key in seen:
+                continue
+            seen.add(candidate_key)
+            candidates.append((candidate_path, candidate_source))
+
+        return candidates
+
+    def _get_repository_root(self) -> Optional[Path]:
+        """Return the repository root when this module is running from the source tree."""
+        service_file = Path(__file__).resolve()
+        if len(service_file.parents) > 4:
+            return service_file.parents[4]
+        return None
+
+    def _is_running_in_container(self) -> bool:
+        """Detect Linux container execution so /app mounts stay preferred there."""
+        if os.name == "nt":
+            return False
+
+        container_flags = (
+            os.environ.get("DOTNET_RUNNING_IN_CONTAINER"),
+            os.environ.get("RUNNING_IN_CONTAINER"),
+            os.environ.get("ASPIRE_RUNNING_IN_CONTAINER"),
+        )
+        if any(flag and flag.lower() == "true" for flag in container_flags):
+            return True
+
+        return Path("/.dockerenv").exists() or Path("/run/.containerenv").exists()
+
+    def _should_prefer_delete_journal(self) -> bool:
+        """Avoid WAL for host-mounted SQLite files shared between Windows and containers."""
+        if not self._is_running_in_container():
+            return False
+
+        normalized_path = self.db_path.replace("\\", "/")
+        return normalized_path.startswith("/app/docs-database/") or normalized_path.startswith("/app/database/")
+
+    def _should_prefer_fresh_reads(self) -> bool:
+        """Prefer fresh SQLite connections for shared host-mounted databases."""
+        return self._should_prefer_delete_journal()
 
     def _ensure_database_directory(self):
         """Ensure the database directory exists with proper permissions"""
@@ -263,7 +460,18 @@ class DatabaseService:
                         UNIQUE(file_id, page_number)
                     )
                 """)
-                
+
+                self._ensure_required_columns(
+                    cursor,
+                    "files",
+                    self._files_column_definitions,
+                )
+                self._ensure_required_columns(
+                    cursor,
+                    "document_pages",
+                    self._document_pages_column_definitions,
+                )
+                 
                 # Create indexes for performance
                 cursor.execute("CREATE INDEX IF NOT EXISTS idx_files_status ON files(status)")
                 cursor.execute("CREATE INDEX IF NOT EXISTS idx_files_hash ON files(file_hash)")
@@ -283,8 +491,111 @@ class DatabaseService:
                     logger.info(f"Database file size: {size} bytes")
                 
         except Exception as e:
-            logger.error(f"Failed to initialize database: {e}")
-            raise RuntimeError(f"Failed to initialize database at {self.db_path}: {e}")
+            message = self._format_initialization_failure(e)
+            logger.error(message, exc_info=True)
+            raise RuntimeError(message) from e
+
+    def _format_initialization_failure(self, error: Exception) -> str:
+        """Format startup failures with schema context when available."""
+        diagnostic = self._collect_schema_diagnostics()
+        message = f"Failed to initialize database at {self.db_path}: {type(error).__name__}: {error}"
+        if diagnostic:
+            message = f"{message}. {diagnostic}"
+        return message
+
+    def _collect_schema_diagnostics(self) -> str:
+        """Capture schema details so incompatible SQLite files are reported clearly."""
+        try:
+            with sqlite3.connect(self.db_path, timeout=5.0) as conn:
+                cursor = conn.cursor()
+                tables = [
+                    row[0]
+                    for row in cursor.execute(
+                        "SELECT name FROM sqlite_master WHERE type = 'table' ORDER BY name"
+                    ).fetchall()
+                ]
+                files_table = cursor.execute(
+                    """
+                    SELECT name
+                    FROM sqlite_master
+                    WHERE type = 'table' AND LOWER(name) = 'files'
+                    LIMIT 1
+                    """
+                ).fetchone()
+
+                tables_display = ", ".join(tables) if tables else "<none>"
+                if files_table is None:
+                    return (
+                        f"Existing tables: {tables_display}. "
+                        "Canonical 'files' table is missing."
+                    )
+
+                files_table_name = files_table[0]
+                columns = [
+                    row[1]
+                    for row in cursor.execute(f'PRAGMA table_info("{files_table_name}")').fetchall()
+                ]
+                columns_display = ", ".join(columns) if columns else "<none>"
+                required_columns = {
+                    "id",
+                    "file_name",
+                    "file_path",
+                    *self._files_column_definitions.keys(),
+                }
+                missing_columns = [
+                    column
+                    for column in sorted(required_columns)
+                    if column not in columns
+                ]
+
+                if missing_columns:
+                    return (
+                        f"Existing tables: {tables_display}. "
+                        f"Table '{files_table_name}' columns: {columns_display}. "
+                        f"Missing canonical columns: {', '.join(missing_columns)}. "
+                        "This database appears to use an incompatible legacy schema."
+                    )
+
+                return (
+                    f"Existing tables: {tables_display}. "
+                    f"Table '{files_table_name}' columns: {columns_display}."
+                )
+        except Exception as diagnostic_error:
+            return (
+                "Schema diagnostics unavailable: "
+                f"{type(diagnostic_error).__name__}: {diagnostic_error}"
+            )
+
+    def _ensure_required_columns(
+        self,
+        cursor: sqlite3.Cursor,
+        table_name: str,
+        required_columns: Dict[str, str],
+    ) -> None:
+        """Add missing canonical columns to an existing table before dependent indexes run."""
+        existing_columns = self._get_table_columns(cursor, table_name)
+        for column_name, column_definition in required_columns.items():
+            if column_name in existing_columns:
+                continue
+
+            logger.warning(
+                "Database table '%s' is missing column '%s'; applying compatibility migration.",
+                table_name,
+                column_name,
+            )
+            try:
+                cursor.execute(
+                    f"ALTER TABLE {table_name} ADD COLUMN {column_name} {column_definition}"
+                )
+            except sqlite3.OperationalError as exc:
+                if "duplicate column name" not in str(exc).lower():
+                    raise
+            existing_columns.add(column_name)
+
+    def _get_table_columns(self, cursor: sqlite3.Cursor, table_name: str) -> set[str]:
+        """Return the current column names for a SQLite table."""
+        cursor.execute(f"PRAGMA table_info({table_name})")
+        return {row[1] for row in cursor.fetchall()}
 
     def _test_database_connection(self):
         """Test if the database file can be opened/created."""
@@ -307,6 +618,11 @@ class DatabaseService:
     def get_file_by_id(self, file_id: int) -> Optional[Dict[str, Any]]:
         """Get file record by ID"""
         try:
+            if self._should_prefer_fresh_reads():
+                row = self._fetch_file_row_from_fresh_connection(file_id)
+                if row is not None:
+                    return self._row_to_file_dict(row)
+
             with self._pool.get_connection() as conn:
                 row = self._fetch_file_row(conn, file_id)
 
@@ -346,19 +662,29 @@ class DatabaseService:
     def get_all_files(self) -> List[Dict[str, Any]]:
         """Return all files from the database"""
         try:
-            with self._pool.get_connection() as conn:
-                cursor = conn.cursor()
-                cursor.execute("""
-                    SELECT id, file_name, original_file_name, file_path, file_hash,
-                           file_size, mime_type, uploaded_at, status,
-                           processing_started_at, processing_completed_at, processing_error,
-                           docling_document_path, total_pages, neo4j_document_node_id,
-                           source_type, source_url
-                    FROM files ORDER BY uploaded_at DESC
-                """)
-                rows = cursor.fetchall()
-                logger.info(f"Fetched {len(rows)} files from database")
+            if self._should_prefer_fresh_reads():
+                rows = self._fetch_rows_from_fresh_connection(self._fetch_all_file_rows)
+                logger.info("Fetched %s files from database via fresh SQLite connection", len(rows))
                 return [self._row_to_file_dict(row) for row in rows]
+
+            with self._pool.get_connection() as conn:
+                rows = self._fetch_all_file_rows(conn)
+
+            if rows:
+                logger.info("Fetched %s files from database", len(rows))
+                return [self._row_to_file_dict(row) for row in rows]
+
+            fresh_rows = self._fetch_rows_from_fresh_connection(self._fetch_all_file_rows)
+            if fresh_rows:
+                logger.warning(
+                    "File list was empty through the pooled SQLite connection; "
+                    "a fresh connection found %s file(s).",
+                    len(fresh_rows),
+                )
+                return [self._row_to_file_dict(row) for row in fresh_rows]
+
+            logger.info("Fetched 0 files from database")
+            return []
         except Exception as e:
             logger.error(f"Error fetching all files: {e}")
             raise
@@ -366,21 +692,32 @@ class DatabaseService:
     def get_unprocessed_files(self) -> List[Dict[str, Any]]:
         """Get all files currently eligible for processing or retry."""
         try:
-            with self._pool.get_connection() as conn:
-                cursor = conn.cursor()
-                cursor.execute("""
-                    SELECT id, file_name, original_file_name, file_path, file_hash,
-                           file_size, mime_type, uploaded_at, status,
-                           processing_started_at, processing_completed_at, processing_error,
-                           docling_document_path, total_pages, neo4j_document_node_id,
-                           source_type, source_url
-                    FROM files
-                    WHERE LOWER(status) IN ('uploaded', 'error')
-                    ORDER BY uploaded_at ASC
-                """)
-                rows = cursor.fetchall()
-                logger.info(f"Found {len(rows)} files ready for processing")
+            if self._should_prefer_fresh_reads():
+                rows = self._fetch_rows_from_fresh_connection(self._fetch_unprocessed_file_rows)
+                logger.info(
+                    "Found %s files ready for processing via fresh SQLite connection",
+                    len(rows),
+                )
                 return [self._row_to_file_dict(row) for row in rows]
+
+            with self._pool.get_connection() as conn:
+                rows = self._fetch_unprocessed_file_rows(conn)
+
+            if rows:
+                logger.info("Found %s files ready for processing", len(rows))
+                return [self._row_to_file_dict(row) for row in rows]
+
+            fresh_rows = self._fetch_rows_from_fresh_connection(self._fetch_unprocessed_file_rows)
+            if fresh_rows:
+                logger.warning(
+                    "Unprocessed file list was empty through the pooled SQLite connection; "
+                    "a fresh connection found %s retryable file(s).",
+                    len(fresh_rows),
+                )
+                return [self._row_to_file_dict(row) for row in fresh_rows]
+
+            logger.info("Found 0 files ready for processing")
+            return []
         except Exception as e:
             logger.error(f"Error fetching unprocessed files: {e}")
             raise
@@ -499,13 +836,13 @@ class DatabaseService:
         """Build the set of data roots that may contain uploaded files."""
         roots: List[Path] = []
         env_root = os.environ.get("ASPIRE_DATA_PATH")
-        service_file = Path(__file__).resolve()
+        repo_root = self._get_repository_root()
         if env_root:
             roots.append(Path(env_root))
 
         roots.append(Path("/app/data"))
-        if len(service_file.parents) > 4:
-            roots.append(service_file.parents[4] / "data")
+        if repo_root is not None:
+            roots.append(repo_root / "data")
         roots.append(Path.cwd() / "data")
 
         unique_roots: List[Path] = []
@@ -634,7 +971,8 @@ class DatabaseService:
         """
         try:
             normalized_status = self._normalize_file_status(status)
-            with self._pool.get_connection() as conn:
+            connection_factory = self._get_fresh_connection if self._should_prefer_fresh_reads() else self._pool.get_connection
+            with connection_factory() as conn:
                 cursor = conn.cursor()
                 
                 if normalized_status == 'processing':
@@ -694,7 +1032,8 @@ class DatabaseService:
                                        total_pages: int, neo4j_node_id: str = None) -> None:
         """Update file with docling processing results"""
         try:
-            with self._pool.get_connection() as conn:
+            connection_factory = self._get_fresh_connection if self._should_prefer_fresh_reads() else self._pool.get_connection
+            with connection_factory() as conn:
                 cursor = conn.cursor()
                 cursor.execute("""
                     UPDATE files 
@@ -829,6 +1168,32 @@ class DatabaseService:
         """, (file_id,))
         return cursor.fetchone()
 
+    def _fetch_all_file_rows(self, conn: sqlite3.Connection):
+        cursor = conn.cursor()
+        cursor.execute("""
+            SELECT id, file_name, original_file_name, file_path, file_hash,
+                   file_size, mime_type, uploaded_at, status,
+                   processing_started_at, processing_completed_at, processing_error,
+                   docling_document_path, total_pages, neo4j_document_node_id,
+                   source_type, source_url
+            FROM files ORDER BY uploaded_at DESC
+        """)
+        return cursor.fetchall()
+
+    def _fetch_unprocessed_file_rows(self, conn: sqlite3.Connection):
+        cursor = conn.cursor()
+        cursor.execute("""
+            SELECT id, file_name, original_file_name, file_path, file_hash,
+                   file_size, mime_type, uploaded_at, status,
+                   processing_started_at, processing_completed_at, processing_error,
+                   docling_document_path, total_pages, neo4j_document_node_id,
+                   source_type, source_url
+            FROM files
+            WHERE LOWER(status) IN ('uploaded', 'error')
+            ORDER BY uploaded_at ASC
+        """)
+        return cursor.fetchall()
+
     def _fetch_file_row_from_fresh_connection(self, file_id: int):
         conn = sqlite3.connect(
             self.db_path,
@@ -838,6 +1203,34 @@ class DatabaseService:
         try:
             conn.execute("PRAGMA busy_timeout=30000")
             return self._fetch_file_row(conn, file_id)
+        finally:
+            conn.close()
+
+    def _fetch_rows_from_fresh_connection(
+        self,
+        fetcher: Callable[[sqlite3.Connection], list[tuple]],
+    ) -> list[tuple]:
+        conn = sqlite3.connect(
+            self.db_path,
+            timeout=self._pool.timeout,
+            check_same_thread=False,
+        )
+        try:
+            conn.execute("PRAGMA busy_timeout=30000")
+            return fetcher(conn)
+        finally:
+            conn.close()
+
+    @contextmanager
+    def _get_fresh_connection(self):
+        conn = sqlite3.connect(
+            self.db_path,
+            timeout=self._pool.timeout,
+            check_same_thread=False,
+        )
+        try:
+            conn.execute("PRAGMA busy_timeout=30000")
+            yield conn
         finally:
             conn.close()
 
@@ -904,13 +1297,27 @@ class DatabaseService:
             if file_dict is None:
                 return None
 
-            with self._pool.get_connection() as conn:
-                cursor = conn.cursor()
-                cursor.execute(
-                    "SELECT COUNT(*) FROM document_pages WHERE file_id = ?",
-                    (document_id,),
-                )
-                count_row = cursor.fetchone()
+            if self._should_prefer_fresh_reads():
+                with sqlite3.connect(
+                    self.db_path,
+                    timeout=self._pool.timeout,
+                    check_same_thread=False,
+                ) as conn:
+                    conn.execute("PRAGMA busy_timeout=30000")
+                    cursor = conn.cursor()
+                    cursor.execute(
+                        "SELECT COUNT(*) FROM document_pages WHERE file_id = ?",
+                        (document_id,),
+                    )
+                    count_row = cursor.fetchone()
+            else:
+                with self._pool.get_connection() as conn:
+                    cursor = conn.cursor()
+                    cursor.execute(
+                        "SELECT COUNT(*) FROM document_pages WHERE file_id = ?",
+                        (document_id,),
+                    )
+                    count_row = cursor.fetchone()
 
             processed_pages = count_row[0] if count_row is not None else 0
 

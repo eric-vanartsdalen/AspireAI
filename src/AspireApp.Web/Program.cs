@@ -162,6 +162,8 @@ static string ResolveSqliteConnectionString(string connectionString, string cont
 {
     var sqliteBuilder = new SqliteConnectionStringBuilder(connectionString);
 
+    sqliteBuilder.Pooling = false;
+
     if (ShouldResolveAgainstContentRoot(sqliteBuilder.DataSource))
     {
         sqliteBuilder.DataSource = Path.GetFullPath(
