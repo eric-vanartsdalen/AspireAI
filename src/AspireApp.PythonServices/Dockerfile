@@ -57,8 +57,10 @@ RUN pip install --timeout=1000 --retries=5 \
 # Production stage
 FROM base AS production
 
-# Create non-root user
-RUN adduser --disabled-password --gecos '' --uid 1000 appuser
+# Create non-root user and install gosu for reliable privilege dropping
+RUN adduser --disabled-password --gecos '' --uid 1000 appuser && \
+    apt-get update && apt-get install -y --no-install-recommends gosu && \
+    rm -rf /var/lib/apt/lists/*
 
 # Copy the virtual environment from dependencies stage
 COPY --from=dependencies /opt/venv /opt/venv
@@ -67,17 +69,21 @@ ENV PATH="/opt/venv/bin:$PATH"
 # Set the working directory
 WORKDIR /app
 
-# Create database and data directories with initial permissions
+# Pre-create directories and give appuser ownership; bind mounts will
+# overlay these at runtime, but the entrypoint re-applies ownership/chmod.
 RUN mkdir -p /app/database /app/docs-database /app/data/uploads /app/data/processed/documents && \
-    chmod 777 /app/database /app/docs-database && \
-    chown -R appuser:appuser /app && \
-    chmod -R 755 /app
+    chown -R appuser:appuser /app
 
 # Copy the application code
 COPY --chown=appuser:appuser . .
 
+# Copy entrypoint to root so it is not shadowed by WORKDIR/app files
+COPY entrypoint.sh /entrypoint.sh
+RUN chmod +x /entrypoint.sh
+
 # Expose the port the app runs on
 EXPOSE 8000
 
-# Repair bind-mounted directory permissions at startup, then drop back to appuser.
-CMD ["sh", "-lc", "mkdir -p /app/database /app/docs-database /app/data/uploads /app/data/processed/documents /app/data/inputs && chmod 777 /app/database /app/docs-database /app/data /app/data/uploads /app/data/processed /app/data/processed/documents /app/data/inputs && exec su -s /bin/sh appuser -c 'exec /opt/venv/bin/uvicorn app.fastapi:app --host 0.0.0.0 --port 8000'"]
+# entrypoint.sh runs as root, fixes bind-mount permissions, then execs as appuser
+ENTRYPOINT ["/entrypoint.sh"]
+CMD ["/opt/venv/bin/uvicorn", "app.fastapi:app", "--host", "0.0.0.0", "--port", "8000"]

@@ -7,10 +7,11 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
     PIP_DISABLE_PIP_VERSION_CHECK=1 \
     PIP_DEFAULT_TIMEOUT=300
 
-# Install minimal system dependencies
+# Install minimal system dependencies including gosu for privilege dropping
 RUN apt-get update && apt-get install -y --no-install-recommends \
     build-essential \
     curl \
+    gosu \
     && rm -rf /var/lib/apt/lists/*
 
 # Set the working directory
@@ -32,18 +33,26 @@ RUN pip install pypdf2 python-docx
 # Create database directory with open permissions before switching user
 RUN mkdir -p /app/database /app/docs-database /app/data/uploads && chmod 777 /app/database /app/docs-database /app/data/uploads
 
-# Create non-root user
+# Create non-root user (used by entrypoint.sh for privilege drop via gosu)
 RUN adduser --disabled-password --gecos '' --uid 1000 appuser && \
-    chown -R appuser:appuser /app
+    chown -R appuser:appuser /app && \
+    chown -R appuser:appuser /app/database && \
+    chown -R appuser:appuser /app/docs-database && \
+    chown -R appuser:appuser /app/data/uploads
 
-# Switch to non-root user
-USER appuser
+# Note: No USER directive — entrypoint.sh runs as root to fix bind-mount
+# permissions, then execs to appuser via gosu.
 
 # Copy the application code
 COPY --chown=appuser:appuser . .
 
+# Copy entrypoint to root so it is not shadowed by WORKDIR/app files
+COPY entrypoint.sh /entrypoint.sh
+RUN chmod +x /entrypoint.sh
+
 # Expose the port the app runs on
 EXPOSE 8000
 
-# Command to run the application
+# entrypoint.sh runs as root, fixes bind-mount permissions, then execs as appuser
+ENTRYPOINT ["/entrypoint.sh"]
 CMD ["uvicorn", "app.fastapi:app", "--host", "0.0.0.0", "--port", "8000", "--reload"]

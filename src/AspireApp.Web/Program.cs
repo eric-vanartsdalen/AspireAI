@@ -5,6 +5,8 @@ using AspireApp.Web.Components.Shared;
 using AspireApp.Web.Shared;
 using Microsoft.Data.Sqlite;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Diagnostics;
+using System.Data.Common;
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -34,8 +36,10 @@ builder.Services.AddHttpClient();
 // Configure SQLite database (and location)
 var rawConnectionString = builder.Configuration.GetConnectionString("DefaultConnection") ?? "Data Source=../../database/data-resources.db";
 var connectionString = ResolveSqliteConnectionString(rawConnectionString, builder.Environment.ContentRootPath);
-builder.Services.AddDbContext<UploadDbContext>(options =>
-    options.UseSqlite(connectionString));
+builder.Services.AddSingleton<DeleteJournalModeInterceptor>();
+builder.Services.AddDbContext<UploadDbContext>((sp, options) =>
+    options.UseSqlite(connectionString)
+           .AddInterceptors(sp.GetRequiredService<DeleteJournalModeInterceptor>()));
 
 // Register the FileStorageService with data directory (simplified - no bridge service needed)
 var dataDirectory = ResolveContentRootPath(
@@ -196,4 +200,27 @@ static bool ShouldResolveAgainstContentRoot(string? dataSource)
         && !Path.IsPathRooted(dataSource)
         && !dataSource.Equals(":memory:", StringComparison.OrdinalIgnoreCase)
         && !dataSource.StartsWith("file:", StringComparison.OrdinalIgnoreCase);
+}
+
+// Runs PRAGMA journal_mode=DELETE on every connection open so the Web app
+// uses the same journal mode as the Python service (which forces DELETE mode
+// because WAL's shared-memory file doesn't work reliably across the
+// Windows host / Linux container boundary via Docker bind mounts).
+public class DeleteJournalModeInterceptor : DbConnectionInterceptor
+{
+    public override void ConnectionOpened(DbConnection connection, ConnectionEndEventData eventData)
+        => ApplyDeleteJournalMode(connection);
+
+    public override Task ConnectionOpenedAsync(DbConnection connection, ConnectionEndEventData eventData, CancellationToken cancellationToken = default)
+    {
+        ApplyDeleteJournalMode(connection);
+        return Task.CompletedTask;
+    }
+
+    private static void ApplyDeleteJournalMode(DbConnection connection)
+    {
+        using var cmd = connection.CreateCommand();
+        cmd.CommandText = "PRAGMA journal_mode=DELETE;";
+        cmd.ExecuteNonQuery();
+    }
 }
