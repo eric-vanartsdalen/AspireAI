@@ -168,3 +168,117 @@ Resolve uploaded document from API-backed Web state after UI upload instead of w
 - Test now exercises full upload → trigger → process → retrieve pipeline ✅
 
 ---
+
+## Python Service Startup Path Resolution — Jarvis — 2026-03-27
+
+**Scope:** Python SQLite database path resolution and startup diagnostics
+
+### Findings
+
+#### Database Path Resolution Strategy
+Python service uses ordered candidate list:
+1. Explicit `db_path` parameter (if provided)
+2. `ASPIRE_DB_PATH` environment variable (if set)
+3. Platform-specific defaults:
+   - **Container:** `/app/docs-database/` → `/app/database/` → repo/database → cwd/database
+   - **Local (Windows):** repo/database → cwd/database → `/app/docs-database/` → `/app/database/`
+
+Service tries each candidate in order until initialization succeeds. Path source is logged and stored in `db_path_source` attribute.
+
+#### Startup Error Diagnostics
+When database initialization fails, `_format_initialization_failure()` generates comprehensive diagnostic message:
+- Database path attempted
+- Path source (e.g., "ASPIRE_DB_PATH", "repository", "cwd")
+- Exception type and message
+- Schema diagnostics via `_collect_schema_diagnostics()`: existing tables, `files` column names, missing canonical columns, "incompatible legacy schema" label
+
+#### "Legacy Schema" Concept
+- No separate "legacy path" detection—all paths treated equally
+- "Legacy" refers to schema shape, not file location
+- `_collect_schema_diagnostics()` reports "incompatible legacy schema" when required columns missing from `files` table
+- Self-healing via `_ensure_required_columns()` adds missing columns at startup
+
+### Decision
+**Affirm test scenario:** `test_legacy_schema_startup_failure_reports_path_and_cause` validates edge case diagnostics when self-healing is unavailable. Test should remain active to ensure startup failures provide actionable debugging information (path, source, schema details, SQLite error).
+
+### Rationale
+- Production code self-heals missing columns in normal operation
+- Test validates fallback diagnostic path when self-healing fails
+- Comprehensive error reporting enables faster debugging of schema incompatibilities
+- Database path and schema details are essential for multi-environment troubleshooting
+
+### Impact
+- Test remains in test suite as regression protection for startup diagnostics ✅
+- No code changes required to DatabaseService ✅
+- Buster can assess test coverage confidence knowing current behavior ✅
+
+---
+
+## Legacy Schema Test Update — Buster — 2026-03-27
+
+**Scope:** Python `DatabaseStartupPathAuditTests.test_legacy_schema_startup_failure_reports_path_and_cause`
+
+### Context
+Test was failing after multi-candidate database initialization refactor. Service works correctly in manual testing, but test needed assessment to determine if it should be updated or removed.
+
+### Root Cause
+Multi-candidate database initialization refactor changed exception chaining depth:
+
+**Before refactor:**
+```
+_ensure_database_schema raises RuntimeError from sqlite3.OperationalError
+  → Exception chain: RuntimeError → OperationalError
+```
+
+**After refactor:**
+```
+_initialize_database catches exception from _ensure_database_schema, then raises RuntimeError
+  → Exception chain: RuntimeError → RuntimeError → OperationalError
+```
+
+The behavior being tested (legacy schema detection and detailed error reporting) **still exists and works correctly**. Only the depth of exception chaining changed.
+
+### Decision
+**UPDATE THE TEST** to traverse the exception chain rather than checking only the immediate cause.
+
+**Changed from:**
+```python
+self.assertIsInstance(context.exception.__cause__, sqlite3.OperationalError)
+```
+
+**Changed to:**
+```python
+# Walk the exception chain to find OperationalError at root
+root_cause = context.exception.__cause__
+while root_cause and not isinstance(root_cause, sqlite3.OperationalError):
+    root_cause = root_cause.__cause__
+self.assertIsInstance(root_cause, sqlite3.OperationalError,
+                      "Expected sqlite3.OperationalError in exception chain")
+```
+
+### Rationale
+- The scenario being tested (legacy schema startup failure with detailed diagnostics) remains valid
+- The error reporting behavior works correctly (verified in test output)
+- The multi-candidate retry pattern is a deliberate architectural improvement
+- Walking the exception chain is more robust than assuming single-level chaining
+- Alternative (removing test) would lose valuable regression coverage for schema diagnostics
+
+### Impact
+- ✅ Test now passes and correctly verifies legacy schema detection
+- ✅ Test validates all expected error message content (path, column names, diagnostics)
+- ✅ Test validates that root cause is still OperationalError
+- ✅ All 10 tests in test_p0_contract_audit.py pass
+- ✅ All 30 Python tests pass
+- ✅ More resilient to future exception handling refactors
+
+### Verification
+```powershell
+cd src\AspireApp.PythonServices
+python -m pytest tests/test_p0_contract_audit.py -v
+# Result: 10 passed
+
+python -m pytest tests/ -v
+# Result: 30 passed
+```
+
+---

@@ -386,3 +386,44 @@ GET /processing/status/{id} (200) [after completion]
 - Add Neo4j verification (P2): query node creation, verify relationships
 
 **Recommendation:** Bring this test to P1 scope alongside processing pipeline stabilization. Current state is passing but untested—a regression vector.
+
+### 2025-11-02 — Legacy Schema Test Exception Chain Update
+
+**Test:** DatabaseStartupPathAuditTests.test_legacy_schema_startup_failure_reports_path_and_cause
+
+**Status:** UPDATED (test still valid, assertion fixed)
+
+**What the test verifies:** 
+When DatabaseService encounters a legacy schema (missing required columns like ile_hash), it should:
+1. Detect the schema incompatibility when trying to create indexes
+2. Provide detailed diagnostics (database path, missing columns, existing schema)
+3. Raise RuntimeError with sqlite3.OperationalError in the exception chain
+
+**Issue Found:** 
+After the multi-candidate database initialization refactor (introduced in the path resolution updates), the exception chaining changed:
+- **Before:** RuntimeError -> sqlite3.OperationalError
+- **After:** RuntimeError (_initialize_database) -> RuntimeError (_ensure_database_schema) -> sqlite3.OperationalError
+
+The test was checking context.exception.__cause__ directly for OperationalError, but now needs to walk the chain.
+
+**Fix Applied:**
+Updated the test to traverse the exception chain until it finds the root sqlite3.OperationalError:
+`python
+root_cause = context.exception.__cause__
+while root_cause and not isinstance(root_cause, sqlite3.OperationalError):
+    root_cause = root_cause.__cause__
+self.assertIsInstance(root_cause, sqlite3.OperationalError, ...)
+`
+
+**Current Startup Behavior (as of 2025-11-02):**
+1. DatabaseService tries candidates in order: explicit path, ASPIRE_DB_PATH env var, then default candidates
+2. For each candidate, attempts: ensure directory → create pool → ensure schema → build data roots
+3. If schema creation fails (e.g., missing columns prevent index creation), captures error and tries next candidate
+4. If all candidates fail, raises RuntimeError with last error message and chained exception
+5. Error message includes: database path, SQLite error, existing schema diagnostics (tables, columns, missing columns)
+
+**Why Test Remains Valid:**
+The behavior being tested (legacy schema detection with detailed diagnostics) still exists and works correctly. Only the exception chaining depth changed due to the retry-across-candidates pattern. Manual testing confirms the service starts correctly with proper schemas and fails with clear diagnostics on legacy schemas.
+
+**Test Results:** ✅ All 10 tests in test_p0_contract_audit.py pass
+

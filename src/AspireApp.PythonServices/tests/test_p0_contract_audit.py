@@ -572,7 +572,15 @@ class DatabaseStartupPathAuditTests(unittest.TestCase):
             self.assertIn("Missing canonical columns:", message)
             self.assertIn("Table 'files' columns:", message)
             self.assertIn("incompatible legacy schema", message)
-            self.assertIsInstance(context.exception.__cause__, sqlite3.OperationalError)
+            
+            # After the multi-candidate initialization refactor, the exception chain is:
+            # RuntimeError (from _initialize_database) -> RuntimeError (from _ensure_database_schema) -> OperationalError
+            # Find the root cause OperationalError in the chain
+            root_cause = context.exception.__cause__
+            while root_cause and not isinstance(root_cause, sqlite3.OperationalError):
+                root_cause = root_cause.__cause__
+            self.assertIsInstance(root_cause, sqlite3.OperationalError,
+                                  "Expected sqlite3.OperationalError in exception chain")
 
 
 def _close_database_pools(database_service_type) -> None:

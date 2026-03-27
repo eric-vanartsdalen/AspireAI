@@ -318,3 +318,77 @@
 
 **Key insight:** For background FastAPI processing in this repo, the queueing endpoint must persist `status='processing'` before it returns. Otherwise immediate pollers can still observe `uploaded`, which makes an otherwise-correct end-to-end proof flap.
 
+
+
+### 2025-11-02 — Python Service Startup & Database Path Resolution Audit
+
+**Investigation:** Examined Python service startup flow and database initialization logic to understand how path resolution, schema validation, and legacy path detection work in production.
+
+**Database Path Resolution Flow:**
+1. `DatabaseService.__init__()` accepts optional explicit `db_path` parameter
+2. Falls back to ordered candidate list via `_get_database_path_candidates()`:
+   - Explicit path if provided (source: "explicit")
+   - `ASPIRE_DB_PATH` env var if set (source: "ASPIRE_DB_PATH")
+   - Platform-specific default candidates via `_get_default_database_candidates()`:
+     - **In container:** `/app/docs-database/data-resources.db`, `/app/database/data-resources.db`, repo/database, cwd/database
+     - **Local (Windows):** repo/database, cwd/database, `/app/docs-database/`, `/app/database/`
+3. Iterates candidates, initializes first successful path via `_initialize_database()`
+4. Repository detection via `_get_repository_root()`: walks up 4 parent dirs from `database_service.py`
+
+**Startup Error Handling & Diagnostics:**
+- `_initialize_database()` tries each candidate in order; on failure:
+  - Captures exception and calls `_format_initialization_failure()` to build diagnostic message
+  - Logs warning with path source, path value, and formatted error
+  - Resets connection pool via `_reset_connection_pool()`
+  - Continues to next candidate
+- If all candidates fail, raises `RuntimeError` with last failure message and chained exception
+- `_format_initialization_failure()` includes:
+  - Database path attempted
+  - Exception type and message
+  - Output from `_collect_schema_diagnostics()` if available
+
+**Legacy Schema Detection:**
+- `_collect_schema_diagnostics()` inspects existing database file to report schema compatibility
+- Opens SQLite connection, queries `sqlite_master` for tables and `files` table columns
+- Checks for missing canonical columns against `_files_column_definitions` dict
+- **Key diagnostic message:** "This database appears to use an incompatible legacy schema" when required columns missing
+- Reports: existing tables, `files` table columns, missing canonical columns
+
+**Schema Self-Healing:**
+- `_ensure_database_schema()` creates tables with `CREATE TABLE IF NOT EXISTS`
+- Calls `_ensure_required_columns()` for `files` and `document_pages` tables
+- `_ensure_required_columns()` adds missing columns via `ALTER TABLE ADD COLUMN` for compatibility with older schemas
+- Self-healing allows local developer databases to upgrade in place during startup (decision from 2025-11-02)
+
+**FastAPI Startup Integration:**
+- `app/fastapi.py` has `@app.on_event("startup")` handler
+- Creates required directories: `/app/data/processed/documents`, `/app/data/uploads`, `/app/database`, `/tmp/aspire_database`
+- Instantiates `DatabaseService()` and calls `health_check()`
+- Logs success/warning but **does NOT fail startup** on database errors (graceful degradation)
+- Service attempts recovery on first request
+
+**"Legacy Path" Concept Status:**
+- **No explicit "legacy path" handling** in current code
+- "Legacy" only appears in `_collect_schema_diagnostics()` error message: "incompatible legacy schema"
+- Refers to schema shape (missing columns), not file path location
+- Path resolution is platform-aware (container vs local) but treats all paths equally
+
+**Startup Failure Path/Cause Reporting:**
+- When `DatabaseService()` initialization fails:
+  - Exception message includes: database path, source (e.g., "ASPIRE_DB_PATH", "repository"), error type, error message
+  - Diagnostic output includes: existing tables, files table columns, missing columns, "incompatible legacy schema" label
+  - Original exception chained via `raise ... from` for full stack trace
+- Example error structure: `"Failed to initialize database at /path/to/db: OperationalError: no such column: file_hash. Existing tables: files, document_pages. Table 'files' columns: id, file_name, file_path, uploaded_at, status. Missing canonical columns: file_hash, file_size, mime_type, ... This database appears to use an incompatible legacy schema."`
+
+**Test Scenario Validity:**
+- `test_legacy_schema_startup_failure_reports_path_and_cause` creates incomplete schema (missing `file_hash` and other columns)
+- Patches `_ensure_required_columns()` to skip self-healing for test isolation
+- Forces index creation against incomplete schema → triggers `sqlite3.OperationalError: no such column: file_hash`
+- Asserts error message contains: database path, "no such column: file_hash", "Missing canonical columns:", "Table 'files' columns:", "incompatible legacy schema"
+- **Test remains valid:** Current code DOES report path and cause when schema incompatibility detected (when self-healing is bypassed)
+
+**Implications:**
+- Production code self-heals missing columns, so startup rarely fails on legacy schema
+- Test simulates scenario where self-healing is disabled (e.g., insufficient permissions, corrupted database)
+- Error diagnostics are comprehensive: path, source, schema details, specific SQLite error
+
