@@ -9,6 +9,21 @@
 
 <!-- Append new learnings below. Each entry is something lasting about the project. -->
 
+### 2026-03-28 — Optional Docling Smoke Tests: Root Cause Fixed
+
+**Symptom:** `python src\AspireApp.PythonServices\test_services.py` failed with `Optional dependency 'docling' is not installed`.
+
+**Root Cause:** Smoke test imported `app.services.docling_service` directly; that import fails in lightweight dev environments where `docling` is intentionally omitted from `requirements.txt`.
+
+**Fix:** Changed smoke test to validate `app.services.service_factory` instead, which handles both full Docling and fallback paths. Restored `PROJECT_ROOT` on `sys.path` for reliable module resolution.
+
+**Outcome:**
+- ✅ Smoke test now passes in both full-install and lightweight-fallback environments
+- ✅ Test still surfaces real failures if processing initialization breaks
+- ✅ Regression coverage preserved: `python -m pytest tests test_services.py -q` = 32 passed, 1 skipped
+
+**Key Contract:** The supported runtime is "full Docling when installed, fallback processor otherwise." Smoke coverage must validate `app.services.service_factory`, not direct package availability. Architecture in `src/AspireApp.PythonServices\app\services\service_factory.py` enforces this selection.
+
 ### 2026-03-26 — SQLite Startup Schema Repair
 
 - `DatabaseService._ensure_database_schema()` must treat `CREATE TABLE IF NOT EXISTS` as create-only, not as a migration path for persisted developer databases.

@@ -9,6 +9,23 @@
 
 <!-- Append new learnings below. Each entry is something lasting about the project. -->
 
+### 2026-03-28 — Docling Smoke Gate Alignment (QA Audit Complete)
+
+**Audit Focus:** Validate that `app.services.service_factory` is the correct smoke-test contract for document processing initialization.
+
+**Findings:**
+- **Default local environment is fallback-first:** `.venv` from `setup_dev_env.py` installs only `requirements.txt`, which includes `docling-core` but not full `docling`, so common dev setup lacks full processor.
+- **Supported contract is dual-mode:** Full Docling when installed, fallback processor otherwise. Service factory enforces this selection.
+- **Smoke test should mirror this contract:** Validate factory-selected implementation can initialize, not require optional package.
+
+**Verification Results:**
+- ✅ `python src\AspireApp.PythonServices\test_services.py -v` passed
+- ✅ `python -m unittest discover -s tests -p test_p0_contract_audit.py -v` passed (10 tests)
+- ✅ `python -m pytest tests test_services.py -q` passed (32 passed, 1 skipped)
+- ✅ Full test suite: 30 passing tests
+
+**Test Contract:** `test_services.py` smoke gate is `app.services.service_factory` initialization. Passes when current environment can initialize either full Docling or fallback. Direct import of `docling_service` is no longer required.
+
 ### 2025-02-22 — Initial Quality Audit
 - **Zero automated tests exist.** All 6 "test" files are manual diagnostic/benchmark scripts with no assertions and no pytest/xUnit integration.
 - **CI is non-functional.** `squad-ci.yml` echoes a placeholder string — no build, no test execution.

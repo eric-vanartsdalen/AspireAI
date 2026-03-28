@@ -282,3 +282,52 @@ python -m pytest tests/ -v
 ```
 
 ---
+
+## Optional Docling Smoke Coverage — Jarvis — 2026-03-28
+
+**Scope:** Python smoke tests for document processing initialization
+
+### Context
+`src/AspireApp.PythonServices\requirements.txt` intentionally omits the heavyweight `docling` package, while `src/AspireApp.PythonServices\Dockerfile` installs it only for the full image. The old smoke test imported `app.services.docling_service` directly, so lightweight/dev environments reported the absence of `docling` instead of validating the supported fallback path.
+
+### Decision
+Smoke tests should validate `app.services.service_factory` and the selected `DoclingService` implementation, not direct `docling` package availability. The test should pass when the factory selects either the full processor or `docling_service_fallback`, and only fail when neither supported processing path can initialize.
+
+### Rationale
+- Matches the runtime contract used by `processing.py` and FastAPI health reporting
+- Preserves lightweight developer environments without forcing the heavy `docling` install
+- Still surfaces real regressions by asserting which implementation the factory selected
+
+### Impact
+- `test_services.py` stays meaningful in both full and lightweight environments ✅
+- Future changes to optional dependency handling have a clear test target ✅
+- Avoids unnecessary dependency bloat in `requirements.txt` ✅
+
+---
+
+## Docling Smoke Gate Alignment — Buster — 2026-03-28
+
+**Scope:** Python service smoke validation for Docling-capable and fallback-capable environments
+
+### Context
+The failing smoke signal was `Optional dependency 'docling' is not installed: No module named 'docling'` from `src/AspireApp.PythonServices/test_services.py`. Audit showed this was reproducible in the project `.venv`, because `setup_dev_env.py` installs `requirements.txt`, and `requirements.txt` intentionally omits the top-level `docling` package while lightweight/fallback processing remains a supported development mode.
+
+### Decision
+Treat `app.services.service_factory` as the smoke-test contract for document processing. The smoke gate should pass when the current environment can initialize either:
+
+1. the full Docling service, or
+2. the fallback processor selected by the factory.
+
+Direct import of `app.services.docling_service` is not the default smoke gate because that incorrectly fails supported lightweight setups.
+
+### Rationale
+- The product contract already supports fallback processing through `service_factory.py` and `docling_service_fallback.py`
+- `BUILD_CONFIGURATION.md` and `README.md` document lightweight development as valid, so the smoke test must reflect that supported runtime
+- A smoke test that only passes with the optional full package installed produces false negatives in the standard local dev environment
+
+### Impact
+- Default local `.venv` smoke validation now passes without requiring a heavyweight `docling` install ✅
+- Full Docling environments still pass and are detected as `service_type = full` ✅
+- Regression coverage now proves the factory selects the implementation that matches the installed dependency set ✅
+
+---
