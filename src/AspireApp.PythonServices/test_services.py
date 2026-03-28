@@ -11,11 +11,18 @@ PROJECT_ROOT = Path(__file__).resolve().parent
 REPO_ROOT = PROJECT_ROOT.parents[1]
 DATA_ROOT = REPO_ROOT / "data"
 
-if str(PROJECT_ROOT) not in sys.path:
-    sys.path.insert(0, str(PROJECT_ROOT))
+
+def _ensure_project_root_on_path() -> None:
+    project_root = str(PROJECT_ROOT)
+    sys.path = [path for path in sys.path if path != project_root]
+    sys.path.insert(0, project_root)
+
+
+_ensure_project_root_on_path()
 
 
 def _load_service(module_name: str, class_name: str, optional_package: str | None = None):
+    _ensure_project_root_on_path()
     try:
         module = import_module(module_name)
     except ModuleNotFoundError as exc:
@@ -41,17 +48,26 @@ class ServiceSmokeTests(unittest.TestCase):
 
         self.assertIsInstance(documents, list)
 
-    def test_docling_service_initializes_when_docling_is_available(self):
-        docling_service, import_error = _load_service(
-            "app.services.docling_service",
-            "DoclingService",
-            optional_package="docling",
-        )
-        if import_error is not None:
-            self.skipTest(f"Optional dependency 'docling' is not installed: {import_error}")
+    def test_document_processing_service_factory_initializes_with_available_dependencies(self):
+        _ensure_project_root_on_path()
+        service_factory = import_module("app.services.service_factory")
 
-        service = docling_service(data_path=str(DATA_ROOT))
+        service = service_factory.DoclingService(data_path=str(DATA_ROOT))
+        service_info = service_factory.get_service_info()
+
         self.assertIsNotNone(service)
+        self.assertIn(service_info["service_type"], {"full", "fallback"})
+        self.assertEqual(
+            service_info["docling_available"],
+            service_info["service_type"] == "full",
+        )
+
+        expected_module = (
+            "app.services.docling_service"
+            if service_info["docling_available"]
+            else "app.services.docling_service_fallback"
+        )
+        self.assertEqual(service.__class__.__module__, expected_module)
 
     def test_neo4j_service_health_check_is_tolerant_when_driver_is_available(self):
         neo4j_service, import_error = _load_service(

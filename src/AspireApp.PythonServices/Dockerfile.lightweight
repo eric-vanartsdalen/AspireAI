@@ -25,7 +25,7 @@ COPY requirements.txt .
 
 # Install core dependencies first
 RUN pip install --upgrade pip setuptools wheel && \
-    pip install -r requirements.txt
+    pip install --root-user-action=ignore -r requirements.txt
 
 # Install a lightweight document processor as fallback
 RUN pip install pypdf2 python-docx
