@@ -16,6 +16,8 @@
 | Jeff | .NET Dev | `.squad/agents/jeff/charter.md` | ✅ Active |
 | Jarvis | Python / Data Dev | `.squad/agents/jarvis/charter.md` | ✅ Active |
 | Buster | QA / Tester | `.squad/agents/buster/charter.md` | ✅ Active |
+| Kujan | Adversarial Architect Reviewer | `.squad/agents/kujan/charter.md` | ✅ Active |
+| Verbal | Strategic Product Reviewer | `.squad/agents/verbal/charter.md` | ✅ Active |
 | Scribe | Session Logger | `.squad/agents/scribe/charter.md` | 📋 Silent |
 | Ralph | Work Monitor | — | 🔄 Monitor |
 
