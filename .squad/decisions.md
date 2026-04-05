@@ -537,3 +537,32 @@ The current roadmap is still optimizing a document-chat product, not building BR
 - Vertical slice approach prevents platform-first overbuild ✅
 
 ---
+
+## Python Test Discovery & Smoke Gate — Buster — 2026-04-05
+
+**Author:** Buster (QA / Tester)
+**Status:** APPROVED
+**Date:** 2026-04-05
+
+# Buster — Python test discovery and smoke gate alignment — 2026-04-05
+
+## Context
+
+Visual Studio's Python workflow for `src\AspireApp.PythonServices` is driven by `AspireApp.PythonServices.pyproj`, not just by filesystem pytest discovery. That left `tests\test_p0_contract_audit.py` and `tests\test_processing_pipeline_regression.py` outside the VS test container even though `python -m pytest` from the project directory collected them normally. There was also a misleading utility script, `test_build_config.py`, exposing a `test_*` function that could trigger Docker builds during automated discovery, and bootstrap paths creating `.venv` needed the Postgres client bits used by the smoke gate.
+
+## Decision
+
+1. Treat `AspireApp.PythonServices.pyproj` as part of the Python QA harness and keep regression tests explicitly listed there when they must run in Visual Studio.
+2. Keep utility scripts out of automated discovery by avoiding `test_*` function names unless the file is a real automated test.
+3. Ensure local `.venv` bootstrap installs the packages required by the smoke gate, including `psycopg[binary]`, `psycopg-pool`, and `pytest`.
+
+## Rationale
+
+This keeps CLI pytest and Visual Studio Test Explorer aligned on what the real regression gate is. It also prevents false negatives from half-bootstrapped interpreters and false positives from utility scripts masquerading as tests.
+
+## Impact
+
+- Visual Studio can now see the contract audit and processing regression tests.
+- The DatabaseService smoke gate has the dependencies it expects in the common local bootstrap path.
+- Docker build diagnostics stay opt-in instead of executing as part of automated test discovery.
+

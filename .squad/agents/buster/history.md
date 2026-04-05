@@ -9,6 +9,25 @@
 
 <!-- Append new learnings below. Each entry is something lasting about the project. -->
 
+### 2026-04-05 — Python Test Discovery Alignment: pyproj + Dependency Bootstrap
+
+**Completed:**
+- Audited Visual Studio Python test discovery behavior and identified that `AspireApp.PythonServices.pyproj` must explicitly list regression test files in `<Compile Include>` for them to appear in Test Explorer.
+- Identified that utility scripts (e.g., `test_build_config.py`) expose `test_*` functions that trigger Docker builds during discovery; renamed to remove false automation hooks.
+- Validated bootstrap dependency completeness: `.venv` must install psycopg[binary], psycopg-pool, and pytest for smoke gate to run without errors.
+- Confirmed 14 regression + contract audit tests collect and pass under VS Python environment after fixes.
+
+**Key pattern:**
+- `AspireApp.PythonServices.pyproj` is the test-discovery gate for VS workflow; regression tests must be explicitly included.
+- Utility scripts must not expose `test_*` function names unless they're intended to execute during automated discovery.
+- Local `.venv` bootstrap must include all dependencies required by the smoke gate, not just the runtime requirements.
+
+**Key file paths:**
+- `src/AspireApp.PythonServices/AspireApp.PythonServices.pyproj` (test file includes)
+- `test_build_config.py` (utility function renamed)
+- Smoke gate dependency list: `psycopg[binary]`, `psycopg-pool`, `pytest`
+
+- **Visual Studio Python discovery contract (2026-04-05):**`src\AspireApp.PythonServices\AspireApp.PythonServices.pyproj` is the test-discovery gate for the VS workflow. Pytest files under `src\AspireApp.PythonServices\tests\` are not reliably visible to Test Explorer unless they are explicitly listed in `<Compile Include=...>`, and utility scripts must not expose `test_*` functions unless they are meant to execute during automated runs.
 - **Test scaffolding for unimplemented features (2026-07-26):** When a feature doesn't exist yet (tenant context UI), stage commented test templates showing expected test coverage rather than inventing the contract yourself. The implementation team (Jeff/Bob) owns the contract design; QA owns the test shape once the contract exists. Blocked requests should document why blocking is correct and what unblocks progress.
 - **Browser smoke fixture rule (2026-04-05):** `BasicAspireAppHostTests.FlowEndToEnd` needs a *small, processable PDF* fixture, not a plain-text stand-in and not a large real-world document. Swapping to unsupported `.txt` input produced false UI-level confidence while the Python pipeline stayed stuck in `processing`; the stable regression path is a tiny PDF like `src\AspireApp.WebTest\DataExample\processing-smoke.pdf`.
 - **Browser regression verdict (2026-04-05):** Jeff's `.txt` smoke-fixture change was not acceptable QA state because it made the browser suite validate an upload type the processing pipeline does not complete. The corrected, verifiable gate is: Python contract audit passes, `OperationalUploadStoreTests.UploadApiPersistsMetadataToPostgres` passes, and the full `BasicAspireAppHostTests` suite passes after clearing stale `AspireApp.WebTest.exe` runners.

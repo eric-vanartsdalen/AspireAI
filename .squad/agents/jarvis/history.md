@@ -9,6 +9,44 @@
 
 <!-- Append new learnings below. Each entry is something lasting about the project. -->
 
+### 2026-04-05 — Python Test Stability: Dependency-Tolerant Imports & Bootstrap Path Repair
+
+**Completed:**
+- Added try/except fallback in `DatabaseService` for optional Neo4j driver and `psycopg_pool` imports so smoke tests can mock dependencies before they're installed.
+- Repaired test entrypoint path resolution in `test_database_schema.py` and `test_all_builds.py` to resolve repo root correctly via `git rev-parse --show-toplevel`.
+- Updated Python validation guidance in `.github/instructions/python.instructions.md` with async test patterns, error handling, and import robustness best practices.
+- Validated: 14 regression + contract audit tests now collect and pass in Visual Studio Python environment.
+
+**Key pattern:**
+- Treat optional imports (Neo4j, database drivers) as dependency-tolerant to prevent smoke-gate bootstrap failures when packages aren't pre-installed.
+- Test entrypoints must resolve repo root and venv paths dynamically, not assume a fixed working directory.
+- Smoke gate bootstrap (`test_database_schema.py`) and regression paths (`pytest`) must be aligned; both should include psycopg[binary], psycopg-pool, and pytest in the common requirements set.
+
+**Key file paths:**
+- `src/AspireApp.PythonServices/app/services/database_service.py` (dependency-tolerant imports)
+- `test_database_schema.py`, `test_all_builds.py` (path resolution fixes)
+- `.github/instructions/python.instructions.md` (validation guidance)
+
+### 2026-04-05 — Python Validation Must Be Import-Tolerant and Path-Stable
+
+**Completed:**
+- Made `src/AspireApp.PythonServices/app/services/database_service.py` import-tolerant when `psycopg_pool` is missing so smoke tests can patch `ConnectionPool` with `fake_postgres.FakeConnectionPool` before any live Postgres connection is created.
+- Fixed `src/AspireApp.PythonServices/tests/test_p0_contract_audit.py` and `src/AspireApp.PythonServices/tests/test_processing_pipeline_regression.py` to self-bootstrap `src/AspireApp.PythonServices` onto `sys.path`, which lets them run both under `pytest` and as direct `python ...test_*.py` scripts.
+- Updated Python validation guidance to run `python -m pytest -q` from `src/AspireApp.PythonServices`, which exercises smoke, contract, and regression coverage together.
+
+**Key pattern:**
+- Python contract/regression tests in this repo should not depend on global interpreter state. Each standalone test entrypoint should add the Python service root to `sys.path` before importing `app.*`.
+- Database smoke tests that patch the pool should not fail at module import time when `psycopg_pool` is absent. Keep the import lazy enough that fake-pool tests still validate the service API surface.
+- The reliable validation path is the full Python pytest run from `src/AspireApp.PythonServices`, not a single-file smoke invocation.
+
+**Key file paths:**
+- `src/AspireApp.PythonServices/app/services/database_service.py`
+- `src/AspireApp.PythonServices/test_services.py`
+- `src/AspireApp.PythonServices/tests/test_p0_contract_audit.py`
+- `src/AspireApp.PythonServices/tests/test_processing_pipeline_regression.py`
+- `src/AspireApp.PythonServices/README.md`
+- `.github/prompts/python-ingestion-debugging.prompt.md`
+
 ### 2026-04-05 — Tenant Schema Alignment: Both Sides Must Include All Contract Columns
 
 **Completed:**
