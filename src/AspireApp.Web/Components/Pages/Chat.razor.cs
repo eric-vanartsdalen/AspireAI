@@ -1,4 +1,4 @@
-﻿using AspireApp.Web.Components.Shared;
+using AspireApp.Web.Components.Shared;
 using Markdig;
 using Microsoft.AspNetCore.Components;
 using Microsoft.JSInterop;
@@ -24,6 +24,14 @@ namespace AspireApp.Web.Components.Pages
 
         [Inject]
         public required SpeechService SpeechService { get; set; }
+
+        [Inject]
+        public AiInfoStateService AiInfoState { get; set; } = default!;
+
+        // TODO (BRAIN Phase 3): Inject TenantContextService and include CurrentTenantId
+        // in POST /brain/chat requests to Gateway for multi-tenant knowledge isolation.
+        // [Inject]
+        // public required AspireApp.Web.Services.TenantContextService TenantContext { get; set; }
 
         private ElementReference questionInput;
         private CancellationTokenSource? _cancellationTokenSource;
@@ -51,9 +59,6 @@ namespace AspireApp.Web.Components.Pages
         private string SpeechStatusText { get; set; } = string.Empty;
         private string SpeechStatusMessage { get; set; } = string.Empty;
         private string? CurrentlySpeakingMessage { get; set; } = null; // Track which message is being spoken
-
-        [Inject]
-        public AiInfoStateService AiInfoState { get; set; } = default!;
 
         protected override async Task OnInitializedAsync()
         {

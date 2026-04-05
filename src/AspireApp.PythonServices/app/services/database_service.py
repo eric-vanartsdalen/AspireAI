@@ -86,6 +86,7 @@ class DatabaseService:
         "docling_document_path": "TEXT",
         "total_pages": "INTEGER",
         "neo4j_document_node_id": "TEXT",
+        "tenant_id": "TEXT NOT NULL DEFAULT 'default'",
         "source_type": "TEXT NOT NULL DEFAULT 'upload'",
         "source_url": "TEXT",
     }
@@ -232,6 +233,7 @@ class DatabaseService:
                         docling_document_path TEXT,
                         total_pages INTEGER,
                         neo4j_document_node_id TEXT,
+                        tenant_id TEXT NOT NULL DEFAULT 'default',
                         source_type TEXT NOT NULL DEFAULT 'upload',
                         source_url TEXT
                     )
@@ -258,6 +260,8 @@ class DatabaseService:
                 cursor.execute("CREATE INDEX IF NOT EXISTS idx_files_status ON files(status)")
                 cursor.execute("CREATE INDEX IF NOT EXISTS idx_files_hash ON files(file_hash)")
                 cursor.execute("CREATE INDEX IF NOT EXISTS idx_files_uploaded ON files(uploaded_at)")
+                cursor.execute("CREATE INDEX IF NOT EXISTS idx_files_tenant ON files(tenant_id)")
+                cursor.execute("CREATE INDEX IF NOT EXISTS idx_files_tenant_status ON files(tenant_id, status)")
                 cursor.execute("CREATE INDEX IF NOT EXISTS idx_pages_file_id ON document_pages(file_id)")
                 cursor.execute(
                     """
@@ -471,6 +475,7 @@ class DatabaseService:
         file_hash: str = "",
         uploaded_at: Optional[datetime] = None,
         status: str = "uploaded",
+        tenant_id: str = "default",
         source_type: str = "upload",
         source_url: Optional[str] = None,
     ) -> int:
@@ -491,10 +496,11 @@ class DatabaseService:
                         mime_type,
                         uploaded_at,
                         status,
+                        tenant_id,
                         source_type,
                         source_url
                     )
-                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                     RETURNING id
                     """,
                     (
@@ -506,6 +512,7 @@ class DatabaseService:
                         mime_type,
                         uploaded_at_value,
                         normalized_status,
+                        tenant_id,
                         source_type,
                         source_url,
                     ),
@@ -848,8 +855,9 @@ class DatabaseService:
             "docling_document_path": row[12],
             "total_pages": row[13],
             "neo4j_document_node_id": row[14],
-            "source_type": row[15],
-            "source_url": row[16],
+            "tenant_id": row[15],
+            "source_type": row[16],
+            "source_url": row[17],
         }
 
     def _fetch_file_row(self, conn, file_id: int):
@@ -860,7 +868,7 @@ class DatabaseService:
                    file_size, mime_type, uploaded_at, status,
                    processing_started_at, processing_completed_at, processing_error,
                    docling_document_path, total_pages, neo4j_document_node_id,
-                   source_type, source_url
+                   tenant_id, source_type, source_url
             FROM files
             WHERE id = %s
             """,
@@ -876,7 +884,7 @@ class DatabaseService:
                    file_size, mime_type, uploaded_at, status,
                    processing_started_at, processing_completed_at, processing_error,
                    docling_document_path, total_pages, neo4j_document_node_id,
-                   source_type, source_url
+                   tenant_id, source_type, source_url
             FROM files
             ORDER BY uploaded_at DESC
             """
@@ -891,7 +899,7 @@ class DatabaseService:
                    file_size, mime_type, uploaded_at, status,
                    processing_started_at, processing_completed_at, processing_error,
                    docling_document_path, total_pages, neo4j_document_node_id,
-                   source_type, source_url
+                   tenant_id, source_type, source_url
             FROM files
             WHERE LOWER(status) IN ('uploaded', 'error')
             ORDER BY uploaded_at ASC

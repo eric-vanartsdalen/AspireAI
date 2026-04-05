@@ -61,6 +61,9 @@ builder.Services.AddSingleton<AiInfoStateService>();
 // Register Speech service
 builder.Services.AddScoped<SpeechService>();
 
+// Register Tenant Context service (scoped to Blazor circuit/session)
+builder.Services.AddScoped<AspireApp.Web.Services.TenantContextService>();
+
 // Register Ollama warmup background service
 builder.Services.AddHostedService<AspireApp.Web.Services.OllamaWarmupService>();
 

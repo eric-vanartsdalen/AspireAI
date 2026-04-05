@@ -73,6 +73,7 @@ class DatabaseContractAuditTests(unittest.TestCase):
             file_size=4,
             mime_type="application/pdf",
             status="uploaded",
+            tenant_id="test-tenant",
         )
 
         service.update_file_status(file_id, "processing")
@@ -90,11 +91,13 @@ class DatabaseContractAuditTests(unittest.TestCase):
         service.update_file_status(file_id, "processed")
 
         document = service.get_document_by_id(file_id)
+        file_record = service.get_file_by_id(file_id)
         status = service.get_processing_status(file_id)
         pages = service.get_document_pages(file_id)
         health = service.health_check()
 
         self.assertEqual(file_id, document.id)
+        self.assertEqual("test-tenant", file_record["tenant_id"])
         self.assertEqual("processed", status.status)
         self.assertEqual(3, status.total_pages)
         self.assertEqual(1, status.processed_pages)

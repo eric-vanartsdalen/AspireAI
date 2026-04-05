@@ -57,6 +57,8 @@ namespace AspireApp.Web.Shared
                 entity.HasIndex(e => e.Status).HasDatabaseName("idx_files_status");
                 entity.HasIndex(e => e.FileHash).HasDatabaseName("idx_files_hash");
                 entity.HasIndex(e => e.UploadedAt).HasDatabaseName("idx_files_uploaded");
+                entity.HasIndex(e => e.TenantId).HasDatabaseName("idx_files_tenant");
+                entity.HasIndex(e => new { e.TenantId, e.Status }).HasDatabaseName("idx_files_tenant_status");
 
                 // Relationships
                 entity.HasMany(e => e.Pages)

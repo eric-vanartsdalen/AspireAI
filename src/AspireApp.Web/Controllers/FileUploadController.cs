@@ -18,6 +18,22 @@ public class FileUploadController(
     private readonly string[] _allowedExtensions = [".pdf", ".docx", ".txt", ".md"];
     private readonly long _maxFileSize = configuration.GetValue<long?>("FileUpload:MaxFileSize") ?? 10485760;
 
+    /// <summary>
+    /// Extracts tenant ID from X-Tenant-Id header or returns "default".
+    /// </summary>
+    private string GetTenantId()
+    {
+        if (Request.Headers.TryGetValue("X-Tenant-Id", out var tenantIdHeader))
+        {
+            var tenantId = tenantIdHeader.ToString();
+            if (!string.IsNullOrWhiteSpace(tenantId))
+            {
+                return tenantId;
+            }
+        }
+        return "default";
+    }
+
     // Fix for CA1873: Only evaluate expensive arguments if logging is enabled.
     // Wrap expensive string interpolation or formatting in an if (_logger.IsEnabled(LogLevel.Information)) block.
 
@@ -114,18 +130,20 @@ public class FileUploadController(
             }
 
             // Add file metadata to database with hash and status
+            var tenantId = GetTenantId();
             var fileMetadata = await _fileStorageService.AddFileAsync(
                 uniqueFileName,
                 file.FileName,
                 dataDirectory,
                 file.Length,
                 fileHash,
-                "uploaded");
+                "uploaded",
+                tenantId);
 
             if (_logger.IsEnabled(LogLevel.Information))
             {
-                _logger.LogInformation("File uploaded successfully: {FileName} -> {FilePath}, Size: {Size} bytes, Hash: {Hash}",
-                    file.FileName, filePath, file.Length, fileHash);
+                _logger.LogInformation("File uploaded successfully: {FileName} -> {FilePath}, Size: {Size} bytes, Hash: {Hash}, Tenant: {TenantId}",
+                    file.FileName, filePath, file.Length, fileHash, tenantId);
             }
 
             return Ok(new
@@ -219,15 +237,17 @@ public class FileUploadController(
             var fileName = GenerateFileNameFromUrl(uri);
 
             // Add URL metadata to database with hash
+            var tenantId = GetTenantId();
             var fileMetadata = await _fileStorageService.AddUrlAsync(
                 fileName,
                 request.Url,
-                "uploaded");
+                "uploaded",
+                tenantId);
 
             if (_logger.IsEnabled(LogLevel.Information))
             {
-                _logger.LogInformation("Website URL added successfully: {Url}, ID: {Id}, Hash: {Hash}",
-                    request.Url, fileMetadata.Id, urlHash);
+                _logger.LogInformation("Website URL added successfully: {Url}, ID: {Id}, Hash: {Hash}, Tenant: {TenantId}",
+                    request.Url, fileMetadata.Id, urlHash, tenantId);
             }
 
             return Ok(new
@@ -262,7 +282,8 @@ public class FileUploadController(
     {
         try
         {
-            var files = await _fileStorageService.GetAllFilesAsync();
+            var tenantId = GetTenantId();
+            var files = await _fileStorageService.GetAllFilesAsync(tenantId);
             return Ok(new { success = true, files });
         }
         catch (Exception ex)

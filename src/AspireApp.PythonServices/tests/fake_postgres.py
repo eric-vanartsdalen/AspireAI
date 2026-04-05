@@ -21,6 +21,7 @@ FILE_COLUMNS = [
     "docling_document_path",
     "total_pages",
     "neo4j_document_node_id",
+    "tenant_id",
     "source_type",
     "source_url",
 ]
@@ -38,6 +39,7 @@ COLUMN_DEFAULTS = {
     "file_hash": "",
     "file_size": 0,
     "status": "uploaded",
+    "tenant_id": "default",
     "source_type": "upload",
 }
 
@@ -130,14 +132,15 @@ class FakeCursor:
                 "mime_type": params[5],
                 "uploaded_at": params[6],
                 "status": params[7],
+                "tenant_id": params[8],
                 "processing_started_at": None,
                 "processing_completed_at": None,
                 "processing_error": None,
                 "docling_document_path": None,
                 "total_pages": None,
                 "neo4j_document_node_id": None,
-                "source_type": params[8],
-                "source_url": params[9],
+                "source_type": params[9],
+                "source_url": params[10],
             }
             self.state.tables["files"]["rows"].append(row)
             self.state.next_file_id += 1

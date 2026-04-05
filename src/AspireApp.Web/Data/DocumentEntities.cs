@@ -79,6 +79,15 @@ namespace AspireApp.Web.Data
         [Column("neo4j_document_node_id")]
         public string? Neo4jDocumentNodeId { get; set; }
 
+        // ==================== Multi-Tenancy ====================
+        
+        /// <summary>
+        /// Tenant identifier for multi-tenancy support. Default: 'default'
+        /// </summary>
+        [Column("tenant_id")]
+        [MaxLength(100)]
+        public string TenantId { get; set; } = "default";
+
         // ==================== Future Extensibility ====================
         
         /// <summary>

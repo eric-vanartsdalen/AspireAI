@@ -46,6 +46,9 @@ public partial class UploadData : ComponentBase, IAsyncDisposable, IDisposable
     [Inject]
     public NavigationManager NavigationManager { get; set; } = default!;
 
+    [Inject]
+    public AspireApp.Web.Services.TenantContextService TenantContext { get; set; } = default!;
+
     private long MaxFileSize => Configuration.GetValue<long?>("FileUpload:MaxFileSize") ?? 10485760; // 10MB default
 
     protected bool IsFileSelected => _selectedBrowserFile != null;
@@ -188,6 +191,9 @@ public partial class UploadData : ComponentBase, IAsyncDisposable, IDisposable
             content.Add(content: fileContent, name: "\"file\"", fileName: _selectedBrowserFile.Name);
 
             var client = ClientFactory.CreateClient();
+            // Add tenant context header to upload request
+            client.DefaultRequestHeaders.Add("X-Tenant-Id", TenantContext.CurrentTenantId);
+            
             var baseUri = new Uri(NavigationManager.BaseUri);
             var apiUri = new Uri(baseUri, "/api/FileUpload");
             var response = await client.PostAsync(apiUri, content);
@@ -420,6 +426,9 @@ public partial class UploadData : ComponentBase, IAsyncDisposable, IDisposable
             StateHasChanged();
 
             var client = ClientFactory.CreateClient();
+            // Add tenant context header to URL upload request
+            client.DefaultRequestHeaders.Add("X-Tenant-Id", TenantContext.CurrentTenantId);
+            
             var baseUri = new Uri(NavigationManager.BaseUri);
             var apiUri = new Uri(baseUri, "/api/FileUpload/url");
             var response = await client.PostAsJsonAsync(apiUri, new { Url = _websiteUrl });

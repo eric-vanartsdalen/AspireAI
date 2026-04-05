@@ -1,0 +1,29 @@
+@using AspireApp.Web.Services
+@inject TenantContextService TenantContext
+
+<div class="tenant-selector">
+    <label for="tenant-select" class="tenant-label">
+        <span class="bi bi-building" aria-hidden="true"></span>
+        Tenant:
+    </label>
+    <select id="tenant-select" 
+            class="form-select tenant-select" 
+            value="@TenantContext.CurrentTenantId" 
+            @onchange="OnTenantChanged">
+        @foreach (var tenant in TenantContextService.GetAvailableTenants())
+        {
+            <option value="@tenant">@tenant</option>
+        }
+    </select>
+</div>
+
+@code {
+    private async Task OnTenantChanged(ChangeEventArgs e)
+    {
+        if (e.Value is string tenantId)
+        {
+            TenantContext.CurrentTenantId = tenantId;
+            await InvokeAsync(StateHasChanged);
+        }
+    }
+}

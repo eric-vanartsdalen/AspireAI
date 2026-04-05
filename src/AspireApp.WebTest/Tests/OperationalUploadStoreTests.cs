@@ -56,7 +56,7 @@ public sealed class OperationalUploadStoreTests(TestFixture fixture) : IClassFix
         await connection.OpenAsync(TestContext.Current.CancellationToken);
 
         await using var command = new NpgsqlCommand("""
-            SELECT file_name, original_file_name, status, file_size, source_type
+            SELECT file_name, original_file_name, status, file_size, source_type, tenant_id
             FROM files
             WHERE id = @id
             """, connection);
@@ -71,6 +71,7 @@ public sealed class OperationalUploadStoreTests(TestFixture fixture) : IClassFix
         Assert.Equal("uploaded", reader.GetString(2));
         Assert.Equal(new FileInfo(TestFile).Length, reader.GetInt64(3));
         Assert.Equal("upload", reader.GetString(4));
+        Assert.Equal("default", reader.GetString(5));
 
         await reader.CloseAsync();
 
@@ -152,4 +153,107 @@ public sealed class OperationalUploadStoreTests(TestFixture fixture) : IClassFix
         public string? OriginalFileName { get; set; }
         public string? SourceType { get; set; }
     }
+
+    // ==================== TENANT CONTEXT TEST SCAFFOLDING ====================
+    // 
+    // These tests are commented out because tenant context is not yet implemented.
+    // When Jeff adds tenant_id schema + UI selection + service propagation, uncomment
+    // and update these tests to match the actual implementation contract.
+    //
+    // Required implementation before uncommenting:
+    // 1. Add tenant_id column to files table (NOT NULL with default or similar)
+    // 2. Add tenant selector UI component (NavMenu or Upload page)
+    // 3. Update FileStorageService.AddFileAsync to accept tenant_id parameter
+    // 4. Update FileUploadController to receive and pass tenant context
+    // 5. Add WHERE tenant_id = @tenantId to FileStorageService queries
+    // =========================================================================
+
+    /*
+    [Fact, Priority(2)]
+    public async Task UploadWithTenantIdPersistsTenantContext()
+    {
+        // Arrange: Upload file with tenant "tenant-A"
+        using var webClient = CreateWebFrontendHttpClient();
+        await DeleteExistingTestUploadsAsync(webClient);
+
+        await using var fileStream = File.OpenRead(TestFile);
+        using var form = new MultipartFormDataContent();
+        using var streamContent = new StreamContent(fileStream);
+        streamContent.Headers.ContentType = new MediaTypeHeaderValue("application/pdf");
+        form.Add(streamContent, "file", Path.GetFileName(TestFile));
+        
+        // TODO: Add tenant_id to form when API contract exists
+        // form.Add(new StringContent("tenant-A"), "tenant_id");
+
+        // Act
+        using var uploadResponse = await webClient.PostAsync("api/FileUpload", form, TestContext.Current.CancellationToken);
+        var uploadBody = await uploadResponse.Content.ReadAsStringAsync(TestContext.Current.CancellationToken);
+        var uploadResult = JsonSerializer.Deserialize<FileUploadApiResponse>(uploadBody, JsonOptions)!;
+
+        // Assert: Verify tenant_id persisted to Postgres
+        await using var connection = new NpgsqlConnection(_mapping.UploadStoreConnectionString);
+        await connection.OpenAsync(TestContext.Current.CancellationToken);
+
+        await using var command = new NpgsqlCommand(
+            "SELECT tenant_id FROM files WHERE id = @id",
+            connection);
+        command.Parameters.AddWithValue("id", uploadResult.Id);
+
+        var tenantId = (string?)await command.ExecuteScalarAsync(TestContext.Current.CancellationToken);
+        Assert.Equal("tenant-A", tenantId);
+
+        // Cleanup
+        using var deleteResponse = await webClient.DeleteAsync($"api/FileUpload/{uploadResult.Id}", TestContext.Current.CancellationToken);
+        Assert.True(deleteResponse.IsSuccessStatusCode);
+    }
+
+    [Fact, Priority(3)]
+    public async Task GetAllFilesReturnsOnlyCurrentTenantFiles()
+    {
+        // Arrange: Upload one file per tenant
+        using var webClient = CreateWebFrontendHttpClient();
+        await DeleteExistingTestUploadsAsync(webClient);
+
+        // TODO: Implement when tenant selection API exists
+        // var tenantAFile = await UploadFileWithTenant(webClient, "tenant-A");
+        // var tenantBFile = await UploadFileWithTenant(webClient, "tenant-B");
+
+        // Act: Query files as tenant-A
+        // TODO: Add tenant context header/cookie when implemented
+        using var listResponse = await webClient.GetAsync("api/FileUpload", TestContext.Current.CancellationToken);
+        var listBody = await listResponse.Content.ReadAsStringAsync(TestContext.Current.CancellationToken);
+        var uploads = JsonSerializer.Deserialize<UploadedFilesApiResponse>(listBody, JsonOptions)!;
+
+        // Assert: Only tenant-A files returned
+        // Assert.Single(uploads.Files);
+        // Assert.Equal(tenantAFile.Id, uploads.Files[0].Id);
+
+        // TODO: Switch to tenant-B context and verify isolation
+    }
+
+    [Fact, Priority(4)]
+    public async Task DuplicateDetectionScopedToTenant()
+    {
+        // Arrange: Upload same file to two different tenants
+        using var webClient = CreateWebFrontendHttpClient();
+        await DeleteExistingTestUploadsAsync(webClient);
+
+        // TODO: Implement when tenant context exists
+        // Act: Upload to tenant-A
+        // var tenantAUpload = await UploadFileWithTenant(webClient, "tenant-A");
+        // Assert.False(tenantAUpload.IsDuplicate);
+
+        // Act: Upload same file to tenant-B (should NOT be duplicate)
+        // var tenantBUpload = await UploadFileWithTenant(webClient, "tenant-B");
+        // Assert.False(tenantBUpload.IsDuplicate);
+
+        // Assert: Both uploads succeeded with different IDs
+        // Assert.NotEqual(tenantAUpload.Id, tenantBUpload.Id);
+
+        // Act: Upload same file to tenant-A again (should BE duplicate)
+        // var tenantADuplicate = await UploadFileWithTenant(webClient, "tenant-A");
+        // Assert.True(tenantADuplicate.IsDuplicate);
+        // Assert.Equal(tenantAUpload.Id, tenantADuplicate.ExistingFileId);
+    }
+    */
 }

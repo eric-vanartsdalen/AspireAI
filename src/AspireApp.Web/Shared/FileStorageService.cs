@@ -114,7 +114,7 @@ public class FileStorageService(
     /// <summary>
     /// Adds a file with hash calculation and duplicate detection
     /// </summary>
-    public async Task<FileMetadata> AddFileAsync(string fileName, string originalFilename, string fileDirectory, long size, string fileHash, string status = "uploaded")
+    public async Task<FileMetadata> AddFileAsync(string fileName, string originalFilename, string fileDirectory, long size, string fileHash, string status = "uploaded", string tenantId = "default")
     {
         try
         {
@@ -130,7 +130,8 @@ public class FileStorageService(
                 UploadedAt = DateTime.UtcNow,
                 Status = status,
                 FileHash = fileHash,
-                SourceType = "upload"
+                SourceType = "upload",
+                TenantId = tenantId
             };
 
             _context.Datasources.Add(fileMetadata);
@@ -138,8 +139,8 @@ public class FileStorageService(
 
             if (_logger.IsEnabled(LogLevel.Information))
             {
-                _logger.LogInformation("Added file metadata to database: {FileName}, Size: {Size}, Hash: {Hash}, Status: {Status}",
-                    fileName, size, fileHash, status);
+                _logger.LogInformation("Added file metadata to database: {FileName}, Size: {Size}, Hash: {Hash}, Status: {Status}, Tenant: {TenantId}",
+                    fileName, size, fileHash, status, tenantId);
             }
 
             return fileMetadata;
@@ -241,7 +242,10 @@ public class FileStorageService(
         }
     }
 
-    public async Task<List<FileMetadata>> GetAllFilesAsync()
+    /// <summary>
+    /// Gets all files for the specified tenant, or all files if no tenant specified.
+    /// </summary>
+    public async Task<List<FileMetadata>> GetAllFilesAsync(string? tenantId = null)
     {
         try
         {
@@ -256,7 +260,15 @@ public class FileStorageService(
                 return [];
             }
 
-            return await _context.Datasources.OrderByDescending(f => f.UploadedAt).ToListAsync();
+            var query = _context.Datasources.AsQueryable();
+            
+            // Filter by tenant if specified
+            if (!string.IsNullOrWhiteSpace(tenantId))
+            {
+                query = query.Where(f => f.TenantId == tenantId);
+            }
+
+            return await query.OrderByDescending(f => f.UploadedAt).ToListAsync();
         }
         catch (Exception ex)
         {
@@ -354,7 +366,7 @@ public class FileStorageService(
     /// <summary>
     /// Adds a URL datasource entry with hash generation for consistent duplicate detection
     /// </summary>
-    public async Task<FileMetadata> AddUrlAsync(string sourceName, string sourceUrl, string status = "uploaded")
+    public async Task<FileMetadata> AddUrlAsync(string sourceName, string sourceUrl, string status = "uploaded", string tenantId = "default")
     {
         try
         {
@@ -375,7 +387,8 @@ public class FileStorageService(
                 FileHash = urlHash, // Store URL hash for duplicate detection
                 SourceType = "url",
                 SourceUrl = sourceUrl,
-                MimeType = "text/html" // Default to HTML for web pages
+                MimeType = "text/html", // Default to HTML for web pages
+                TenantId = tenantId
             };
 
             _context.Datasources.Add(fileMetadata);
@@ -383,8 +396,8 @@ public class FileStorageService(
 
             if (_logger.IsEnabled(LogLevel.Information))
             {
-                _logger.LogInformation("Added URL metadata to database: {SourceName}, URL: {Url}, Hash: {Hash}, Status: {Status}",
-                    sourceName, sourceUrl, urlHash, status);
+                _logger.LogInformation("Added URL metadata to database: {SourceName}, URL: {Url}, Hash: {Hash}, Status: {Status}, Tenant: {TenantId}",
+                    sourceName, sourceUrl, urlHash, status, tenantId);
             }
 
             return fileMetadata;
