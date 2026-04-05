@@ -378,7 +378,7 @@ Run through these steps after configuring Microsoft authentication:
 
 ### Manual Testing with Mock Providers
 
-Mock providers don't require any external credentials and are always available:
+Mock providers don't require any external credentials. They are available when the service mode is `auto` or `combined` (hidden when mode is `microsoft`):
 
 1. Go to `/signin`
 2. Click "Choose a demo account"
@@ -498,6 +498,6 @@ If setup doesn't work as described:
 
 ---
 
-**Last Updated:** 2025-07-24  
+**Last Updated:** 2026-04-05  
 **Tested On:** .NET 10 SDK, Aspire Dashboard, localhost HTTPS  
-**Security Review:** Warden (2025-07-24) — verified callback paths, secret handling, dynamic port guidance, and Google setup accuracy
+**Security Review:** Warden (2026-04-05) — verified callback paths, secret handling, dynamic port guidance, and Google setup accuracy
