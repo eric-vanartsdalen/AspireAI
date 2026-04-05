@@ -9,6 +9,13 @@
 
 <!-- Append new learnings below. Each entry is something lasting about the project. -->
 
+### 2026-04-05 — Postgres Cutover Regression Verdict
+
+- **QA verdict:** the immediate failures were stale test expectations, not a fresh application regression. `src/AspireApp.AppHost/AppHost.cs`, `src/AspireApp.Web/Program.cs`, and Python runtime all align on the live Postgres upload store name `appdb`.
+- **Do not hardcode legacy connection names in regression tests.** `src/AspireApp.PythonServices/tests/test_p0_contract_audit.py` now derives the database name from `postgres.AddDatabase("...")` and asserts Web/Python consume that same name instead of assuming `DefaultConnection`.
+- **WebTest fixture contract:** `src/AspireApp.WebTest/Fixtures/TestFixture.cs` must validate `ConnectionStrings__appdb` and `POSTGRES_DATABASE=appdb`; otherwise the Aspire E2E harness rejects a correct runtime.
+- **Operational validation path:** fast QA proof for this area is `python -m pytest tests\test_p0_contract_audit.py -q`; heavier `dotnet test src\AspireApp.WebTest\AspireApp.WebTest.csproj --disable-build-servers` also needs stale `AspireApp.WebTest.exe` processes cleared if a prior run left the binary locked.
+
 ### 2026-03-28 — Docling Smoke Gate Alignment (QA Audit Complete)
 
 **Audit Focus:** Validate that `app.services.service_factory` is the correct smoke-test contract for document processing initialization.
@@ -444,3 +451,52 @@ The behavior being tested (legacy schema detection with detailed diagnostics) st
 
 **Test Results:** ✅ All 10 tests in test_p0_contract_audit.py pass
 
+
+---
+
+### 2026-04-05 — Postgres Regression Verdict & BRAIN Pivot Context
+
+**Status:** Regression verdict issued (test/harness, not product). Joined BRAIN pivot decision consolidation session.
+
+**What Happened:**
+1. **Regression Diagnosis (Postgres Upload Store Cutover):**
+   - AppHost/Web/Python changes caused WebTest harness failures
+   - Investigation: AppHost → Web → Python all using canonical ppdb Postgres database correctly
+   - Verdict: **Test/harness regression**, not product rollback
+   - Root cause: WebTest fixture hardcoded stale database name DefaultConnection instead of deriving it from AppHost
+   
+2. **Test Infrastructure Pattern Established:**
+   - Contract tests must derive shared configuration from AppHost source (single source of truth)
+   - Pattern: Don't hardcode database names, connection strings, or other infrastructure literals
+   - Update 	est_p0_contract_audit.py to read active database name from AppHost and validate alignment
+   - WebTest fixture corrected to read ConnectionStrings__appdb instead of hardcoded DefaultConnection
+   - Secondary finding: Stale AspireApp.WebTest.exe processes can block re-runs (environment cleanup needed)
+
+3. **BRAIN Pivot Context:**
+   - Kujan review: Current architecture has zero implementation for Validation, Reasoning, Application layers
+   - QA implications: Three new services needed before BRAIN MVP is credible
+   - Evaluation challenge: No framework exists to assess BRAIN quality (confidence scoring, evidence attribution, insufficient-evidence handling)
+   - Test strategy shifts: From UI-only proof to full pipeline proof (Buster established pattern with FlowEndToEnd)
+   - Verbal strategy: MVP should prove one evidence-backed agentic loop; defer multi-tenancy until product thesis validated
+
+**Key Decisions for Test Work Going Forward:**
+- Contract tests are now regression gates (e.g., AppHost Postgres name change must fail tests immediately)
+- Test fixture pattern: Derive infrastructure config from AppHost, not hardcoded literals
+- Test harness must be resilient to intentional infrastructure changes (e.g., renaming stores) as long as all three surfaces stay aligned
+- BRAIN MVP requires quality gates for evidence attribution, confidence transparency, and insufficient-evidence handling
+
+**Regression Coverage Pattern:**
+- Upload API test → verify iles row in Postgres ✅
+- Python contract audit → verify AppHost DB name matches Python env var ✅
+- Web contract audit → verify AppHost DB name matches Web connection string ✅
+- Pattern prevents: Silent contract drift, hardcoded assumptions about infrastructure naming
+
+**Related Agent Work:**
+- **Jeff:** Web Postgres cutover; AppHost wiring is contract source of truth
+- **Jarvis:** Python Postgres cutover; updated contract audit to use AppHost-derived names
+- **Kujan:** Architecture review identifies need for Quality gates and evaluation framework for BRAIN
+- **Verbal:** Strategy review emphasizes honest insufficient-evidence behavior as MVP requirement
+
+**Orchestration Log:** Created for session context at 20260405T143735Z-buster.md
+
+---

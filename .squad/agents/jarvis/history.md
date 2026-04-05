@@ -9,6 +9,23 @@
 
 <!-- Append new learnings below. Each entry is something lasting about the project. -->
 
+### 2026-04-05 — Shared Postgres Contract Tests Should Follow AppHost Naming
+
+**Completed:**
+- Reviewed the current AppHost/Web/Python Postgres wiring after Eric's connection-string fix and confirmed the Python runtime contract still matches the shared `files` / `document_pages` operational schema.
+- Updated `src/AspireApp.PythonServices/tests/test_p0_contract_audit.py` so the audit derives the upload-store database name from `src/AspireApp.AppHost/AppHost.cs` instead of hardcoding an older `DefaultConnection` literal.
+- Re-ran Python regression coverage and smoke validation to prove the failure was stale test drift, not Python-side schema drift.
+
+**Key pattern:**
+- Cross-service contract tests should verify that AppHost registration, Python `POSTGRES_DATABASE`, and Web `GetConnectionString(...)` stay aligned, but they should not pin the database name when the product contract is "shared named Postgres store" rather than a specific legacy string.
+- Python remains environment-driven: `DatabaseService` reads `POSTGRES_DATABASE` / `POSTGRES_DB` / `PGDATABASE` and projects the canonical upload lifecycle off the shared `files` and `document_pages` tables.
+
+**Key file paths:**
+- Contract audit: `src/AspireApp.PythonServices/tests/test_p0_contract_audit.py`
+- Python store service: `src/AspireApp.PythonServices/app/services/database_service.py`
+- Aspire wiring: `src/AspireApp.AppHost/AppHost.cs`
+- Web connection string usage: `src/AspireApp.Web/Program.cs`
+
 ### 2026-04-05 — Python Operational Store Cutover to Postgres
 
 **Completed:**
@@ -426,3 +443,55 @@
 - Test simulates scenario where self-healing is disabled (e.g., insufficient permissions, corrupted database)
 - Error diagnostics are comprehensive: path, source, schema details, specific SQLite error
 
+
+---
+
+### 2026-04-05 — Postgres Cutover Coordination & BRAIN Pivot Context
+
+**Status:** Postgres cutover complete. Joined BRAIN pivot decision consolidation session.
+
+**What Happened:**
+1. **Postgres Upload Store Cutover (completed in parallel with Jeff):**
+   - Python now uses psycopg2.pool.ThreadedConnectionPool instead of sqlite3
+   - Reads POSTGRES_HOST, POSTGRES_PORT, POSTGRES_DB, POSTGRES_USER, POSTGRES_PASSWORD from AppHost env vars
+   - Removed multi-candidate path resolution, fresh-read workarounds, SQLite pragma logic (~150 lines eliminated)
+   - Updated contract audit to derive database name from AppHost instead of hardcoding legacy literals
+   - _ensure_database_schema() updated to use Postgres DDL (SERIAL, NOW(), JSONB for page_metadata)
+   - All 30 Python tests pass
+   
+2. **Contract Test Alignment:**
+   - 	est_p0_contract_audit.py was failing because it hardcoded DefaultConnection instead of dynamic AppHost name
+   - Established new pattern: contract tests derive shared database name from AppHost source
+   - Rationale: durable contract is "all three surfaces use same store," not a specific literal name
+   - Prevents false test failures when store is renamed for infrastructure fixes
+
+3. **BRAIN Pivot Context:**
+   - Kujan review: Python monolith needs decomposition into Ingestion/Knowledge/Validation services
+   - Python decomposition strategy: Internal packages first (pp/brain/ingestion/, etc.), extract to separate services when contracts stabilize
+   - Validation Service: New service needed; LLM-based claim extraction + confidence scoring
+   - Knowledge Service: Extract Neo4j/RAG logic from current monolith
+   - Vector store: Need to add (Qdrant recommended) behind IKnowledgeRetriever abstraction
+   - Verbal strategy: MVP should focus on single evidence-backed agentic slice before scaling
+
+**Key Decisions for Python Work Going Forward:**
+- Postgres is now canonical for operational upload/processing state (no more SQLite path resolution)
+- iles + document_pages schema unchanged; contract remains stable with both Web and Python
+- Next phase: Core BRAIN contracts (CanonicalDocument, KnowledgeResult, ReasonResponse) must be defined before service decomposition
+- LightRAG should be deprecated or moved behind abstraction (Kujan found it architecturally opposed to BRAIN)
+- Validation Layer is now critical path (zero implementation today; required for BRAIN differentiation)
+
+**Contract Alignment:**
+- Postgres ppdb is the shared upload store name
+- Python receives POSTGRES_DATABASE=appdb from AppHost environment
+- Web reads GetConnectionString("appdb") from Aspire injection
+- Test pattern: Derive DB name from AppHost config, verify all three surfaces use it
+
+**Related Agent Work:**
+- **Jeff:** Web Postgres cutover completed in parallel; AppHost wiring is contract source
+- **Buster:** Diagnosed contract audit regression; updated Python test fixture expectations
+- **Kujan:** Architecture review identifies Python decomposition as next major work item
+- **Verbal:** Strategy review recommends MVP on single domain slice before multi-tenancy
+
+**Orchestration Log:** Created for session context at 20260405T143735Z-jarvis.md
+
+---

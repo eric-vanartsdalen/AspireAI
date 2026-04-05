@@ -319,3 +319,50 @@
 **Live finding for Jarvis:**
 - The revised FlowEndToEnd test currently fails because the uploaded file row exists in the Web API state, but Python returns `404 {"detail":"Document not found"}` for `POST /processing/process-document/{id}`.
 - That points to a Python-side shared database visibility/path issue rather than a Swagger/OpenAPI issue.
+
+---
+
+### 2026-04-05 — Postgres Cutover Coordination & BRAIN Pivot Context
+
+**Status:** Postgres cutover complete. Joined BRAIN pivot decision consolidation session.
+
+**What Happened:**
+1. **Postgres Upload Store Cutover (completed in parallel with Jarvis):**
+   - Web now uses uilder.AddNpgsqlDbContext<UploadDbContext>("appdb") instead of SQLite
+   - AppHost injects via .WithReference(postgres); Web reads GetConnectionString("appdb")
+   - Removed DeleteJournalModeInterceptor, CheckpointDatabaseAsync, connection-string resolution helpers (~100 lines eliminated)
+   - Manual AppHost tuning by Eric ensured connection string wiring works correctly
+   
+2. **Regression Detection & Coordination:**
+   - WebTest failed due to stale fixture expectations (hardcoded DefaultConnection instead of ppdb)
+   - Buster diagnosed this as test/harness regression, not product issue
+   - Coordination: All three surfaces (AppHost, Web, Python) now use canonical ppdb name
+   - Pattern: Future contract tests must derive DB names from AppHost source, not hardcode literals
+
+3. **BRAIN Pivot Context:**
+   - Kujan review: BRAIN requires service decomposition, new Validation/Reasoning layers, clear contracts
+   - Verbal strategy: MVP should focus on one evidence-backed agentic slice (QA intelligence recommended)
+   - Eric decision: Pivot approved. BRAIN is the product; chat is one interface, not architecture
+   - Timeline: New phase sequence proposed (Phase 0: Reframe, Phase 1: Contracts, Phase 2-3: First slice)
+   - ApiService repurposed: No longer vestigial weather stub; becomes BRAIN Interface Service / API Gateway
+
+**Key Decisions for Web/C# Work Going Forward:**
+- Postgres is now canonical for Web operational store (no more SQLite workarounds)
+- Multi-service architecture is stabilizing; Aspire orchestration pattern proven sound
+- Next BRAIN phase requires Interface Service (C# Minimal API) as API gateway + interface layer
+- Consider Semantic Kernel agents or Microsoft.Extensions.AI for BRAIN Reasoning integration (currently only used for chat)
+
+**Contract Alignment:**
+- Postgres ppdb is the shared upload store name across all services
+- docs/CROSS_SERVICE_CONTRACT.md needs update: "Shared Database" section SQLite → PostgreSQL
+- Web's iles table schema unchanged; Python now writes to same Postgres tables
+
+**Related Agent Work:**
+- **Jarvis:** Python Postgres cutover completed in parallel; derives contract from AppHost
+- **Buster:** Updated WebTest fixture expectations; established pattern for future contract tests
+- **Kujan:** Architecture review points to Python service decomposition as next major work
+- **Verbal:** Strategy review recommends deferring multi-tenancy until MVP proof
+
+**Orchestration Log:** Created for session context at 20260405T143735Z-jeff.md
+
+---

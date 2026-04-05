@@ -2,332 +2,429 @@
 
 > Shared decision log. All agents read this before starting work.
 > Scribe merges new decisions from `.squad/decisions/inbox/` after each session.
-> **Note (2025-11-02):** Merged 5 inbox decisions from file-hash schema bug fix (Jarvis, Buster). Archived 2026-03-21 and earlier (9 decisions, ~8 KB) to `decisions-archive.md` to maintain ~20 KB target. Inbox cleared.
+> **Note (2026-04-05):** Merged 8 inbox decisions from Postgres cutover (Jeff, Jarvis, Buster) and BRAIN pivot (Kujan, Verbal, Eric). Archived 9 decisions from 2025-11-02 and 2026-03-27/28 (~7 KB) to `decisions-archive.md` to maintain ~20 KB target. Inbox cleared.
 
 <!-- Decisions are appended below. Each entry starts with ### -->
+## Postgres Cutover — Operational Data Migration — Bob — 2026-07-26
 
-## SQLite Startup Schema Self-Repair — Jarvis — 2025-11-02
-
-**Scope:** Python SQLite startup compatibility for persisted developer databases
-
-### Context
-Python service can start against existing shared SQLite database that predates latest canonical schema. Observed failure: database lacked `file_hash` column, causing startup to fail at index creation with `sqlite3.OperationalError: no such column: file_hash`.
-
-### Decision
-`DatabaseService._ensure_database_schema()` must self-heal persisted SQLite tables by adding missing canonical columns before creating indexes. Smoke coverage in `test_services.py` should surface database initialization failures directly.
-
-### Rationale
-Repo intentionally shares persisted SQLite file across C# and Python workflows, so stale schemas are normal upgrade condition rather than edge case. Self-healing enables local developer databases to upgrade in place during Python startup without manual cleanup.
-
-### Impact
-- Existing developer databases upgrade in place during Python startup ✅
-- Missing-column failures surface as real smoke-test failures instead of console noise ✅
-- Regression coverage protects `file_hash` column upgrade path ✅
-
----
-
-## SQLite Startup QA Gate — Buster — 2025-11-02
-
-**Scope:** Python `DatabaseService()` startup on local Windows + regression coverage
-
-### Decision: Accept startup fix only if QA conditions hold
-
-1. **Local default path selection prefers repo/cwd database over `/app/...` fallbacks** when not in container and `ASPIRE_DB_PATH` unset
-2. **Startup diagnostics preserve real failure** by naming database path, SQLite error type/cause, and schema mismatch
-3. **Regression tests exercise real path-ordering code and actual startup-failure path** — patching candidate list directly insufficient coverage
-4. **`test_services.py` remains usable smoke harness** by calling current APIs and skipping optional dependencies
-
-### Rationale
-Defect was environment-specific: curated tests passed while manual local run picked wrong SQLite file and crashed on startup. Regression test bypassing path-ordering logic would miss exact bug we need to prevent.
-
-### Verification Status
-- ✅ Local default path resolution tests pass
-- ✅ Startup diagnostics include database path and error details
-- ✅ Regression tests cover real path ordering and startup failure scenarios
-- ✅ `test_services.py` smoke harness validates real startup path
-
----
-
-## Processing Endpoint Proof Surface — Jarvis — 2025-11-02
-
-**Scope:** FastAPI processing endpoints used by `FlowEndToEnd` and WebTest polling
-
-### Decision
-Treat `POST /processing/process-document/{id}` and `POST /processing/process-all` as queue APIs that persist `status='processing'` before returning. Treat `GET /processing/status/{id}` as canonical polling endpoint exposing durable progress data (`processed_pages`, `total_pages`) from SQLite with explicit Swagger response models.
-
-### Rationale
-Without upfront status write, caller can successfully trigger processing and immediately poll the same record yet still observe `uploaded` until background task starts — race condition makes end-to-end proof flaky. Persisted page counts give WebTest stronger HTTP-only proof that document pages were written.
-
-### Impact
-- Jeff/Buster can trigger `POST /processing/process-document/{id}` and poll `GET /processing/status/{id}` immediately without queue-time race ✅
-- Swagger/OpenAPI now documents processing trigger and polling shapes explicitly ✅
-- Recommended WebTest assertions: trigger returns 200 + `message`, poll until `status` is `processed`/`error`, assert `total_pages > 0` and `processed_pages > 0` on success ✅
-
----
-
-## FastAPI Proof Gate — Buster — 2025-11-02
-
-**Scope:** Minimum assertions to credibly prove FastAPI processing endpoints work without regression
+**Author:** Bob (Lead / Architect)  
+**Status:** APPROVED — Ready for execution  
+**Scope:** Replace SQLite shared-file pattern with Postgres for `files` and `document_pages` tables
 
 ### Context
-Eric asked: "Can we add FastAPI processing calls to FlowEndToEnd to prove they work?" Audit revealed endpoints exist and handle errors, but test never invokes them—uploading file succeeds but processing pipeline never verified.
 
-### Decision: Add Four Assertions to FlowEndToEnd
+The Web UI (C#/Blazor) and Python processing service currently share a single SQLite file (`data-resources.db`) via Docker bind mounts. This works but has caused recurring operational pain:
 
-**#1: Endpoint Reachability**
-```csharp
-var serviceInfoResponse = await pythonClient.GetAsync("/processing/service-info");
-Assert.Equal(200, serviceInfoResponse.StatusCode);
+- WAL vs DELETE journal-mode conflicts across the Windows host / Linux container boundary
+- Stale-read workarounds in Python (`_should_prefer_fresh_reads`, fresh connection fallbacks)
+- Multi-candidate path resolution logic (8+ code paths to find the right `.db` file)
+- `DeleteJournalModeInterceptor` hack in C# to force journal mode on every connection
+- SQLite `CheckpointDatabaseAsync` calls after every write in FileStorageService
+- Bind-mount file visibility issues between services
+
+**Postgres is already provisioned in AppHost** (`builder.AddPostgres("postgres")` with `appdb` database, pgWeb, bind mount, user/pass parameters). Both services already `WaitFor(postgres)` and receive `POSTGRES_USER`/`POSTGRES_PASSWORD` environment variables. Neither service actually connects to Postgres yet.
+
+### Decision
+
+#### 1. Keep the same `files` + `document_pages` schema in Postgres
+
+The schema is stable and well-documented in `docs/CROSS_SERVICE_CONTRACT.md`. Both sides agree on column names, types, and writer/reader ownership. No structural redesign needed.
+
+**DDL changes (SQLite → Postgres):**
+
+| SQLite | Postgres |
+|--------|----------|
+| `INTEGER PRIMARY KEY AUTOINCREMENT` | `SERIAL PRIMARY KEY` (or `GENERATED ALWAYS AS IDENTITY`) |
+| `DATETIME` | `TIMESTAMPTZ` |
+| `DEFAULT CURRENT_TIMESTAMP` | `DEFAULT NOW()` |
+| `TEXT` (for JSON columns) | `JSONB` for `page_metadata`; `TEXT` for everything else |
+| Placeholder `?` | Placeholder `%s` (psycopg2) |
+
+**Indexes and constraints transfer directly.** The `UNIQUE(file_id, page_number)` and FK cascade behavior are standard SQL.
+
+#### 2. C# Web Changes (Jeff owns)
+
+| What | Action |
+|------|--------|
+| **NuGet packages** | Remove `Microsoft.EntityFrameworkCore.Sqlite`. Add `Npgsql.EntityFrameworkCore.PostgreSQL` and `Aspire.Npgsql.EntityFrameworkCore.PostgreSQL` |
+| **Program.cs** | Replace `AddDbContext<UploadDbContext>(options.UseSqlite(...))` with `builder.AddNpgsqlDbContext<UploadDbContext>("appdb")`. Remove `ResolveSqliteConnectionString`, `GetSqliteDataSource`, `ShouldResolveAgainstContentRoot` helpers. Remove `DeleteJournalModeInterceptor` class entirely |
+| **FileStorageService** | Delete `CheckpointDatabaseAsync()` and all calls to it. Remove `Microsoft.Data.Sqlite` import |
+| **UploadDbContext** | Replace `HasDefaultValueSql("CURRENT_TIMESTAMP")` with `HasDefaultValueSql("NOW()")` in legacy entity config. Primary table config is attribute-driven and works cross-provider |
+| **DocumentEntities.cs** | No changes needed — `[Column]` attributes are provider-agnostic |
+| **AppHost.cs (webfrontend)** | Add `.WithReference(postgres)` to webfrontend. Remove `ConnectionStrings__DefaultConnection` env var (Aspire injects it via `WithReference`) |
+
+#### 3. Python Changes (Jarvis owns)
+
+| What | Action |
+|------|--------|
+| **requirements.txt** | Add `psycopg2-binary` (sync) or `psycopg[binary]` (async-capable). Remove: nothing (sqlite3 is stdlib) |
+| **Dockerfile** | No change needed — `psycopg2-binary` has no native build deps |
+| **DatabaseService class** | Replace `sqlite3` connection pool with `psycopg2.pool.ThreadedConnectionPool`. Remove `ConnectionPool` class. Remove all SQLite pragma logic. Remove multi-candidate path resolution. Remove fresh-connection workaround methods. SQL: `?` → `%s`, `AUTOINCREMENT` → `SERIAL`, add `RETURNING id` to inserts |
+| **Connection config** | Read `POSTGRES_HOST`, `POSTGRES_PORT`, `POSTGRES_DB`, `POSTGRES_USER`, `POSTGRES_PASSWORD` from env. AppHost must pass these (see below) |
+| **Schema init** | `_ensure_database_schema()` keeps `CREATE TABLE IF NOT EXISTS` + `CREATE INDEX IF NOT EXISTS` — standard Postgres DDL. Remove `_ensure_required_columns` ALTER TABLE migration logic (fresh Postgres, no legacy schemas to heal) |
+
+#### 4. AppHost.cs Changes (Jeff owns, but affects both)
+
+**Add to Python service env vars:**
 ```
-Verifies Python service online, routes registered.
-
-**#2: POST Accepts Real Work**
-```csharp
-var processResponse = await pythonClient.PostAsync($"/processing/process-document/{documentId}", null);
-Assert.Equal(200, processResponse.StatusCode);
-var responseBody = await processResponse.Content.ReadAsStringAsync();
-Assert.Contains("Processing started", responseBody);
-```
-Proves POST endpoint callable and accepts document ID.
-
-**#3: Status Reflects Processing Progress**
-```csharp
-var statusResponse = await pythonClient.GetAsync($"/processing/status/{documentId}");
-var status = JsonSerializer.Deserialize<ProcessingStatus>(await statusResponse.Content.ReadAsStringAsync());
-Assert.Equal("processing", status.Status, ignoreCase: true);
-
-// Poll until terminal state (10 iterations, 1s delay each)
-for (int i = 0; i < 10; i++) {
-    await Task.Delay(1000);
-    statusResponse = await pythonClient.GetAsync($"/processing/status/{documentId}");
-    status = JsonSerializer.Deserialize<ProcessingStatus>(await statusResponse.Content.ReadAsStringAsync());
-    if (status.Status == "processed" || status.Status == "error") break;
-}
-
-Assert.True(status.Status == "processed" || status.Status == "error", 
-    $"Processing did not complete; final status: {status.Status}, error: {status.ErrorMessage}");
-if (status.Status == "processed") {
-    Assert.True(status.TotalPages > 0, "Processed document should have extracted pages");
-}
-```
-Proves background task runs, status transitions, database persists.
-
-**#4: Loud Failure on Contract/Work Break**
-Contract breaks (`JsonSerializationException`), missing endpoints (HTTP 404), background failures (status `error` with message), database crashes (HTTP 500) all fail test explicitly.
-
-### Expected Behavior
-
-**Successful Flow:**
-```
-POST /processing/process-document/1 → 200 {"message": "Processing started for document 1"}
-GET /processing/status/1 → 200 {"document_id": 1, "status": "processing", ...}
-[wait] → 200 {"document_id": 1, "status": "processed", "total_pages": 12, ...}
+.WithEnvironment("POSTGRES_HOST", postgres.Resource.PrimaryEndpoint.Property(EndpointProperty.Host))
+.WithEnvironment("POSTGRES_PORT", postgres.Resource.PrimaryEndpoint.Property(EndpointProperty.Port))
+.WithEnvironment("POSTGRES_DB", "appdb")
 ```
 
-**Failure Scenarios:**
-```
-POST invalid ID → 404
-POST already processing → 409
-GET returns 500 → test fails on status code
-Status stuck > 10s → poll timeout, test fails on state check
-```
+Or, simpler: `.WithReference(postgres)` and read the Aspire-injected connection string. For a Dockerfile-based service the explicit env vars are cleaner since Python won't use Aspire service discovery natively.
+
+**Remove from AppHost:**
+- SQLite file setup block (lines 17-31): `sharedDatabaseFileName`, `sharedDatabaseFile`, `sharedDatabaseConnectionString`, `Directory.CreateDirectory`, `File.Create`
+- `ASPIRE_DB_PATH` env var from Python service
+- `/app/docs-database` bind mount from Python service (keep `/app/data` mount for file storage)
+- `ConnectionStrings__DefaultConnection` env var from webfrontend
+
+**Keep:** `sharedDatabasePath` directory creation and bind mount for the postgres data directory (already wired).
+
+#### 5. Cross-Service Contract Update
+
+`docs/CROSS_SERVICE_CONTRACT.md` section "Shared Database (SQLite)" becomes "Shared Database (PostgreSQL)". The table schema, status lifecycle, writer/reader ownership, and processing trigger contract all remain unchanged. Remove the journal-mode paragraph and path-resolution section.
+
+### What This Eliminates
+
+- `ConnectionPool` class (150+ lines of SQLite workarounds)
+- `DeleteJournalModeInterceptor` class
+- `CheckpointDatabaseAsync` method
+- `_should_prefer_delete_journal` / `_should_prefer_fresh_reads` / `_fetch_*_from_fresh_connection` methods
+- Multi-candidate database path resolution (~100 lines)
+- SQLite pragma tuning (WAL, synchronous, mmap, cache_size, busy_timeout)
+- All stale-read workarounds
+- Journal-mode conflicts between host and container
+- SQLite file creation at AppHost startup
+
+**Net reduction:** ~400+ lines of SQLite-specific complexity across both services.
+
+### Rationale
+
+Postgres eliminates reliability issues inherent to bind-mounted SQLite files. Modern relational database handles concurrency, journal modes, and persistence correctly. Existing Aspire infrastructure already supports it.
 
 ### Impact
-- Test moves from UI-only verification to full pipeline proof ✅
-- Any break in POST, status queries, or background work caught ✅
-- Developers see which stage failed: endpoint, status query, processing, database ✅
-- Eric's concern directly addressed ✅
 
-### Implementation Notes
-1. **HttpClient Setup:** Reuse `TestFixture.AppHostMapping.PythonServiceUri`
-2. **Document ID Extraction:** Parse from UI interaction or file table after upload
-3. **Polling:** 10 iterations × 1s = 10s total timeout (sufficient for test PDF)
-4. **Error Context:** Include final `status.ErrorMessage` in assertion failure for debugging
-5. **Async:** Proper `await` for all HTTP calls and delays
+- Operational reliability: No more journal-mode conflicts or stale-read workarounds ✅
+- Architectural clarity: Web and Python have separate, proper database connections via connection pooling ✅
+- Code reduction: ~400+ lines eliminated across both services ✅
+- Test infrastructure can now use proper test databases instead of in-memory SQLite ✅
 
 ---
 
-## FlowEndToEnd Uses API-Backed Upload State — Jeff — 2025-11-02
+## Web upload store Postgres cutover — Jeff — 2026-04-05
 
-**Scope:** End-to-end test upload/processing architecture
+**Owner:** Jeff  
+**Scope:** AspireApp.AppHost, AspireApp.Web, AspireApp.WebTest
+
+### Decision
+
+The Web operational upload store now uses the Aspire-managed PostgreSQL database resource exposed as `DefaultConnection`. AppHost injects that connection via `.WithReference(postgres)`, and the Web app resolves it through the existing `GetConnectionString("appdb")` path.
+
+### Rationale
+
+This keeps the Web-side cutover surgical: the upload API, EF context, and file-storage service keep their existing shape while the backing store switches from SQLite to Postgres. For this phase we intentionally kept Python's legacy configuration in AppHost so the current Python service startup path is not broken while Jarvis finishes the Python-side Postgres adoption.
+
+### Impact
+
+- Upload metadata is now written to Postgres instead of the shared SQLite file ✅
+- SQLite-only Web concerns (path resolution, journal-mode interceptor, WAL checkpointing) are removed ✅
+- WebTest now has a focused regression that uploads through the Web API and verifies the `files` row lands in Postgres ✅
+
+---
+
+## Python Postgres Upload Store Cutover — Jarvis — 2026-04-05
+
+**Scope:** Python FastAPI operational document store (`files` + `document_pages`) shared with the Web upload flow
+
+### Decision
+
+The Python service should treat PostgreSQL as the source of truth for upload lifecycle state and extracted page rows. It should preserve the existing table and column contract used by the Web project instead of introducing Python-specific schema variants.
+
+### Implementation notes
+
+1. Resolve the operational store from connection-string-first configuration (`ASPIRE_DB_CONNECTION_STRING`, `POSTGRES_CONNECTION_STRING`, `DATABASE_URL`) with `POSTGRES_*` environment variables as the fallback contract.
+2. Keep Python writes on the same canonical tables and columns:
+   - `files` for lifecycle + processing metadata
+   - `document_pages` for extracted page content
+3. Keep `document_pages` uniqueness on `(file_id, page_number)` so retries and upserts stay deterministic.
+4. Validate locally with fake pooled Postgres connections in Python tests rather than relying on a live database for every regression run.
+
+### Rationale
+
+The Web UI uploads documents that Python later processes, so both services need one shared operational schema. Holding the line on the existing `files` / `document_pages` contract reduces cross-service churn while allowing the runtime storage engine to move from SQLite to PostgreSQL.
+
+### Impact
+
+- Python no longer depends on SQLite journaling, file paths, or PRAGMA-based startup repair ✅
+- Aspire now passes explicit Postgres connection settings to the Python service ✅
+- Follow-up work on the Web side can switch providers without changing the Python-side table contract again ✅
+
+---
+
+## Shared Postgres Contract Audit Uses AppHost-Derived Store Name — Jarvis — 2026-04-05
+
+**Scope:** Python regression coverage for the shared Postgres upload store
 
 ### Context
-`UploadData.razor.cs` uploads via `IHttpClientFactory` from Blazor Server code, so browser never issues `/api/FileUpload` POST directly. Playwright cannot capture browser network response for upload.
+
+Eric updated `src/AspireApp.AppHost/AppHost.cs` so Aspire now loads with the correct Postgres connection-string wiring. Python manual verification still worked, but `src/AspireApp.PythonServices/tests/test_p0_contract_audit.py` was failing because it hardcoded an older database name literal (`DefaultConnection`) instead of validating the active shared-store contract.
 
 ### Decision
-Resolve uploaded document from API-backed Web state after UI upload instead of waiting on Playwright response. Call Python processing endpoint directly with resolved document ID and poll Python status endpoint for completion.
+
+Cross-service Postgres contract audits should derive the upload-store database name from AppHost source and then verify that:
+
+1. AppHost references that store from dependent services,
+2. Python receives the same name through `POSTGRES_DATABASE`, and
+3. Web resolves the same name through `GetConnectionString(...)`.
 
 ### Rationale
-- Matches actual runtime architecture (browser upload → Blazor → HTTP → API)
-- Gives deterministic document-id capture for follow-up processing calls
-- Surfaces real cross-service failures (e.g., Python returning 404 for uploaded ID) instead of hiding behind UI-only pass
+
+The durable contract is "all three surfaces point at the same named Postgres upload store," not a specific historical connection-string name. Deriving the name from AppHost keeps the test sensitive to real drift while avoiding false failures when the store is legitimately renamed during infrastructure fixes.
 
 ### Impact
-- `BasicAspireAppHostTests.FlowEndToEnd` can now prove whether FastAPI processing works from harness ✅
-- Live validation exposed Python integration bug: Web API sees uploaded row but `POST /processing/process-document/{id}` returns 404 ✅
-- Test now exercises full upload → trigger → process → retrieve pipeline ✅
+
+- Python contract tests now flag real contract mismatches instead of stale literals ✅
+- AppHost naming fixes remain verifiable without touching Python runtime code ✅
+- The shared `files` / `document_pages` schema audit remains the primary Python-side proof surface ✅
 
 ---
 
-## Python Service Startup Path Resolution — Jarvis — 2026-03-27
+## Buster Regression Verdict — 2026-04-05
 
-**Scope:** Python SQLite database path resolution and startup diagnostics
-
-### Findings
-
-#### Database Path Resolution Strategy
-Python service uses ordered candidate list:
-1. Explicit `db_path` parameter (if provided)
-2. `ASPIRE_DB_PATH` environment variable (if set)
-3. Platform-specific defaults:
-   - **Container:** `/app/docs-database/` → `/app/database/` → repo/database → cwd/database
-   - **Local (Windows):** repo/database → cwd/database → `/app/docs-database/` → `/app/database/`
-
-Service tries each candidate in order until initialization succeeds. Path source is logged and stored in `db_path_source` attribute.
-
-#### Startup Error Diagnostics
-When database initialization fails, `_format_initialization_failure()` generates comprehensive diagnostic message:
-- Database path attempted
-- Path source (e.g., "ASPIRE_DB_PATH", "repository", "cwd")
-- Exception type and message
-- Schema diagnostics via `_collect_schema_diagnostics()`: existing tables, `files` column names, missing canonical columns, "incompatible legacy schema" label
-
-#### "Legacy Schema" Concept
-- No separate "legacy path" detection—all paths treated equally
-- "Legacy" refers to schema shape, not file location
-- `_collect_schema_diagnostics()` reports "incompatible legacy schema" when required columns missing from `files` table
-- Self-healing via `_ensure_required_columns()` adds missing columns at startup
-
-### Decision
-**Affirm test scenario:** `test_legacy_schema_startup_failure_reports_path_and_cause` validates edge case diagnostics when self-healing is unavailable. Test should remain active to ensure startup failures provide actionable debugging information (path, source, schema details, SQLite error).
-
-### Rationale
-- Production code self-heals missing columns in normal operation
-- Test validates fallback diagnostic path when self-healing fails
-- Comprehensive error reporting enables faster debugging of schema incompatibilities
-- Database path and schema details are essential for multi-environment troubleshooting
-
-### Impact
-- Test remains in test suite as regression protection for startup diagnostics ✅
-- No code changes required to DatabaseService ✅
-- Buster can assess test coverage confidence knowing current behavior ✅
-
----
-
-## Legacy Schema Test Update — Buster — 2026-03-27
-
-**Scope:** Python `DatabaseStartupPathAuditTests.test_legacy_schema_startup_failure_reports_path_and_cause`
+**Scope:** Postgres upload-store regression checks spanning AppHost, Web, WebTest, and Python contract audit
 
 ### Context
-Test was failing after multi-candidate database initialization refactor. Service works correctly in manual testing, but test needed assessment to determine if it should be updated or removed.
 
-### Root Cause
-Multi-candidate database initialization refactor changed exception chaining depth:
-
-**Before refactor:**
-```
-_ensure_database_schema raises RuntimeError from sqlite3.OperationalError
-  → Exception chain: RuntimeError → OperationalError
-```
-
-**After refactor:**
-```
-_initialize_database catches exception from _ensure_database_schema, then raises RuntimeError
-  → Exception chain: RuntimeError → RuntimeError → OperationalError
-```
-
-The behavior being tested (legacy schema detection and detailed error reporting) **still exists and works correctly**. Only the depth of exception chaining changed.
+Eric updated the AppHost/Web connection behavior so the app would start and manual upload + Python document API checks worked again. The automated gate then failed, so QA needed to determine whether the break was in product code, the harness, or stale assumptions left behind by the Postgres cutover.
 
 ### Decision
-**UPDATE THE TEST** to traverse the exception chain rather than checking only the immediate cause.
 
-**Changed from:**
-```python
-self.assertIsInstance(context.exception.__cause__, sqlite3.OperationalError)
-```
+Treat this as a **test/harness regression**, not a product rollback:
 
-**Changed to:**
-```python
-# Walk the exception chain to find OperationalError at root
-root_cause = context.exception.__cause__
-while root_cause and not isinstance(root_cause, sqlite3.OperationalError):
-    root_cause = root_cause.__cause__
-self.assertIsInstance(root_cause, sqlite3.OperationalError,
-                      "Expected sqlite3.OperationalError in exception chain")
-```
+1. The live runtime contract uses the Aspire-managed Postgres database name `appdb`.
+2. Regression tests must assert **alignment** across AppHost, Web, and Python, not a hardcoded legacy name like `DefaultConnection`.
+3. WebTest fixture validation must read `ConnectionStrings__appdb` and require `POSTGRES_DATABASE=appdb`.
+4. A locked `AspireApp.WebTest.exe` process is an execution-environment failure mode, not application evidence; clear the stale process before rerunning WebTest.
 
 ### Rationale
-- The scenario being tested (legacy schema startup failure with detailed diagnostics) remains valid
-- The error reporting behavior works correctly (verified in test output)
-- The multi-candidate retry pattern is a deliberate architectural improvement
-- Walking the exception chain is more robust than assuming single-level chaining
-- Alternative (removing test) would lose valuable regression coverage for schema diagnostics
+
+Manual behavior and source inspection both pointed to a consistent runtime: AppHost registers `appdb`, Web reads `GetConnectionString("appdb")`, and Python receives `POSTGRES_DATABASE=appdb`. The red tests were rejecting that valid state because they encoded the old database name directly.
 
 ### Impact
-- ✅ Test now passes and correctly verifies legacy schema detection
-- ✅ Test validates all expected error message content (path, column names, diagnostics)
-- ✅ Test validates that root cause is still OperationalError
-- ✅ All 10 tests in test_p0_contract_audit.py pass
-- ✅ All 30 Python tests pass
-- ✅ More resilient to future exception handling refactors
 
-### Verification
-```powershell
-cd src\AspireApp.PythonServices
-python -m pytest tests/test_p0_contract_audit.py -v
-# Result: 10 passed
-
-python -m pytest tests/ -v
-# Result: 30 passed
-```
+- Python contract audit reflects the current Postgres contract again ✅
+- WebTest fixture no longer blocks a correct AppHost/Web/Python startup because of a stale connection-string key ✅
+- Future renames stay testable if the contract test continues deriving the DB name from AppHost rather than hardcoding it ✅
 
 ---
 
-## Optional Docling Smoke Coverage — Jarvis — 2026-03-28
+## BRAIN Pivot — Kujan Architecture Review — 2026-07-15
 
-**Scope:** Python smoke tests for document processing initialization
+**Agent:** Kujan (Adversarial Architect Reviewer)  
+**Scope:** BRAIN pivot viability — all six roadmap/planning documents vs. actual implementation  
+**Date:** 2026-07-15
 
-### Context
-`src/AspireApp.PythonServices\requirements.txt` intentionally omits the heavyweight `docling` package, while `src/AspireApp.PythonServices\Dockerfile` installs it only for the full image. The old smoke test imported `app.services.docling_service` directly, so lightweight/dev environments reported the absence of `docling` instead of validating the supported fallback path.
+### Executive Summary
+
+The AspireAI codebase is a well-orchestrated document processing pipeline masquerading as an agentic AI platform in its planning documents. The gap between the BRAIN specification (6 independent service layers with structured contracts, multi-agent reasoning, confidence scoring, and domain extensibility) and the actual implementation (a Blazor chat UI + a Python monolith that writes document pages to Neo4j) is **structural, not incremental**. The current architecture can serve as infrastructure scaffolding (Aspire orchestration, Dockerized services, Neo4j/Ollama containers), but the service boundaries, data model, and inter-service communication patterns all need to be redesigned. The most critical finding: three of the six BRAIN layers (Validation, Reasoning, Application) have zero implementation and zero infrastructure to support them. The LightRAG integration, which consumed significant effort, is architecturally opposed to BRAIN's requirement for transparent, controllable knowledge construction.
+
+### Key Findings
+
+**BRAIN layers with zero implementation:**
+1. **Validation Layer (Truth Engine)** — No claim extraction, confidence scoring, evidence references, or contradiction detection
+2. **Reasoning Layer (Agent System)** — No agent infrastructure; Semantic Kernel only used for basic chat
+3. **Application Layer** — No domain abstraction; hardcoded to one workflow (upload → parse → store)
+
+**What can be reused:**
+- Aspire AppHost orchestration (solid, extensible)
+- Dockerized Neo4j + Ollama container infrastructure
+- Docling parsing (core for Ingestion Layer)
+- SQLite operational schema (for pipeline state, not knowledge store)
+- Health check patterns
+
+**What is wasted or misaligned:**
+- LightRAG integration is architecturally opposed to BRAIN (opaque, uncontrollable knowledge construction)
+- Neo4j Document→Page graph doesn't serve BRAIN's entity/claim/concept model
+- Phase 4-5 (Flat RAG, LightRAG/GraphRAG) are superseded by BRAIN layers
+
+### Critical Gaps
+
+| BRAIN Layer | Current Implementation | Coverage |
+|-------------|----------------------|----------|
+| **Ingestion** | Docling parsing + markdown export | ~40% — file-based ingestion works, but no connector architecture |
+| **Knowledge** | Neo4j Document→Page graph + LightRAG | ~25% — graph store exists but schema is wrong for BRAIN |
+| **Validation** | None | **0%** |
+| **Reasoning** | None | **0%** |
+| **Application** | None | **0%** |
+| **Interface** | Blazor chat + FastAPI endpoints | ~30% — chat UI exists but no API gateway, no response contracts |
+
+### Recommendations
+
+**Do Now (Before Writing New Code):**
+1. Define BRAIN core contracts — Create `CanonicalDocument`, `Claim`, `ValidatedDocument`, `KnowledgeResult`, `ReasoningStep`
+2. Repurpose ApiService as Interface Service — Delete weather stub, wire as BRAIN API gateway
+3. Choose and add a vector store — Add Qdrant or similar to AppHost
+
+**Do Next (First Vertical Slice):**
+4. Extract Knowledge Service — Move Neo4j/RAG logic into dedicated service
+5. Build minimal Validation Service — LLM-based claim extraction + confidence scoring
+6. Wire Semantic Kernel for agent orchestration
+
+**Stop:**
+7. LightRAG integration work — Not aligned with BRAIN's need for transparent knowledge construction
+8. Phase 4/5/6 as currently scoped — These are superseded by BRAIN layer architecture
+
+### Critical Questions for Eric
+
+1. Agent framework choice (Semantic Kernel vs. LangGraph)?
+2. LightRAG disposition (keeper, fallback, or deprecated)?
+3. Vector store selection (Qdrant, Chroma, Neo4j indexes, pgvector)?
+4. Multi-tenant timeline (Phase 1 or later)?
+5. Python service decomposition (split now or keep monolith)?
+6. Confidence scoring strategy (LLM-based, heuristic, or cross-reference)?
+7. Which domain for first vertical slice (QA intelligence recommended)?
 
 ### Decision
-Smoke tests should validate `app.services.service_factory` and the selected `DoclingService` implementation, not direct `docling` package availability. The test should pass when the factory selects either the full processor or `docling_service_fallback`, and only fail when neither supported processing path can initialize.
 
-### Rationale
-- Matches the runtime contract used by `processing.py` and FastAPI health reporting
-- Preserves lightweight developer environments without forcing the heavy `docling` install
-- Still surfaces real regressions by asserting which implementation the factory selected
+**BRAIN pivot is viable but requires architectural redesign, not incremental feature addition.** The Aspire orchestration layer, container infrastructure, and Docling parsing are reusable foundations. The Python monolith needs decomposition, the Neo4j schema needs extension (not replacement), a vector store must be added, and three entirely new service layers (Validation, Reasoning, Application) must be built from scratch. LightRAG should be deprecated as a primary integration path because it's architecturally opposed to BRAIN's requirement for transparent knowledge construction with validation interception.
 
 ### Impact
-- `test_services.py` stays meaningful in both full and lightweight environments ✅
-- Future changes to optional dependency handling have a clear test target ✅
-- Avoids unnecessary dependency bloat in `requirements.txt` ✅
+
+- Roadmap (`Plan.md`) needs rewrite — current Phases 4-8 are superseded ✅
+- LightRAG integration effort is sunk cost — keep for reference, don't extend ✅
+- ApiService gets repurposed — no longer vestigial ✅
+- New contracts directory needed before implementation begins ✅
+- Three new services needed — Validation, Reasoning, Application ✅
 
 ---
 
-## Docling Smoke Gate Alignment — Buster — 2026-03-28
+## BRAIN Pivot — Key Decisions — Eric — 2026-07-15
 
-**Scope:** Python service smoke validation for Docling-capable and fallback-capable environments
+**Status:** APPROVED
 
-### Context
-The failing smoke signal was `Optional dependency 'docling' is not installed: No module named 'docling'` from `src/AspireApp.PythonServices/test_services.py`. Audit showed this was reproducible in the project `.venv`, because `setup_dev_env.py` installs `requirements.txt`, and `requirements.txt` intentionally omits the top-level `docling` package while lightweight/fallback processing remains a supported development mode.
+### Decisions
 
-### Decision
-Treat `app.services.service_factory` as the smoke-test contract for document processing. The smoke gate should pass when the current environment can initialize either:
+1. **Product Direction:** Pivot from chat-oriented RAG application to BRAIN — a domain-agnostic agentic knowledge assistant with proactive Jarvis-like behavior
+2. **First Domain Slice:** Domain-agnostic knowledge coalescing engine with source-aware confidence scoring and proactive assistant personality (not a specific domain module)
+3. **LightRAG Disposition:** Keep behind `IKnowledgeRetriever` abstraction. BRAIN contracts are primary. LightRAG is a pluggable retrieval backend, not the system of record
+4. **Agent Framework Location:** Python for Reasoning/Validation/Knowledge layers. C# with Microsoft.Extensions.AI for Interface/Gateway/Aspire
+5. **Multi-Tenancy Timing:** Design for tenancy from day 1 (tenant_id in all contracts). Implement isolation enforcement in Phase 6
+6. **Vector Store:** Neo4j vector indexes (Neo4j 5.x). Swap to Qdrant later if needed, behind `IKnowledgeRetriever` abstraction
+7. **Python Decomposition:** Internal packages first (`app/brain/ingestion/`, `app/brain/knowledge/`, etc.). Extract to separate Aspire services when contracts stabilize
+8. **Breaking Changes Strategy:** Feature branch (`brain-pivot`). Merge to main when first agentic slice works end-to-end
+9. **Proactive Behavior:** Core to MVP. Jarvis-like personality (suggesting, inferring, offering context) ships in Phase 3, not deferred
 
-1. the full Docling service, or
-2. the fallback processor selected by the factory.
+### Superseded Plans
 
-Direct import of `app.services.docling_service` is not the default smoke gate because that incorrectly fails supported lightweight setups.
+- Plan.md Phases 4-8 (Flat Vector RAG, LightRAG/GraphRAG, Plugin Ecosystem, Testing/Deployment, Advanced Features)
+- ApiService as vestigial weather stub (now: BRAIN API Gateway)
+- Direct Blazor → Ollama chat path (now: Blazor → Gateway → Reasoning → Knowledge)
 
-### Rationale
-- The product contract already supports fallback processing through `service_factory.py` and `docling_service_fallback.py`
-- `BUILD_CONFIGURATION.md` and `README.md` document lightweight development as valid, so the smoke test must reflect that supported runtime
-- A smoke test that only passes with the optional full package installed produces false negatives in the standard local dev environment
+---
+
+## BRAIN Pivot — Strategic Product Review — Verbal — 2026-07-15
+
+**Scope:** Vision-roadmap alignment, scope risk assessment, MVP definition, prioritization
+
+### Executive Summary
+
+The current roadmap is still optimizing a document-chat product, not building BRAIN. `Plan.md` defines the product as a "configurable, modular Blazor-based chat assistant," while the BRAIN specs define a domain-agnostic cognition layer with explicit ingestion, knowledge, validation, reasoning, application, and interface layers. Those are not the same product, and the roadmap never resolves that conflict.
+
+### Vision-Roadmap Misalignment
+
+1. **Product definition inconsistency:** Plan.md frames as Blazor chat assistant; Architecture.md frames as retrieval-augmented chat; BRAIN specs frame as reusable cognition layer. These are different products.
+2. **Phases don't lead to BRAIN:** Current sequence (Phase 3: ingestion → Phase 4: flat RAG → Phase 5: LightRAG → Phase 6: plugins) optimizes RAG application, not BRAIN layers. No dedicated phase for Validation, Reasoning, Application, or unified interface/gateway.
+3. **Task breakdown confirms pre-BRAIN state:** No automatic upload → processing trigger, no chat retrieval + citations wired, LightRAG stability remains shaky.
+4. **Architecture.md mixes incompatible ambition:** Tries to hold both pragmatic current system (upload → Docling → Neo4j → chat) and ambitious target system (tenants, claims, evidence, concepts, contradiction detection). No bridge between schemas.
+
+### Scope Risk Assessment
+
+| Risk | Severity | Mitigation |
+|---|---|---|
+| Product identity drift (chat app vs cognition layer) | Critical | Rewrite roadmap around BRAIN contracts and one domain slice |
+| No first domain selected | Critical | Pick one slice now; QA intelligence is strongest |
+| Platform-first overbuild | Critical | Build one orchestrated flow before additional layers |
+| Multi-tenancy too early | High | Defer until after MVP proof |
+| Direct UI → Ollama architecture persists | High | Insert BRAIN gateway/reason endpoint early |
+
+### Recommended MVP: "Minimum Viable Agentic"
+
+**Definition:** BRAIN is minimally viable when it can take a user goal, retrieve relevant evidence from ingested sources, produce a structured recommendation or plan, and explain both confidence and evidence.
+
+**Concrete interaction flow:**
+1. User uploads document or adds website URL
+2. BRAIN normalizes both into canonical ingestion contract
+3. User asks goal-oriented question
+4. BRAIN runs single orchestrated flow: retrieve evidence → synthesize answer → run critic/self-check → return structured output
+5. UI shows recommendation, evidence, confidence, unresolved questions
+
+**Acceptance criteria:**
+1. Two source types, one contract (file upload + URL ingestion)
+2. One reasoning endpoint (`/reason`)
+3. Evidence is mandatory on all responses
+4. Confidence is explicit using transparent heuristic
+5. One domain workflow works end to end
+6. System honestly says "insufficient evidence" instead of improvising
+7. One automated proof path exists end-to-end
+
+### Recommended New Phase Sequence
+
+**Phase 0 — Reframe the Product**
+- Declare BRAIN as product core
+- Declare chat as one interface, not the architecture
+- Choose first domain slice
+- Define non-goals for MVP
+
+**Phase 1 — Define Core Contracts**
+- CanonicalDocument, KnowledgeResult, ReasonResponse
+- Evidence and confidence schema
+- Correlation/trace contract
+
+**Phase 2 — Unify Ingestion + Knowledge Baseline**
+- File + URL through one ingestion contract
+- Explicit processing trigger
+- Stable retrieval backend behind one interface
+- Status visibility and failure visibility
+
+**Phase 3 — Ship Minimum Viable Agentic Slice**
+- Implement `/reason`
+- Support `answer` + `plan` modes
+- Retrieve → synthesize → critic/self-check
+- Return evidence, confidence, unresolved questions
+- Single-tenant only
+
+**Phase 4 — Evaluate and Harden**
+- Automated end-to-end proof
+- Latency and quality baselines
+- Honest insufficient-evidence behavior
+- Operational observability
+
+**Phase 5 — Prove Reusability**
+- Add second connector OR second domain module
+- Keep same contracts
+- Decide if graph-specific enrichment materially improves outcomes
+
+**Phase 6 — Scale Deliberately**
+- Multi-tenancy, auth/access control
+- Deployment hardening, plugin ecosystem
+- Advanced graph reasoning, long-term memory
+
+### What Should Be Cut From Near-Term Plan
+
+- **Cut** the old product framing: "Blazor-based chat assistant"
+- **Cut** separate product phases for Flat RAG then GraphRAG
+- **Cut** plugin ecosystem as a near-term phase
+- **Cut** multi-tenant RAG from the pivot-critical path
+- **Cut** any assumption that chat polish proves BRAIN
 
 ### Impact
-- Default local `.venv` smoke validation now passes without requiring a heavyweight `docling` install ✅
-- Full Docling environments still pass and are detected as `service_type = full` ✅
-- Regression coverage now proves the factory selects the implementation that matches the installed dependency set ✅
+
+- Roadmap clarity: BRAIN is the product, not RAG optimization ✅
+- Scope discipline: MVP focuses on one evidence-backed agentic loop ✅
+- First domain selection unlocks concrete success criteria ✅
+- Multi-tenancy deferred until product thesis is proven ✅
+- Vertical slice approach prevents platform-first overbuild ✅
 
 ---
