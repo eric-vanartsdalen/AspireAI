@@ -42,3 +42,11 @@
   - User action required: Follow README.md Azure app registration steps and add credentials via `dotnet user-secrets` to enable real Microsoft auth.
   - Outcome: **No code changes authorized.** System is working as designed. User must configure Microsoft credentials to exit mock-only mode.
   - Decision log: `.squad/decisions/inbox/warden-auth-mode-auto-insecure-requires-client-secrets.md`
+- **2025-07-24 — AUTHENTICATION_SETUP.md security review.**
+  - Fixed fabricated port numbers (`7123`/`5123`) that don't match any configuration. Aspire assigns webfrontend ports dynamically; guide now instructs users to check the Aspire dashboard and register actual ports in Azure.
+  - Removed deprecated Google+ API enablement step (shut down 2019). Replaced with correct OAuth consent screen configuration flow.
+  - Removed unnecessary "Authorized JavaScript origins" from Google setup — not needed for server-side OIDC.
+  - Corrected post-sign-in redirect destination (goes to `/`, not "dashboard").
+  - Fixed smoke test checklist: mock providers only appear in `auto`/`combined` mode, not when Service is `microsoft`.
+  - Added Google testing-mode caveat: only test users can sign in while app is in Google's "Testing" status.
+  - Key files: `docs/AUTHENTICATION_SETUP.md`, `MicrosoftEntraAuthenticationOptions.cs`, `AuthenticationServiceCollectionExtensions.cs`, `Program.cs`.
