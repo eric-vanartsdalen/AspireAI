@@ -15,17 +15,17 @@
 - Stabilization plan: 4 sprints, ~8 days to full unblock of Gates B1/B2
 - Team coordination: Jarvis (Python contracts), Jeff (Web/orchestration), Buster (tests), Bob (architecture decisions)
 
+**Key Architectural Decisions (Feb-Apr 2026):**
+- **SQLite → Postgres migration:** Eliminate ~400 lines of bind-mount boilerplate (path resolution, journal-mode hacks, WAL checkpointing). Aspire already manages Postgres. Both services get clean database connections via pooling.
+- **Shared schema stability:** Keep `files` + `document_pages` unchanged during provider migration. Column names, types, FKs all match across Web (EF Core) and Python (psycopg2).
+- **BRAIN pivot direction:** Postgres is foundational infrastructure. BRAIN requires service decomposition (Ingestion/Knowledge/Validation), new Validation Layer (zero today), explicit reasoning orchestration (Semantic Kernel agents).
+- **Contract-driven testing:** Regression tests derive infrastructure names from AppHost (single source of truth). Prevents false failures on intentional naming changes.
+
 **Key File Paths:**
 - Orchestration: `src/AspireApp.AppHost/AppHost.cs`
-- C# entities: `src/AspireApp.Web/Data/DocumentEntities.cs`
-- C# upload: `src/AspireApp.Web/Controllers/FileUploadController.cs`
-- Python services: `src/AspireApp.PythonServices/app/services/database_service.py`, `/routers/`
-
-**Squad Orchestration Complete (2026-02-22):**
-- All four agents completed independent reviews; findings merged into shared decisions.md
-- Execution plan: Sprint 1 (Gate B1/B2 unblock), Sprint 1.5 (orchestration), Sprint 2 (tests), Sprint 3 (observability)
-- Tracked in decisions.md
-- Consolidated copilot-instructions.md with team personas + operational context (167 lines)
+- C# upload store: `src/AspireApp.Web/Program.cs` (now Npgsql), `src/AspireApp.Web/Shared/UploadDbContext.cs`
+- Python store: `src/AspireApp.PythonServices/app/services/database_service.py` (now psycopg2)
+- Contract audit: `src/AspireApp.PythonServices/tests/test_p0_contract_audit.py`
 
 ---
 
@@ -33,7 +33,7 @@
 
 <!-- Append new learnings below. Each entry is something lasting about the project. -->
 
-### 2026-06-24 — Aspire Dashboard Test Redirect Fix (Revision of Jeff's Rejected Artifact)
+### 2026-04-05 — BRAIN Pivot Architectural Assessment Complete
 
 **Scope:** Bob took revision ownership after Buster rejected Jeff's `AspireDashboardLoads` test.
 

@@ -9,6 +9,29 @@
 
 <!-- Append new learnings below. Each entry is something lasting about the project. -->
 
+## Core Context
+
+**Key architectural learnings from active development (Feb-Apr 2026):**
+
+- **Aspire orchestration pattern:** Name database resources cleanly (`DefaultConnection`), inject with `.WithReference()`, let projects read via `GetConnectionString()`. Works well at scale.
+- **Provider migration pattern:** SQLite → Postgres requires: NuGet swap (Sqlite → Npgsql), `Program.cs` provider change (`UseSqlite` → `AddNpgsqlDbContext`), remove provider-specific helpers (journal-mode interceptor, WAL checkpointing).
+- **Cross-service contract testing:** Derive shared infrastructure names (DB names, endpoint URLs) from AppHost config, don't hardcode literals. Prevents test regressions on intentional infrastructure changes.
+- **Blazor + FastAPI integration:** File upload executed by Blazor Server (via `IHttpClientFactory`), not browser JavaScript. Playwright can't intercept browser network; resolve document ID from API state instead.
+- **Postgres cutover wins:** Eliminated ~400 lines of SQLite-specific boilerplate (path resolution, journal-mode hacks, fresh-connection workarounds, pragma tuning).
+
+**Current state (as of 2026-04-05):**
+- Web operational store: Postgres (appdb) via EF Core Npgsql
+- Python operational store: Postgres (appdb) via psycopg2  
+- Shared schema: `files` + `document_pages` (stable, cross-service compatible)
+- Test pattern: Contract tests derive DB name from AppHost
+
+**Next phase (BRAIN pivot):**
+- ApiService repurposing as Interface Service / API Gateway
+- Python service decomposition (Ingestion/Knowledge/Validation internal packages)
+- Semantic Kernel for agent orchestration (currently chat-only)
+
+---
+
 ### 2026-04-05 — Web Upload Store Postgres Cutover
 
 **Status:** Complete (Jeff)

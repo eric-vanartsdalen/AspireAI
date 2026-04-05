@@ -9,6 +9,29 @@
 
 <!-- Append new learnings below. Each entry is something lasting about the project. -->
 
+## Core Context
+
+**Key QA learnings from active development (Feb-Apr 2026):**
+
+- **Contract test pattern:** Don't hardcode infrastructure names (DB names, connection strings). Derive them from AppHost config and assert all three surfaces (AppHost, Web, Python) use the same value. Prevents false test failures on legitimate infrastructure changes.
+- **Regression diagnosis methodology:** When tests fail after infrastructure changes, audit the actual runtime (build + run, check config resolution). Distinguish test/harness regressions from product regressions. May require clearing stale process locks (`AspireApp.WebTest.exe`) before re-running.
+- **Smoke test contract:** Test against the abstraction, not implementation details. E.g., `service_factory` selected implementation (Docling full vs. fallback) rather than direct package import. Allows multiple supported environments (with/without optional packages).
+- **End-to-end test architecture:** Upload flows through UI (Blazor Server), resolved via API state, then python processing triggered directly. Playwright can't intercept browser network, so resolve document ID from Web API instead of waiting on browser response.
+- **Quality gate layers:** Unit (logic), Integration (API + DB), E2E (UI workflow). Each layer catches different failure classes. AppHost health checks provide fast orchestration proof.
+
+**Current state (as of 2026-04-05):**
+- Contract audit passes: AppHost `appdb` → Python `POSTGRES_DATABASE=appdb` → Web `GetConnectionString("appdb")` all aligned
+- Smoke test passes: 30 Python tests (contract audit, startup path, processing, docling factory)
+- WebTest regression resolved: Fixture now reads `appdb` from Aspire injection instead of hardcoded `DefaultConnection`
+- Regression pattern established: Derive, don't hardcode. Assert alignment, not literal values.
+
+**Next phase (BRAIN pivot):**
+- Quality gates for evidence-backed agentic system: evidence attribution, confidence transparency, insufficient-evidence handling
+- Evaluation framework: Assess BRAIN quality metrics (not just "works")
+- End-to-end proof automation: Full pipeline from ingest → retrieve → reason → response
+
+---
+
 ### 2026-04-05 — Postgres Cutover Regression Verdict
 
 - **QA verdict:** the immediate failures were stale test expectations, not a fresh application regression. `src/AspireApp.AppHost/AppHost.cs`, `src/AspireApp.Web/Program.cs`, and Python runtime all align on the live Postgres upload store name `appdb`.

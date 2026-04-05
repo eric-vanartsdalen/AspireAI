@@ -9,6 +9,31 @@
 
 <!-- Append new learnings below. Each entry is something lasting about the project. -->
 
+## Core Context
+
+**Key architectural learnings from active development (Feb-Apr 2026):**
+
+- **Postgres cutover pattern (Python side):** Replace `sqlite3` with `psycopg2.pool.ThreadedConnectionPool`. Remove multi-candidate path resolution, fresh-connection workarounds, SQLite pragma logic. Environment-driven config via `POSTGRES_*` vars from AppHost.
+- **Contract audit pattern:** Tests should derive shared database name from AppHost config, not hardcode literals. Prevents false test failures when infrastructure names change for legitimate reasons.
+- **Shared schema stability:** `files` + `document_pages` tables are stable cross-service contract between Web and Python. Keep unchanged during provider migration (SQLite → Postgres). Column names, types, uniqueness constraints all match.
+- **Database schema initialization:** Python uses `CREATE TABLE IF NOT EXISTS` + `CREATE INDEX IF NOT EXISTS` for idempotency. First service to start (Web or Python) creates tables; both sides converge. No legacy schema migrations needed on fresh Postgres.
+- **Optional dependency handling:** Smoke tests should validate the selected service factory implementation, not direct package availability. Allows lightweight development environments without forcing heavy optional packages.
+
+**Current state (as of 2026-04-05):**
+- Python operational store: Postgres (appdb) via psycopg2 ThreadedConnectionPool
+- Connection config: Reads `POSTGRES_HOST`, `POSTGRES_PORT`, `POSTGRES_DB`, `POSTGRES_USER`, `POSTGRES_PASSWORD` from AppHost env vars
+- Shared schema: `files` + `document_pages` (unchanged from SQLite version; column names, types, FKs all match)
+- Processing status: Uses `files.status` lifecycle (`uploaded` → `processing` → `processed` | `error`)
+- Regression coverage: 30 tests pass (contract audit, startup path, processing pipeline, docling factory selection)
+
+**Next phase (BRAIN pivot):**
+- Service decomposition: Extract Ingestion/Knowledge/Validation as internal Python packages initially
+- Validation Service: New capability; LLM-based claim extraction + confidence scoring  
+- Knowledge Service: Separate Neo4j + vector store integration from Ingestion
+- Vector retrieval: Add (Qdrant recommended) behind `IKnowledgeRetriever` abstraction
+
+---
+
 ### 2026-04-05 — Shared Postgres Contract Tests Should Follow AppHost Naming
 
 **Completed:**
