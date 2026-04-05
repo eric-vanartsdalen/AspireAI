@@ -56,14 +56,16 @@ public partial class Program
         var useLightweightNeo4j = builder.Configuration["USE_LIGHTWEIGHT_NEO4J"] ?? "false";
         var neo4jDockerfile = useLightweightNeo4j.ToLower() == "true" ? "Dockerfile.lightweight" : "Dockerfile";
 
-        // PROJECTS SETUP
-        // Postgres SQL service
-        var postgres = builder.AddPostgres("postgres", postgresUser, postgresPass)
-            .WithBindMount("../../database/postgres/", "/var/lib/postgresql/data")
-            .WithPgWeb()
-            .AddDatabase("appdb");
-        // Add Redis cache service
-        var redis = builder.AddRedis("redis-cache")
+		// PROJECTS SETUP
+		// Postgres SQL service
+		var postgres = builder.AddPostgres("postgres", postgresUser, postgresPass)
+			.WithBindMount("../../database/postgres", "/var/lib/postgresql")
+			.WithEnvironment("PGDATA", "/var/lib/postgresql/data/pgdata")
+			.WithPgWeb()
+			.AddDatabase("appdb");
+
+		// Add Redis cache service
+		var redis = builder.AddRedis("redis-cache")
             .WithBindMount("../../database/redis/", "/data")
             .WithRedisCommander();
 
