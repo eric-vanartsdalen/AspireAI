@@ -59,8 +59,9 @@ public partial class Program
         // Postgres SQL service
         var postgres = builder.AddPostgres("postgres", postgresUser, postgresPass)
             .WithBindMount("../../database/postgres/", "/var/lib/postgresql/data")
+            .WithEnvironment("PGDATA", "/var/lib/postgresql/data/pgdata")
             .WithPgWeb();
-        var uploadStore = postgres.AddDatabase("DefaultConnection");
+        var uploadStore = postgres.AddDatabase("appdb");
         // Add Redis cache service
         var redis = builder.AddRedis("redis-cache")
             .WithBindMount("../../database/redis/", "/data")
@@ -113,12 +114,12 @@ public partial class Program
             .WithHttpEndpoint(port: 8000, targetPort: 8000, name: "http")
             .WithReference(uploadStore)
             .WithBindMount(sharedDataPath, "/app/data")
-             .WithVolume("python-pip-cache", "/root/.cache/pip")                    // Persist pip cache
-             .WithEnvironment("POSTGRES_HOST", "postgres")                           // Postgres service host on the Aspire network
-             .WithEnvironment("POSTGRES_PORT", "5432")                               // Default Postgres port
-             .WithEnvironment("POSTGRES_DATABASE", "DefaultConnection")              // Shared operational database name
-             .WithEnvironment("POSTGRES_USER", postgresUser.Resource)               // Pass Postgres username to Python services
-             .WithEnvironment("POSTGRES_PASSWORD", postgresPass.Resource)           // Pass Postgres password to Python services
+            .WithVolume("python-pip-cache", "/root/.cache/pip")                    // Persist pip cache
+            .WithEnvironment("POSTGRES_HOST", "postgres")                          // Postgres service host on the Aspire network
+            .WithEnvironment("POSTGRES_PORT", "5432")                              // Default Postgres port
+            .WithEnvironment("POSTGRES_DATABASE", "appdb")                         // Shared operational database name
+            .WithEnvironment("POSTGRES_USER", postgresUser.Resource)               // Pass Postgres username to Python services
+            .WithEnvironment("POSTGRES_PASSWORD", postgresPass.Resource)           // Pass Postgres password to Python services
             .WithEnvironment("NEO4J_URI", neo4jBoltUri)                            // Pass Neo4j connection info to Python services
             .WithEnvironment("NEO4J_USER", neo4jUser.Resource)                     // Neo4j username for Python services
             .WithEnvironment("NEO4J_PASSWORD", neo4jPass.Resource)                 // Neo4j password for Python services

@@ -30,8 +30,8 @@ builder.Services.AddHttpClient<WeatherApiClient>(client =>
 builder.Services.AddHttpClient();
 
 // ADDING CONFIGURATIONS FOR STORAGE OF FILES
-var connectionString = builder.Configuration.GetConnectionString("DefaultConnection")
-    ?? throw new InvalidOperationException("Connection string 'DefaultConnection' is required for the operational upload store.");
+var connectionString = builder.Configuration.GetConnectionString("appdb")
+    ?? throw new InvalidOperationException("Connection string 'appdb' is required for the operational upload store.");
 
 builder.Services.AddDbContext<UploadDbContext>(options =>
     options.UseNpgsql(connectionString));
