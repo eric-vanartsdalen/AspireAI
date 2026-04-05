@@ -1,14 +1,14 @@
 # AspireAI
 
-A modular, Blazor-based chat assistant platform that ingests documents, builds knowledge graphs, and delivers retrieval-augmented answers with source citations — all orchestrated through .NET Aspire.
+A modular, Blazor-based chat assistant platform that ingests documents, builds knowledge graphs, and delivers retrieval-augmented answers with source citations ï¿½ all orchestrated through .NET Aspire.
 
 > **Disclaimer:** This is an experimental learning project. Expect rough edges and areas to improve. Use at your own risk!
 
 ## What It Does
 
-1. **Chat** — Conversational UI powered by local LLMs (Ollama) via Semantic Kernel, with speech-to-text and text-to-speech support.
-2. **Ingest** — Upload documentation - a Python/Docling pipeline extracts page-level content and persists output.
-3. **Retrieve** — LightRAG + Neo4j turn extracted content into a queryable knowledge graph, surfacing cited answers in chat.
+1. **Chat** ï¿½ Conversational UI powered by local LLMs (Ollama) via Semantic Kernel, with speech-to-text and text-to-speech support.
+2. **Ingest** ï¿½ Upload documentation - a Python/Docling pipeline extracts page-level content and persists output.
+3. **Retrieve** ï¿½ LightRAG + Neo4j turn extracted content into a queryable knowledge graph, surfacing cited answers in chat.
 
 ## Technology Stack
 
@@ -24,9 +24,9 @@ A modular, Blazor-based chat assistant platform that ingests documents, builds k
 
 ## Prerequisites
 
-- [.NET 10 SDK](https://dotnet.microsoft.com/en-us/download/dotnet/10.0) — verify with `dotnet --version`
-- [Docker Desktop](https://www.docker.com/products/docker-desktop/) — required for Neo4j, Ollama, and Python containers
-- [Aspire Tooling](https://learn.microsoft.com/en-us/dotnet/aspire/fundamentals/setup-tooling) — workload install via `dotnet workload install aspire`
+- [.NET 10 SDK](https://dotnet.microsoft.com/en-us/download/dotnet/10.0) ï¿½ verify with `dotnet --version`
+- [Docker Desktop](https://www.docker.com/products/docker-desktop/) ï¿½ required for Neo4j, Ollama, and Python containers
+- [Aspire Tooling](https://learn.microsoft.com/en-us/dotnet/aspire/fundamentals/setup-tooling) ï¿½ workload install via `dotnet workload install aspire`
 - Python 3.11+ *(optional, for local Python development outside containers)*
 
 ## Getting Started
@@ -44,7 +44,7 @@ dotnet build
 dotnet run --project src/AspireApp.AppHost
 ```
 
-The Aspire dashboard opens automatically. All services — Web UI, Python processing, Neo4j, Ollama — start and register health checks there.
+The Aspire dashboard opens automatically. All services ï¿½ Web UI, Python processing, Neo4j, Ollama ï¿½ start and register health checks there.
 
 > **Startup project must be `AspireApp.AppHost`.** If the app 404s or services are missing, right-click `AspireApp.AppHost` in Solution Explorer ? *Set as Startup Project*.
 
@@ -52,10 +52,10 @@ The Aspire dashboard opens automatically. All services — Web UI, Python processi
 
 | Path | Purpose |
 |------|---------|
-| `src/AspireApp.AppHost/` | Aspire orchestration — wires all services, containers, and config |
-| `src/AspireApp.Web/` | Blazor UI — chat, file upload, speech I/O |
+| `src/AspireApp.AppHost/` | Aspire orchestration ï¿½ wires all services, containers, and config |
+| `src/AspireApp.Web/` | Blazor UI ï¿½ chat, file upload, speech I/O |
 | `src/AspireApp.ApiService/` | Minimal API (placeholder for future gateway) |
-| `src/AspireApp.PythonServices/` | FastAPI — document processing, RAG retrieval, Neo4j integration |
+| `src/AspireApp.PythonServices/` | FastAPI ï¿½ document processing, RAG retrieval, Neo4j integration |
 | `src/AspireApp.Neo4JService/` | Neo4j Docker build context and config |
 | `src/AspireApp.ServiceDefaults/` | Shared .NET service configuration and health checks |
 | `data/` | Bind-mounted volume for uploaded documents |
@@ -67,7 +67,7 @@ The Aspire dashboard opens automatically. All services — Web UI, Python processi
 |----------|----------|
 | [Architecture](roadmap/Architecture.md) | System design, component map, data schemas, design principles |
 | [Plan](plan.md) | Epics and phased roadmap from foundation through advanced features |
-| [Tasks](roadmap/Tasks.md) | Active work breakdown — stabilization track, checklists, gate criteria |
+| [Tasks](roadmap/Tasks.md) | Active work breakdown ï¿½ stabilization track, checklists, gate criteria |
 
 ## Troubleshooting
 
@@ -78,6 +78,21 @@ The Aspire dashboard opens automatically. All services — Web UI, Python processi
 | Ollama offline | Check container health in dashboard; verify `AI-Endpoint` / `AI-Model` in appsettings |
 | Neo4j / Python errors | Check dashboard logs; ensure ports 7474, 7687, 8000 are free |
 | SDK mismatch | `dotnet --info` must show .NET 10.0; install matching SDK from `global.json` |
+
+## Local Microsoft Entra ID Sign-In
+
+The checked-in default stays on the mock auth service so the existing demo regression flow keeps working. To manually test the live Microsoft provider, add local secrets to `src\AspireApp.Web` and switch the auth seam to the combined provider set:
+
+```powershell
+dotnet user-secrets set "Authentication:Service" "combined" --project src\AspireApp.Web
+dotnet user-secrets set "Authentication:Microsoft:TenantId" "<entra-tenant-id-or-domain>" --project src\AspireApp.Web
+dotnet user-secrets set "Authentication:Microsoft:ClientId" "<app-registration-client-id>" --project src\AspireApp.Web
+dotnet user-secrets set "Authentication:Microsoft:ClientSecret" "<app-registration-client-secret>" --project src\AspireApp.Web
+dotnet user-secrets set "Authentication:Microsoft:DefaultAppTenantId" "default" --project src\AspireApp.Web
+dotnet user-secrets set "Authentication:Microsoft:UserTenantSeeds:your.name@yourdomain.com" "tenant-a" --project src\AspireApp.Web
+```
+
+Register the redirect URI for your local web frontend using the Microsoft callback path `/signin-oidc-microsoft`. If you run the web project directly, the default HTTPS URI is `https://localhost:7133/signin-oidc-microsoft`; when running under Aspire, use the current `webfrontend` HTTPS URL plus that same callback path.
 
 ## Contributing
 

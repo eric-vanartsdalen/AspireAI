@@ -175,6 +175,51 @@ app.MapGet("/auth/mock/signout", async (string? returnUrl, HttpContext httpConte
     return Results.LocalRedirect(NormalizeLocalPath(returnUrl));
 });
 
+// Only expose the OIDC challenge endpoint when the Microsoft scheme is actually registered.
+// Without this guard, an unregistered scheme would produce a 500 with internal details.
+var microsoftOidcRegistered = builder.Configuration
+    .GetSection(MicrosoftEntraAuthenticationOptions.SectionName)
+    .Get<MicrosoftEntraAuthenticationOptions>()?.IsConfigured ?? false;
+
+if (microsoftOidcRegistered)
+{
+    app.MapGet("/auth/microsoft/signin", (string? returnUrl) =>
+    {
+        var redirectUri = NormalizeLocalPath(returnUrl);
+        return Results.Challenge(
+            new AuthenticationProperties
+            {
+                RedirectUri = redirectUri
+            },
+            authenticationSchemes: [MicrosoftEntraAuthService.AuthenticationScheme]);
+    });
+}
+
+app.MapGet("/auth/signout", async (string? returnUrl, HttpContext httpContext) =>
+{
+    var redirectUri = NormalizeLocalPath(returnUrl);
+    var providerId = httpContext.User.FindFirstValue(ClaimTypes.AuthenticationMethod);
+
+    // Always clear the local session cookie first.
+    await httpContext.SignOutAsync(CookieAuthenticationDefaults.AuthenticationScheme);
+
+    // Federated sign-out: redirect through the Entra end_session endpoint only when
+    // the OIDC scheme is registered. If the user signed in via Microsoft but the config
+    // was removed, fall through to a local redirect instead of throwing.
+    if (string.Equals(providerId, MicrosoftEntraAuthService.ProviderId, StringComparison.OrdinalIgnoreCase) &&
+        microsoftOidcRegistered)
+    {
+        return Results.SignOut(
+            new AuthenticationProperties
+            {
+                RedirectUri = redirectUri
+            },
+            authenticationSchemes: [MicrosoftEntraAuthService.AuthenticationScheme]);
+    }
+
+    return Results.LocalRedirect(redirectUri);
+});
+
 app.MapDefaultEndpoints();
 // Add this after the existing endpoint mappings
 
@@ -254,15 +299,8 @@ static string NormalizeLocalPath(string? path)
 
 static ClaimsPrincipal CreatePrincipal(AuthenticatedUser user)
 {
-    var identity = new ClaimsIdentity(
-    [
-        new Claim(ClaimTypes.NameIdentifier, user.UserId),
-        new Claim(ClaimTypes.Name, user.DisplayName),
-        new Claim(ClaimTypes.Email, user.Email),
-        new Claim(ClaimTypes.AuthenticationMethod, user.ProviderId),
-        new Claim("provider_display_name", user.ProviderDisplayName),
-        new Claim("tenant_id", user.DefaultTenantId)
-    ], CookieAuthenticationDefaults.AuthenticationScheme);
+    var identity = new ClaimsIdentity(authenticationType: CookieAuthenticationDefaults.AuthenticationScheme);
+    AuthenticatedUserClaims.AddClaims(identity, user);
 
     return new ClaimsPrincipal(identity);
 }

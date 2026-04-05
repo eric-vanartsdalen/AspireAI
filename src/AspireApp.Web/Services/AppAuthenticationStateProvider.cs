@@ -39,7 +39,7 @@ public sealed class AppAuthenticationStateProvider(
             return;
         }
 
-        var user = BuildUserFromClaims(principal);
+        var user = AuthenticatedUserClaims.BuildUser(principal);
         if (user is null)
         {
             _authenticationContext.SetCurrentUser(null);
@@ -53,29 +53,6 @@ public sealed class AppAuthenticationStateProvider(
 
         _tenantContextService?.InitializeForUser(user.DefaultTenantId);
     }
-
-    private static AuthenticatedUser? BuildUserFromClaims(ClaimsPrincipal principal)
-    {
-        var userId = principal.FindFirstValue(ClaimTypes.NameIdentifier);
-        var displayName = principal.FindFirstValue(ClaimTypes.Name);
-        var email = principal.FindFirstValue(ClaimTypes.Email);
-        var providerId = principal.FindFirstValue(ClaimTypes.AuthenticationMethod);
-        var providerDisplayName = principal.FindFirstValue("provider_display_name");
-        var tenantId = principal.FindFirstValue("tenant_id");
-
-        if (string.IsNullOrWhiteSpace(userId) ||
-            string.IsNullOrWhiteSpace(displayName) ||
-            string.IsNullOrWhiteSpace(email) ||
-            string.IsNullOrWhiteSpace(providerId) ||
-            string.IsNullOrWhiteSpace(providerDisplayName) ||
-            string.IsNullOrWhiteSpace(tenantId))
-        {
-            return null;
-        }
-
-        return new AuthenticatedUser(userId, displayName, email, providerId, providerDisplayName, tenantId);
-    }
-
     private static ClaimsPrincipal CreatePrincipal(AuthenticatedUser? user)
     {
         if (user is null)
@@ -83,15 +60,8 @@ public sealed class AppAuthenticationStateProvider(
             return new ClaimsPrincipal(new ClaimsIdentity());
         }
 
-        var identity = new ClaimsIdentity(
-        [
-            new Claim(ClaimTypes.NameIdentifier, user.UserId),
-            new Claim(ClaimTypes.Name, user.DisplayName),
-            new Claim(ClaimTypes.Email, user.Email),
-            new Claim(ClaimTypes.AuthenticationMethod, user.ProviderId),
-            new Claim("provider_display_name", user.ProviderDisplayName),
-            new Claim("tenant_id", user.DefaultTenantId)
-        ], AuthenticationType);
+        var identity = new ClaimsIdentity(authenticationType: AuthenticationType);
+        AuthenticatedUserClaims.AddClaims(identity, user);
 
         return new ClaimsPrincipal(identity);
     }
