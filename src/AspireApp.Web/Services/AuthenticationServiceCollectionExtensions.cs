@@ -88,7 +88,7 @@ public static class AuthenticationServiceCollectionExtensions
         services.AddScoped<AppAuthenticationStateProvider>();
         services.AddScoped<AuthenticationStateProvider>(sp => sp.GetRequiredService<AppAuthenticationStateProvider>());
         services.AddScoped<AuthServiceFactory>();
-        services.AddAuthServiceRegistration<MockAuthService>(AuthenticationOptions.DefaultService);
+        services.AddAuthServiceRegistration<MockAuthService>(AuthenticationOptions.MockService);
         services.AddAuthServiceRegistration<MicrosoftEntraAuthService>(AuthenticationOptions.MicrosoftService);
         services.AddAuthServiceRegistration<CompositeAuthService>(AuthenticationOptions.CombinedService);
         services.AddScoped<IAuthService>(sp => sp.GetRequiredService<AuthServiceFactory>().Create());
@@ -143,7 +143,7 @@ public static class AuthenticationServiceCollectionExtensions
             displayName,
             email,
             MicrosoftEntraAuthService.ProviderId,
-            "Microsoft Entra ID",
+            "Microsoft",
             ResolveTenantSeed(email, options));
     }
 

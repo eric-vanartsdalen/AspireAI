@@ -12,7 +12,7 @@
     @if (_providers.Count == 0)
     {
         <div class="alert alert-warning" role="alert">
-            No sign-in providers are available. Check the active <code>Authentication:Service</code> setting and, for Microsoft Entra ID, ensure the local client configuration is present.
+            No sign-in providers are available. Check the authentication configuration and, for Microsoft, ensure the local client settings are present.
         </div>
     }
     else
@@ -28,63 +28,63 @@
                                     <h2 class="h4 mb-2">@provider.DisplayName</h2>
                                     <p class="text-muted mb-0">@provider.Description</p>
                                 </div>
-                                <span class="badge text-bg-light">@provider.DisplayName</span>
+                                <span class="badge text-bg-light">@(provider.RequiresUserSelection ? "Demo" : "Hosted")</span>
                             </div>
 
-                            <button class="btn btn-light mt-auto"
-                                    data-testid="@GetProviderTestId(provider.Id)"
-                                    @onclick="() => SelectProvider(provider.Id)">
-                                Continue with @provider.DisplayName
-                            </button>
+                            @if (provider.RequiresUserSelection)
+                            {
+                                <button class="btn btn-light mt-auto"
+                                        data-testid="@GetProviderTestId(provider.Id)"
+                                        @onclick="() => OnProviderSelectedAsync(provider.Id)">
+                                    Choose a demo account
+                                </button>
+                            }
+                            else
+                            {
+                                <a class="btn btn-primary mt-auto"
+                                   data-testid="@GetProviderTestId(provider.Id)"
+                                   href="@BuildProviderSignInHref(provider.Id)">
+                                    Continue to hosted sign-in
+                                </a>
+                            }
                         </div>
                     </section>
                 </div>
             }
         </div>
 
-        @if (SelectedProvider is not null)
+        @if (SelectedProvider?.RequiresUserSelection == true)
         {
             <div class="card shadow-sm">
                 <div class="card-body">
-                    @if (SelectedProvider.RequiresUserSelection)
-                    {
-                        <h3 class="h5 mb-3">Choose a mock account for @SelectedProvider.DisplayName</h3>
+                    <h3 class="h5 mb-3">Choose a demo account for @SelectedProvider.DisplayName</h3>
+                    <p class="text-muted">
+                        Demo accounts stay inside AspireAI for local UX checks. Hosted providers redirect you to the real identity provider instead.
+                    </p>
 
-                        <div class="row g-3 align-items-end">
-                            <div class="col-lg-6">
-                                <label class="form-label" for="mock-user">Mock user</label>
-                                <select id="mock-user"
-                                        name="mock-user"
-                                        class="form-select"
-                                        data-testid="auth-user-select"
-                                        @bind="_selectedUserId">
-                                    @foreach (var user in SelectedUsers)
-                                    {
-                                        <option value="@user.UserId">@user.DisplayName (@user.Email)</option>
-                                    }
-                                </select>
-                            </div>
-
-                            <div class="col-lg-6">
-                                <button class="btn btn-primary w-100"
-                                        data-testid="auth-submit-sign-in"
-                                        @onclick="SignInAsync">
-                                    Sign in
-                                </button>
-                            </div>
+                    <div class="row g-3 align-items-end">
+                        <div class="col-lg-6">
+                            <label class="form-label" for="mock-user">Demo user</label>
+                            <select id="mock-user"
+                                    name="mock-user"
+                                    class="form-select"
+                                    data-testid="auth-user-select"
+                                    @bind="_selectedUserId">
+                                @foreach (var user in SelectedUsers)
+                                {
+                                    <option value="@user.UserId">@user.DisplayName (@user.Email)</option>
+                                }
+                            </select>
                         </div>
-                    }
-                    else
-                    {
-                        <h3 class="h5 mb-3">Continue with @SelectedProvider.DisplayName</h3>
-                        <p class="text-muted">This provider manages its own sign-in flow and will return to the Blazor shell with the standard cookie-backed session.</p>
 
-                        <button class="btn btn-primary"
-                                data-testid="auth-submit-sign-in"
-                                @onclick="SignInAsync">
-                            Continue
-                        </button>
-                    }
+                        <div class="col-lg-6">
+                            <button class="btn btn-primary w-100"
+                                    data-testid="auth-submit-sign-in"
+                                    @onclick="SignInAsync">
+                                Sign in
+                            </button>
+                        </div>
+                    </div>
 
                     @if (SelectedUser is not null)
                     {
@@ -124,6 +124,13 @@
         SelectProvider(_providers.FirstOrDefault()?.Id);
     }
 
+    private async Task OnProviderSelectedAsync(string providerId)
+    {
+        SelectProvider(providerId);
+
+        await Task.CompletedTask;
+    }
+
     private void SelectProvider(string? providerId)
     {
         _selectedProviderId = providerId;
@@ -159,4 +166,27 @@
         "demo" => "auth-provider-demo",
         _ => $"auth-provider-{providerId}"
     };
+
+    private string BuildProviderSignInHref(string providerId)
+    {
+        var returnUrl = NormalizeLocalPath(RedirectUri);
+
+        return providerId switch
+        {
+            MicrosoftEntraAuthService.ProviderId => $"/auth/microsoft/signin?returnUrl={Uri.EscapeDataString(returnUrl)}",
+            _ => returnUrl
+        };
+    }
+
+    private static string NormalizeLocalPath(string? path)
+    {
+        if (string.IsNullOrWhiteSpace(path))
+        {
+            return "/";
+        }
+
+        return path.StartsWith("/", StringComparison.Ordinal) && !path.StartsWith("//", StringComparison.Ordinal)
+            ? path
+            : "/";
+    }
 }

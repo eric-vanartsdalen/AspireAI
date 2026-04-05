@@ -24,7 +24,6 @@ public sealed class MicrosoftEntraAuthenticationOptions
     public Dictionary<string, string> DomainTenantSeeds { get; set; } = new(StringComparer.OrdinalIgnoreCase);
 
     public bool IsConfigured =>
-        !string.IsNullOrWhiteSpace(TenantId) &&
         !string.IsNullOrWhiteSpace(ClientId) &&
         !string.IsNullOrWhiteSpace(ClientSecret);
 }

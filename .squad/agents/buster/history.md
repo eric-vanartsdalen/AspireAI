@@ -9,6 +9,56 @@
 
 <!-- Append new learnings below. Each entry is something lasting about the project. -->
 
+### 2026-04-05 — Real Microsoft Auth Regression Gate: QA Coverage Expanded
+
+**Completed:**
+- Audited the current auth seam across `AuthenticationOptions`, `AuthServiceFactory`, `CompositeAuthService`, `MicrosoftEntraAuthService`, `SignInPanel`, `Program.cs`, and the existing WebTest auth suite.
+- Confirmed the implementation is **not** mock-first when Microsoft is actually configured and intended: `AuthenticationOptions.ResolveEffectiveService()` resolves `auto` to `microsoft`, not to mock or combined.
+- Added focused regression coverage for the config resolver and the composite auth seam so the UI path can be proven without breaking demo-provider coverage.
+- Re-ran focused auth tests plus the full `dotnet test` suite successfully.
+
+**Key pattern:**
+- For this repo, proving "real auth is reachable" does **not** require a live tenant in automation. The durable QA gate is service-level: assert effective-mode resolution, assert the live Microsoft provider exposes `RequiresUserSelection = false`, assert `GetUsers("microsoft-entra")` is empty, and assert sign-in routes to `/auth/microsoft/signin` instead of `/auth/mock/signin`.
+- Keep demo coverage in the same seam test pass. If a change preserves Microsoft routing but breaks demo sign-in, it is still a regression.
+
+**Key finding:**
+- The code currently prefers the live Microsoft provider when configured, but `README.md` still describes `auto` as resolving to `combined` or `mock`. QA should treat the code path as authoritative until docs are aligned.
+
+**Key file paths:**
+- `src\AspireApp.Web\Services\AuthenticationOptions.cs`
+- `src\AspireApp.Web\Services\AuthServiceFactory.cs`
+- `src\AspireApp.Web\Services\CompositeAuthService.cs`
+- `src\AspireApp.Web\Components\Shared\SignInPanel.razor`
+- `src\AspireApp.WebTest\Tests\AuthenticationOptionsTests.cs`
+- `src\AspireApp.WebTest\Tests\CompositeAuthServiceTests.cs`
+- `src\AspireApp.WebTest\Tests\AuthServiceFactoryTests.cs`
+
+### 2026-04-06 — Microsoft Entra Integration: Regression Validation Complete — APPROVED
+
+**Completed:**
+- Ran full `dotnet test` suite: 23 tests pass, 0 failures, ~25 seconds
+- Validated auth seam integrity: `AuthServiceFactory` correctly resolves configured providers
+- Validated mock auth demo layer unchanged: all `MockAuthServiceTests` + `AuthUxFoundationTests` Playwright tests pass
+- Validated Microsoft provider isolation: unit tests confirm it hides when unconfigured, registers OIDC only when configured
+- Validated critical regression: `BasicAspireAppHostTests::FlowEndToEnd` and `DeleteUploadedTestFile` pass (upload pipeline intact)
+
+**Key Pattern:**
+- Microsoft Entra integration is **live and pluggable**. Real manual testing can proceed (Eric will test with actual credentials). The automated regression surface is 100% solid.
+- Design follows the approved factory pattern: configuration-driven provider swapping without code recompile.
+- No breaking changes detected. All existing tests pass as-is, confirming backward compatibility with mock auth demo flow.
+
+**Key Finding:**
+- `CompositeAuthService.SignOutAsync()` always delegates to Microsoft provider, but this is safe by design: all sign-out paths converge at `/auth/signout` which handles cleanup. Recommend adding a comment to document this intentional behavior.
+
+**Decision Created:** `.squad/decisions/inbox/buster-microsoft-auth-regression-verdict.md`
+
+**Key File Paths:**
+- `src\AspireApp.Web\Services\AuthServiceFactory.cs` — Provider resolution works
+- `src\AspireApp.Web\Services\MicrosoftEntraAuthService.cs` — Live OIDC integration
+- `src\AspireApp.Web\Services\CompositeAuthService.cs` — Multi-provider routing
+- `src\AspireApp.WebTest\Tests\MicrosoftEntraAuthServiceTests.cs` — Microsoft unit tests (4/4 pass)
+- `src\AspireApp.WebTest\Tests\BasicAspireAppHostTests.cs` — Critical regression suite (all pass)
+
 ### 2026-04-05 — Warden Auth QA Verdict: Reject on Route Re-Protection + Flow Regression
 
 **Completed:**

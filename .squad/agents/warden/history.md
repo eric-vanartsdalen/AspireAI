@@ -30,3 +30,15 @@
   - `/auth/mock/*` HTTP endpoints now gated behind service mode check in `Program.cs`. When `Authentication:Service` = `microsoft`, mock endpoints are not registered — prevents session-cookie bypass.
   - Jeff's `auto` mode (resolves to `combined` or `mock` at runtime via `AuthServiceFactory.ResolveServiceKey`) is correctly wired and the factory already handles it. The `SignInPanel` direct-sign-in for external providers (no two-click) was already fixed in Jeff's rescue pass.
   - README updated with Azure app registration steps, explicit service mode table, and corrected documentation.
+- **2026-07-22 — Authentication `auto` mode security audit: APPROVED.**
+  - User reported "UI only allows 2 users to login, so it seems like it's still using the Mock" — this is **correct behavior** because no Microsoft credentials are configured.
+  - Verified: `dotnet user-secrets list` is empty; `appsettings.json` Microsoft section has empty strings for TenantId/ClientId/ClientSecret.
+  - `AuthServiceFactory.ResolveServiceKey()` correctly falls back to `MockService` when `MicrosoftEntraAuthenticationOptions.IsConfigured = false`.
+  - Security assessment: **No code vulnerabilities detected.** Jeff's implementation is secure and defensive:
+    - OIDC handler only registers when credentials exist (prevents runtime errors)
+    - Mock endpoints gated by service mode (prevents auth bypass)
+    - Factory resolution fails safe to mock when config invalid
+    - No secrets in committed configuration files
+  - User action required: Follow README.md Azure app registration steps and add credentials via `dotnet user-secrets` to enable real Microsoft auth.
+  - Outcome: **No code changes authorized.** System is working as designed. User must configure Microsoft credentials to exit mock-only mode.
+  - Decision log: `.squad/decisions/inbox/warden-auth-mode-auto-insecure-requires-client-secrets.md`

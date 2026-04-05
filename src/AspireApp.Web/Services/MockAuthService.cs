@@ -10,6 +10,8 @@ public sealed class MockAuthService(
     TenantContextService tenantContextService,
     NavigationManager navigationManager) : IAuthService
 {
+    public const string ServiceKey = "mock";
+
     private readonly AppAuthenticationStateProvider _authenticationStateProvider = authenticationStateProvider;
     private readonly TenantContextService _tenantContextService = tenantContextService;
     private readonly NavigationManager _navigationManager = navigationManager;

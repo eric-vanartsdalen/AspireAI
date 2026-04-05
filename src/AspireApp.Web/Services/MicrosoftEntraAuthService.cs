@@ -16,8 +16,8 @@ public sealed class MicrosoftEntraAuthService(
 
     private static readonly AuthProviderOption Provider = new(
         ProviderId,
-        "Microsoft Entra ID",
-        "Live Microsoft work-account sign-in. Configure your tenant, client id, and client secret locally to enable it.",
+        "Microsoft",
+        "Use the hosted Microsoft sign-in page for your work, school, or personal Microsoft account, then return to AspireAI already signed in.",
         "provider-microsoft",
         false);
 
@@ -40,7 +40,7 @@ public sealed class MicrosoftEntraAuthService(
         if (!_options.IsConfigured)
         {
             throw new InvalidOperationException(
-                "Microsoft Entra ID is not configured. Set Authentication:Microsoft:TenantId, ClientId, and ClientSecret before using the live provider.");
+                "Microsoft Entra ID is not configured. Set Authentication:Microsoft:ClientId and ClientSecret before using the live provider. TenantId is optional; blank uses the Microsoft common endpoint.");
         }
 
         _navigationManager.NavigateTo(BuildSignInUri(redirectUri), forceLoad: true);

@@ -41,7 +41,7 @@ else
             <div class="mb-4">
                 <h1>Turn documents into a tenant-aware AI workspace</h1>
                 <p class="lead">
-                    Start with a mock Microsoft, Google, or demo identity. This keeps the UX honest now and gives us a clean seam for real OAuth later.
+                    Start with the hosted Microsoft sign-in when it is configured locally. If live Microsoft auth is not configured, AspireAI falls back to demo identities for local shell checks.
                 </p>
                 <a class="btn btn-primary mt-2" data-testid="auth-sign-in-cta" href="/signin">Get started</a>
             </div>
@@ -50,8 +50,8 @@ else
                 <div class="col-lg-4">
                     <div class="card h-100 shadow-sm">
                         <div class="card-body">
-                            <h2 class="h5">Unauthenticated by default</h2>
-                            <p class="mb-0">Visitors land here first and choose a provider before they touch chat, uploads, or weather.</p>
+                            <h2 class="h5">Hosted sign-in first</h2>
+                            <p class="mb-0">When Microsoft is configured, the sign-in UI routes you into the standard Microsoft login flow instead of a demo account picker.</p>
                         </div>
                     </div>
                 </div>
@@ -59,15 +59,15 @@ else
                     <div class="card h-100 shadow-sm">
                         <div class="card-body">
                             <h2 class="h5">Tenant stays separate</h2>
-                            <p class="mb-0">Signing in seeds the tenant selector from the mock user, but workspace switching remains its own concern.</p>
+                            <p class="mb-0">Signing in seeds the tenant selector from the authenticated user while workspace switching remains its own concern.</p>
                         </div>
                     </div>
                 </div>
                 <div class="col-lg-4">
                     <div class="card h-100 shadow-sm">
                         <div class="card-body">
-                            <h2 class="h5">Pluggable provider seam</h2>
-                            <p class="mb-0">The UI talks to an auth abstraction so real Microsoft or Google sign-in can replace mock auth without rewriting the shell.</p>
+                            <h2 class="h5">Demo fallback stays intentional</h2>
+                            <p class="mb-0">Demo identities remain available only when live Microsoft auth is not configured or when you explicitly force a demo-capable auth mode.</p>
                         </div>
                     </div>
                 </div>

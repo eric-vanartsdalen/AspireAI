@@ -81,13 +81,13 @@ The Aspire dashboard opens automatically. All services � Web UI, Python proces
 
 ## Local Microsoft Sign-In
 
-The web app auto-detects live Microsoft auth when the default `auto` service mode is active. If Microsoft client settings (TenantId, ClientId, ClientSecret) are all present, the landing and sign-in pages show a real Microsoft Entra ID button alongside the demo providers. If those settings are absent, only the demo providers appear.
+The web app auto-detects live Microsoft auth when the default `auto` service mode is active. If Microsoft client settings (`ClientId` and `ClientSecret`, plus an optional `TenantId`) are present, the landing and sign-in pages drive the user into the real Microsoft Entra ID hosted flow. If those settings are absent, the UI falls back to the demo providers instead.
 
 ### Azure App Registration
 
 Before adding secrets, create an app registration in the [Azure portal](https://portal.azure.com/#view/Microsoft_AAD_RegisteredApps/ApplicationsListBlade):
 
-1. **New registration** — give it a name (e.g. `AspireAI Local`), set *Supported account types* to your preference.
+1. **New registration** — give it a name (e.g. `AspireAI Local`), set *Supported account types* to your preference. If you want to sign in with a personal Microsoft account such as `@hotmail.com`, choose an option that includes personal Microsoft accounts.
 2. **Redirect URI** — add a *Web* platform URI: `https://localhost:{port}/signin-oidc-microsoft`. Use the HTTPS port from your `webfrontend` launch profile (or the Aspire dashboard URL when running under Aspire).
 3. **Client secret** — under *Certificates & secrets*, create a new client secret and copy the value immediately.
 
@@ -96,9 +96,14 @@ Before adding secrets, create an app registration in the [Azure portal](https://
 Add the registration values to `src\AspireApp.Web` user-secrets:
 
 ```powershell
-dotnet user-secrets set "Authentication:Microsoft:TenantId" "<entra-tenant-id-or-domain>" --project src\AspireApp.Web
 dotnet user-secrets set "Authentication:Microsoft:ClientId" "<app-registration-client-id>" --project src\AspireApp.Web
 dotnet user-secrets set "Authentication:Microsoft:ClientSecret" "<client-secret-value>" --project src\AspireApp.Web
+```
+
+`TenantId` is optional. Leave it blank to use Microsoft's `common` endpoint, or set it explicitly when you want to target a specific tenant or audience such as `organizations` or `consumers`.
+
+```powershell
+dotnet user-secrets set "Authentication:Microsoft:TenantId" "common" --project src\AspireApp.Web
 ```
 
 Optional tenant-mapping seeds:
@@ -112,12 +117,12 @@ dotnet user-secrets set "Authentication:Microsoft:UserTenantSeeds:your.name@your
 
 | Mode | Behavior |
 |------|----------|
-| `auto` (default) | Shows real Microsoft when configured, demo providers otherwise. Resolves to `combined` or `mock` at runtime. |
-| `combined` | Always shows both real Microsoft and demo providers (Microsoft hidden if not configured). |
-| `mock` | Demo providers only — real Microsoft button never appears, even if configured. Mock auth endpoints are blocked when set to `microsoft`. |
+| `auto` (default) | Uses real Microsoft when configured and falls back to demo providers otherwise. Resolves to `microsoft` or `mock` at runtime. |
+| `combined` | Shows both real Microsoft and clearly labeled demo providers for explicit mixed-mode testing (Microsoft hidden if not configured). |
+| `mock` | Demo providers only — real Microsoft button never appears, even if configured. |
 | `microsoft` | Real Microsoft only. Mock endpoints are disabled at the HTTP level to prevent session-cookie bypass. |
 
-To force demo-only mode even when Microsoft settings exist, set `Authentication:Service` to `mock`.
+To keep live Microsoft available but still expose demos for explicit testing, set `Authentication:Service` to `combined`. To force demo-only mode even when Microsoft settings exist, set `Authentication:Service` to `mock`.
 
 ## Contributing
 

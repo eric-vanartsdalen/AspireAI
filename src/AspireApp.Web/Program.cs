@@ -123,13 +123,21 @@ app.MapRazorComponents<App>()
 // Map API controllers
 app.MapControllers();
 
+var microsoftAuthenticationOptions = builder.Configuration
+    .GetSection(MicrosoftEntraAuthenticationOptions.SectionName)
+    .Get<MicrosoftEntraAuthenticationOptions>() ?? new MicrosoftEntraAuthenticationOptions();
+
+var effectiveAuthService = AspireApp.Web.Services.AuthenticationOptions.ResolveEffectiveService(
+    builder.Configuration.GetSection("Authentication").GetValue<string>("Service"),
+    microsoftAuthenticationOptions.IsConfigured);
+
 // Mock auth endpoints are only safe when the active service mode explicitly includes them.
 // Without this gate, /auth/mock/signin would let anyone mint a session cookie and bypass
-// real Microsoft Entra authentication when that is the only configured provider.
-// Block only when explicitly set to "microsoft" — all other modes (mock, combined, auto) need mock routes.
-var authServiceMode = builder.Configuration.GetSection("Authentication").GetValue<string>("Service")
-    ?? AspireApp.Web.Services.AuthenticationOptions.DefaultService;
-var mockEndpointsEnabled = !string.Equals(authServiceMode, AspireApp.Web.Services.AuthenticationOptions.MicrosoftService, StringComparison.OrdinalIgnoreCase);
+// real Microsoft Entra authentication when the effective mode is live Microsoft.
+var mockEndpointsEnabled = !string.Equals(
+    effectiveAuthService,
+    AspireApp.Web.Services.AuthenticationOptions.MicrosoftService,
+    StringComparison.OrdinalIgnoreCase);
 
 if (mockEndpointsEnabled)
 {
@@ -188,9 +196,7 @@ if (mockEndpointsEnabled)
 
 // Only expose the OIDC challenge endpoint when the Microsoft scheme is actually registered.
 // Without this guard, an unregistered scheme would produce a 500 with internal details.
-var microsoftOidcRegistered = builder.Configuration
-    .GetSection(MicrosoftEntraAuthenticationOptions.SectionName)
-    .Get<MicrosoftEntraAuthenticationOptions>()?.IsConfigured ?? false;
+var microsoftOidcRegistered = microsoftAuthenticationOptions.IsConfigured;
 
 if (microsoftOidcRegistered)
 {

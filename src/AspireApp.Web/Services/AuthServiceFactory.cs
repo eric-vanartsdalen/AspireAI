@@ -8,10 +8,12 @@ namespace AspireApp.Web.Services;
 public sealed class AuthServiceFactory(
     IEnumerable<AuthServiceRegistration> registrations,
     IServiceProvider services,
-    IOptions<AuthenticationOptions> options)
+    IOptions<AuthenticationOptions> options,
+    IOptions<MicrosoftEntraAuthenticationOptions> microsoftOptions)
 {
     private readonly IServiceProvider _services = services;
     private readonly AuthenticationOptions _options = options.Value;
+    private readonly MicrosoftEntraAuthenticationOptions _microsoftOptions = microsoftOptions.Value;
     private readonly Dictionary<string, Type> _registrations = registrations
         .GroupBy(registration => registration.ServiceKey, StringComparer.OrdinalIgnoreCase)
         .ToDictionary(
@@ -25,9 +27,7 @@ public sealed class AuthServiceFactory(
 
     public IAuthService Create()
     {
-        var serviceKey = string.IsNullOrWhiteSpace(_options.Service)
-            ? AuthenticationOptions.DefaultService
-            : _options.Service.Trim();
+        var serviceKey = ResolveServiceKey();
 
         if (!_registrations.TryGetValue(serviceKey, out var implementationType))
         {
@@ -36,5 +36,10 @@ public sealed class AuthServiceFactory(
         }
 
         return (IAuthService)_services.GetRequiredService(implementationType);
+    }
+
+    private string ResolveServiceKey()
+    {
+        return AuthenticationOptions.ResolveEffectiveService(_options.Service, _microsoftOptions.IsConfigured);
     }
 }

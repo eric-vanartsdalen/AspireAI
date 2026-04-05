@@ -9,6 +9,90 @@
 
 <!-- Append new learnings below. Each entry is something lasting about the project. -->
 
+### 2026-04-05 — Sign-in page now hard-links live Microsoft auth and treats TenantId as optional
+
+**Status:** Implemented and validated.
+
+**Implementation Results:**
+- ✅ `MicrosoftEntraAuthenticationOptions.IsConfigured` now activates live Microsoft auth when `ClientId` and `ClientSecret` are present; blank `TenantId` falls through to the existing `common` authority behavior
+- ✅ `SignInPanel.razor` now renders the live Microsoft path as a direct link to `/auth/microsoft/signin`, so the hosted challenge fires even before Blazor event handling would matter
+- ✅ Demo-only providers are now explicitly labeled (`Microsoft demo`, `Google demo`) so mixed-mode testing does not masquerade as real provider sign-in
+- ✅ README guidance now calls out personal Microsoft accounts (`@hotmail.com`, etc.) and the `common` / `organizations` / `consumers` tenant options
+
+**Key Paths:**
+- `src/AspireApp.Web/Components/Shared/SignInPanel.razor` — hosted-provider redirect link and clearer demo copy
+- `src/AspireApp.Web/Services/MicrosoftEntraAuthenticationOptions.cs` — live Microsoft configuration gate
+- `src/AspireApp.Web/Services/MicrosoftEntraAuthService.cs` — provider copy and config error guidance
+- `src/AspireApp.Web/Services/MockAuthCatalog.cs` — explicit demo-provider labels
+- `src/AspireApp.WebTest/Tests/MicrosoftEntraAuthServiceTests.cs` / `AuthServiceFactoryTests.cs` — regression coverage for blank-tenant live auth activation
+
+**Validation Notes:**
+- `dotnet build src\AspireApp.ServiceDefaults\AspireApp.ServiceDefaults.csproj --nologo -p:BuildProjectReferences=false -p:GenerateAssemblyInfo=false -p:GenerateTargetFrameworkAttribute=false`
+- `dotnet build src\AspireApp.Web\AspireApp.Web.csproj --nologo -p:UseAppHost=false -p:BuildProjectReferences=false -p:GenerateEmbeddedValidatableTypeAttribute=false -p:IncludeEmbeddedValidationGlobalUsing=false`
+- `dotnet build src\AspireApp.AppHost\AspireApp.AppHost.csproj --nologo -p:BuildProjectReferences=false`
+- `dotnet build src\AspireApp.WebTest\AspireApp.WebTest.csproj --nologo -p:BuildProjectReferences=false`
+- `dotnet test src\AspireApp.WebTest\AspireApp.WebTest.csproj --nologo --no-build --filter "MicrosoftEntraAuthServiceTests|AuthServiceFactoryTests"`
+
+### 2026-04-05 — `Authentication:Service=auto` now behaves like the live app path
+
+**Status:** Implemented and validated.
+
+**Implementation Results:**
+- ✅ `AuthenticationOptions.ResolveEffectiveService(...)` is now the shared resolver for DI selection and HTTP endpoint exposure
+- ✅ When Microsoft client secrets are present, `auto` resolves to `microsoft` instead of `combined`
+- ✅ Mock auth endpoints are disabled whenever the effective mode is live Microsoft, removing the demo-user picker from the default live sign-in path
+- ✅ Explicit mixed-mode testing still exists via `Authentication:Service=combined`
+
+**Key Paths:**
+- `src/AspireApp.Web/Services/AuthenticationOptions.cs` — effective auth-mode resolver
+- `src/AspireApp.Web/Services/AuthServiceFactory.cs` — UI auth implementation selection
+- `src/AspireApp.Web/Program.cs` — effective-mode gating for mock vs Microsoft endpoints
+- `src/AspireApp.WebTest/Tests/AuthServiceFactoryTests.cs` — regression coverage for `auto` mode resolution
+
+**Validation Notes:**
+- `dotnet test src\AspireApp.WebTest\AspireApp.WebTest.csproj --no-restore --filter "AuthServiceFactoryTests|MicrosoftEntraAuthServiceTests|MockAuthServiceTests"` passes
+- `dotnet build AspireApp.sln --no-restore` passes
+
+### 2026-04-05 — Live Microsoft auth should be auto-discovered, not hidden behind a separate auth-mode toggle
+
+**Status:** Implemented.
+
+**Implementation Results:**
+- ✅ `Authentication:Service` now defaults to `auto`, which resolves to `combined` when Microsoft client settings are present and falls back to `mock` otherwise
+- ✅ The landing/sign-in UX now treats Microsoft as a direct hosted-login action instead of a two-step picker flow
+- ✅ Demo providers remain available for local shell checks without blocking the real Microsoft path
+
+**Key Paths:**
+- `src/AspireApp.Web/Services/AuthServiceFactory.cs` — auto-selects combined vs mock auth service
+- `src/AspireApp.Web/Components/Shared/SignInPanel.razor` — direct Microsoft button action; demo users stay selectable
+- `src/AspireApp.Web/appsettings*.json` — default auth mode switched to `auto`
+- `README.md` — local Microsoft setup no longer requires a separate service toggle
+
+**Validation Notes:**
+- `dotnet build AspireApp.sln --nologo` succeeds
+- Focused auth safety tests pass: `dotnet test src\AspireApp.WebTest\AspireApp.WebTest.csproj --no-build --nologo --filter "MicrosoftEntraAuthServiceTests|MockAuthServiceTests|AuthServiceFactoryTests"`
+
+### 2026-04-05 — Microsoft Entra ID plugged into the existing Blazor auth seam
+
+**Status:** Implemented for manual local testing while keeping mock/demo regression paths intact.
+
+**Implementation Results:**
+- ✅ `IAuthService` stays the UI seam; `MicrosoftEntraAuthService` adds a real OIDC provider and `CompositeAuthService` can expose live + mock providers together
+- ✅ ASP.NET Core cookie + OpenID Connect middleware now own the Microsoft challenge/callback/sign-out flow instead of custom token handling
+- ✅ Tenant seeding for real Microsoft users stays aligned with the current shell via `Authentication:Microsoft:UserTenantSeeds`, `DomainTenantSeeds`, and `DefaultAppTenantId`
+- ✅ Mock endpoints and mock/demo provider flow remain unchanged so the current regression tests still target the demo path
+
+**Key Paths:**
+- `src/AspireApp.Web/Services/AuthenticationServiceCollectionExtensions.cs` — cookie/OIDC wiring and Microsoft claim-to-app-user mapping
+- `src/AspireApp.Web/Services/MicrosoftEntraAuthService.cs` — live provider implementation behind `IAuthService`
+- `src/AspireApp.Web/Services/CompositeAuthService.cs` — combined provider catalog for manual live testing without dropping demo auth
+- `src/AspireApp.Web/Program.cs` — provider-specific challenge endpoint and provider-aware sign-out endpoint
+- `src/AspireApp.Web/appsettings*.json` / `README.md` — local configuration contract and manual setup guidance
+
+**Testing Notes:**
+- `dotnet build` succeeds after adding the OpenID Connect package and provider-aware auth wiring
+- Auth seam regressions are covered by `dotnet test src\AspireApp.WebTest\AspireApp.WebTest.csproj --no-build --filter "MicrosoftEntraAuthServiceTests|MockAuthServiceTests|AuthServiceFactoryTests"`
+
 ### 2026-04-05 — Mock auth UX foundation landed in Blazor shell
 
 **Status:** Implemented and validated.

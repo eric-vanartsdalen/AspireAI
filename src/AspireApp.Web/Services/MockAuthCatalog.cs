@@ -4,8 +4,8 @@ public static class MockAuthCatalog
 {
     private static readonly IReadOnlyList<AuthProviderOption> Providers =
     [
-        new("microsoft", "Microsoft", "Mock Entra-style sign-in for work accounts.", "provider-microsoft", true),
-        new("google", "Google", "Mock workspace sign-in for personal and shared docs.", "provider-google", true),
+        new("microsoft", "Microsoft demo", "Demo-only Microsoft-style sign-in for local UX checks.", "provider-microsoft", true),
+        new("google", "Google demo", "Demo-only Google-style sign-in for local UX checks.", "provider-google", true),
         new("demo", "Demo workspace", "Local demo identities for quick UX validation.", "provider-demo", true)
     ];
 
@@ -14,13 +14,13 @@ public static class MockAuthCatalog
         {
             ["microsoft"] =
             [
-                new("ms-avery-collins", "Avery Collins", "avery.collins@contoso.com", "microsoft", "Microsoft", "tenant-a"),
-                new("ms-maya-patel", "Maya Patel", "maya.patel@fabrikam.com", "microsoft", "Microsoft", "default")
+                new("ms-avery-collins", "Avery Collins", "avery.collins@contoso.com", "microsoft", "Microsoft demo", "tenant-a"),
+                new("ms-maya-patel", "Maya Patel", "maya.patel@fabrikam.com", "microsoft", "Microsoft demo", "default")
             ],
             ["google"] =
             [
-                new("google-gabriel-torres", "Gabriel Torres", "gabriel.torres@gmail.com", "google", "Google", "tenant-b"),
-                new("google-priya-shah", "Priya Shah", "priya.shah@gmail.com", "google", "Google", "default")
+                new("google-gabriel-torres", "Gabriel Torres", "gabriel.torres@gmail.com", "google", "Google demo", "tenant-b"),
+                new("google-priya-shah", "Priya Shah", "priya.shah@gmail.com", "google", "Google demo", "default")
             ],
             ["demo"] =
             [
