@@ -6,200 +6,232 @@ using System.Threading.Tasks;
 
 public partial class Program
 {
-	public static async Task Main(string[] args)
-	{
-		// ASPIRE LOCAL SETUP
-		var builder = DistributedApplication.CreateBuilder(args);
-		var repositoryRoot = Path.GetFullPath(Path.Combine(builder.Environment.ContentRootPath, "..", ".."));
-		var sharedDataPath = ResolveSharedPath(builder.Configuration, "SharedPaths:Data", repositoryRoot, "data");
-		var sharedDatabasePath = ResolveSharedPath(builder.Configuration, "SharedPaths:Database", repositoryRoot, "database");
-		var sharedDatabaseFileName = builder.Configuration.GetValue<string>("SharedPaths:DatabaseFileName");
-		if (string.IsNullOrWhiteSpace(sharedDatabaseFileName))
-		{
-			sharedDatabaseFileName = "data-resources.db";
-		}
-		var sharedDatabaseFile = Path.Combine(sharedDatabasePath, sharedDatabaseFileName);
-		var sharedDatabaseConnectionString = $"Data Source={sharedDatabaseFile}";
+    public static async Task Main(string[] args)
+    {
+        // ASPIRE LOCAL SETUP
+        var builder = DistributedApplication.CreateBuilder(args);
+        var repositoryRoot = Path.GetFullPath(Path.Combine(builder.Environment.ContentRootPath, "..", ".."));
+        var sharedDataPath = ResolveSharedPath(builder.Configuration, "SharedPaths:Data", repositoryRoot, "data");
+        var sharedDatabasePath = ResolveSharedPath(builder.Configuration, "SharedPaths:Database", repositoryRoot, "database");
 
-		Directory.CreateDirectory(sharedDataPath);
-		Directory.CreateDirectory(sharedDatabasePath);
-		if (!File.Exists(sharedDatabaseFile))
-		{
-			using var _ = File.Create(sharedDatabaseFile);
-		}
+        // SQLite database file setup with configuration and fallback
+        var sharedDatabaseFileName = builder.Configuration.GetValue<string>("SharedPaths:DatabaseFileName");
+        if (string.IsNullOrWhiteSpace(sharedDatabaseFileName))
+        {
+            sharedDatabaseFileName = "data-resources.db";
+        }
+        var sharedDatabaseFile = Path.Combine(sharedDatabasePath, sharedDatabaseFileName);
+        var sharedDatabaseConnectionString = $"Data Source={sharedDatabaseFile}";
+        Directory.CreateDirectory(sharedDataPath);
+        Directory.CreateDirectory(sharedDatabasePath);
+        if (!File.Exists(sharedDatabaseFile))
+        {
+            using var _ = File.Create(sharedDatabaseFile);
+        }
 
-		// Config with .NET Aspire
-		var aiChatModel = builder.AddParameterFromConfiguration("AI-Chat-Model", "AI-Chat-Model");
-		var aiEmbeddings = builder.AddParameterFromConfiguration("AI-Embedding-Model", "AI-Embedding-Model");
-		var aiEndpoint = builder.AddParameterFromConfiguration("AI-Endpoint", "AI-Endpoint");
+        // Config with .NET Aspire
+        var aiChatModel = builder.AddParameterFromConfiguration("AI-Chat-Model", "AI-Chat-Model");
+        var aiEmbeddings = builder.AddParameterFromConfiguration("AI-Embedding-Model", "AI-Embedding-Model");
+        var aiEndpoint = builder.AddParameterFromConfiguration("AI-Endpoint", "AI-Endpoint");
 
-		// API Service
-		var apiService = builder.AddProject<Projects.AspireApp_ApiService>("apiservice")
-			.WithHttpHealthCheck("/health");
+        // POSTGRESQL USER AND PARAMETER SETUP
+        var postgresUser = builder.AddParameter("postgres-user", "postgres");
+        var postgresPass = builder.AddParameter("postgres-pass", "P0stgresPwd!", secret: true);
+        var postgresUserValue = await postgresUser.Resource.GetValueAsync(CancellationToken.None);
+        var postgresPassValue = await postgresPass.Resource.GetValueAsync(CancellationToken.None);
+        // assert postgresPassValue is not null or empty to avoid runtime errors later
+        if (string.IsNullOrWhiteSpace(postgresPassValue))
+        {
+            throw new ArgumentException("Postgres password cannot be null or empty. Please provide a valid password through configuration.");
+        }
 
-		// SETUP OLLAMA & MODEL CONTAINERS
-		var chatModelName = builder.Configuration["AI-Chat-Model"] ?? "phi4-mini:latest";
-		var embeddingModelName = builder.Configuration["AI-Embedding-Model"] ?? "nomic-embed-text:latest";
-		var ollama = builder.AddOllama("ollama")
-			.WithAnnotation(new ContainerImageAnnotation
-			{
-				Image = "ollama/ollama",
-				Tag = "latest"
-			})
-			.WithDataVolume()
-			.WithGPUSupport();
-		var appmodel = ollama.AddModel("chat", chatModelName);
-		var embeddingmodel = ollama.AddModel("embedding", embeddingModelName);
+        // NEO4J USER AND PARAMETER SETUP
+        var neo4jUser = builder.AddParameter("neo4j-user", "neo4j");
+        var neo4jPass = builder.AddParameter("neo4j-pass", "neo4j@secret", secret: true);
+        // Retrieve parameter values asynchronously to avoid using obsolete .Value
+        var neo4jUserValue = await neo4jUser.Resource.GetValueAsync(CancellationToken.None);
+        var neo4jPassValue = await neo4jPass.Resource.GetValueAsync(CancellationToken.None);
+        // Configure Neo4j build options
+        var useLightweightBuild = builder.Configuration["USE_LIGHTWEIGHT_PYTHON"] ?? "false";
+        var useLightweightNeo4j = builder.Configuration["USE_LIGHTWEIGHT_NEO4J"] ?? "false";
+        var neo4jDockerfile = useLightweightNeo4j.ToLower() == "true" ? "Dockerfile.lightweight" : "Dockerfile";
 
-		// Add a NEO4J container for graph database with caching optimizations
-		var neo4jUser = builder.AddParameter("neo4j-user", "neo4j");
-		var neo4jPass = builder.AddParameter("neo4j-pass", "neo4j@secret", secret: true);
+        // PROJECTS SETUP
+        // Postgres SQL service
+        var postgres = builder.AddPostgres("postgres", postgresUser, postgresPass)
+            .WithBindMount("../../database/postgres/", "/var/lib/postgresql/data")
+            .WithPgWeb()
+            .AddDatabase("appdb");
+        // Add Redis cache service
+        var redis = builder.AddRedis("redis-cache")
+            .WithBindMount("../../database/redis/", "/data")
+            .WithRedisCommander();
 
-		// Retrieve parameter values asynchronously to avoid using obsolete .Value
-		var neo4jUserValue = await neo4jUser.Resource.GetValueAsync(CancellationToken.None);
-		var neo4jPassValue = await neo4jPass.Resource.GetValueAsync(CancellationToken.None);
+        // API Service
+        var apiService = builder.AddProject<Projects.AspireApp_ApiService>("apiservice")
+            .WithHttpHealthCheck("/health");
 
-		// Configure Neo4j build options
-		var useLightweightBuild = builder.Configuration["USE_LIGHTWEIGHT_PYTHON"] ?? "false";
-		var useLightweightNeo4j = builder.Configuration["USE_LIGHTWEIGHT_NEO4J"] ?? "false";
-		var neo4jDockerfile = useLightweightNeo4j.ToLower() == "true" ? "Dockerfile.lightweight" : "Dockerfile";
+        // SETUP OLLAMA & MODEL CONTAINERS
+        var chatModelName = builder.Configuration["AI-Chat-Model"] ?? "phi4-mini:latest";
+        var embeddingModelName = builder.Configuration["AI-Embedding-Model"] ?? "nomic-embed-text:latest";
+        var ollama = builder.AddOllama("ollama")
+            .WithAnnotation(new ContainerImageAnnotation
+            {
+                Image = "ollama/ollama",
+                Tag = "latest"
+            })
+            .WithDataVolume()
+            .WithGPUSupport();
+        var appmodel = ollama.AddModel("chat", chatModelName);
+        var embeddingmodel = ollama.AddModel("embedding", embeddingModelName);
 
-		var neo4jDb = builder.AddDockerfile("graph-db", "../../src/AspireApp.Neo4jService/", neo4jDockerfile)
-			.WithHttpEndpoint(port: 7474, targetPort: 7474, name: "http")  // Neo4j browser interface
-			.WithEndpoint(port: 7687, targetPort: 7687, name: "bolt")      // Neo4j bolt protocol
-			.WithBindMount("../../database/neo4j/data", "/data")           // Persistent data
-			.WithBindMount("../../database/neo4j/logs", "/logs")           // Logs persistence
-			.WithBindMount("../../database/neo4j/plugins", "/plugins")     // Plugin persistence
-			.WithBindMount("../../database/neo4j/conf", "/conf")           // Configuration persistence
-			.WithBindMount("../../database/neo4j/import", "/import")       // Import persistence
-			.WithBindMount("../../database/neo4j/metrics", "/metrics")     // Metrics persistence (optional)
-			.WithBindMount("../../database/neo4j/backup", "/backup")       // Backup directory (optional)															   
-			.WithEnvironment("NEO4J_AUTH", $"{neo4jUserValue}/{neo4jPassValue}")
-			.WithEnvironment("NEO4J_ACCEPT_LICENSE_AGREEMENT", "yes")
-			.WithEnvironment("DOCKER_BUILDKIT", "1")                      // Enable BuildKit for Neo4j too
-			.WithHttpHealthCheck("/");
 
-		var neo4jBoltUri = ReferenceExpression.Create(
-			$"bolt://{neo4jDb.GetEndpoint("bolt").Property(EndpointProperty.HostAndPort)}");
 
-		// Setup Python services environment with optimized caching and build settings
-		var pythonDockerfile = useLightweightBuild.ToLower() == "true" ? "Dockerfile.lightweight" : "Dockerfile";
+        // Add a NEO4J container for graph database with caching optimizations
+        var neo4jDb = builder.AddDockerfile("graph-db", "../../src/AspireApp.Neo4jService/", neo4jDockerfile)
+            .WithHttpEndpoint(port: 7474, targetPort: 7474, name: "http")  // Neo4j browser interface
+            .WithEndpoint(port: 7687, targetPort: 7687, name: "bolt")      // Neo4j bolt protocol
+            .WithBindMount("../../database/neo4j/data", "/data")           // Persistent data
+            .WithBindMount("../../database/neo4j/logs", "/logs")           // Logs persistence
+            .WithBindMount("../../database/neo4j/plugins", "/plugins")     // Plugin persistence
+            .WithBindMount("../../database/neo4j/conf", "/conf")           // Configuration persistence
+            .WithBindMount("../../database/neo4j/import", "/import")       // Import persistence
+            .WithBindMount("../../database/neo4j/metrics", "/metrics")     // Metrics persistence (optional)
+            .WithBindMount("../../database/neo4j/backup", "/backup")       // Backup directory (optional)															   
+            .WithEnvironment("NEO4J_AUTH", $"{neo4jUserValue}/{neo4jPassValue}")
+            .WithEnvironment("NEO4J_ACCEPT_LICENSE_AGREEMENT", "yes")
+            .WithEnvironment("DOCKER_BUILDKIT", "1")                      // Enable BuildKit for Neo4j too
+            .WithHttpHealthCheck("/");
 
-		var pythonServices = builder
-			.AddDockerfile("python-service", "../../src/AspireApp.PythonServices/", pythonDockerfile)
-			.WithHttpEndpoint(port: 8000, targetPort: 8000, name: "http")
-			.WithBindMount(sharedDataPath, "/app/data")
-			.WithBindMount(sharedDatabasePath, "/app/docs-database")                // Align with Python docs-mounted candidate
-			.WithVolume("python-pip-cache", "/root/.cache/pip")                   // Persist pip cache
-			.WithEnvironment("NEO4J_URI", neo4jBoltUri)
-			.WithEnvironment("NEO4J_USER", neo4jUser.Resource)
-			.WithEnvironment("NEO4J_PASSWORD", neo4jPass.Resource)
-			.WithEnvironment("PIP_CACHE_DIR", "/root/.cache/pip")                  // Use persistent pip cache
-			.WithEnvironment("DOCKER_BUILDKIT", "1")                               // Enable BuildKit for better caching
-			.WithEnvironment("ASPIRE_DB_PATH", $"/app/docs-database/{sharedDatabaseFileName}")  // Prefer docs-mounted path
-			.WithHttpHealthCheck("/health")
-			.WaitFor(neo4jDb);  // Ensure Neo4j starts before Python service
+        var neo4jBoltUri = ReferenceExpression.Create(
+            $"bolt://{neo4jDb.GetEndpoint("bolt").Property(EndpointProperty.HostAndPort)}");
 
-		var pythonRunAsRoot = builder.Configuration.GetValue<bool>("PYTHON_RUN_AS_ROOT");
-		if (pythonRunAsRoot)
-		{
-			pythonServices.WithContainerRuntimeArgs("--user", "0");
-		}
+        // Setup Python services environment with optimized caching and build settings
+        var pythonDockerfile = useLightweightBuild.ToLower() == "true" ? "Dockerfile.lightweight" : "Dockerfile";
 
-		// SETUP CONTAINER LightRAG service
-		// see: https://github.com/hkuds/LightRAG
-		// video: https://www.youtube.com/watch?v=g21royNJ4fw
-		var lightrag = builder.AddContainer("lightrag", "ghcr.io/hkuds/lightrag")
-			.WithReference(ollama)
-			.WithBindMount(sharedDataPath, "/app/data")
-			.WithEnvironment("LIGHTRAG_KV_STORAGE", "JsonKVStorage")
-			.WithEnvironment("LIGHTRAG_DOC_STATUS_STORAGE", "JsonDocStatusStorage")
-			.WithEnvironment("LIGHTRAG_GRAPH_STORAGE", "Neo4JStorage")
-			.WithEnvironment("LIGHTRAG_VECTOR_STORAGE", "NanoVectorDBStorage")
-			.WithEnvironment("ENTITY_TYPES", "['Person', 'Creature', 'Organization', 'Location', 'Event', 'Concept', 'Method', 'Content', 'Data', 'Artifact', 'NaturalObject']")
-			.WithEnvironment("WORKERS", "2")
-			.WithEnvironment("MAX_ASYNC", "1")
-			.WithEnvironment("WEBUI_TITLE", "Local LightRAG")
-			.WithEnvironment("WEBUI_DESCRIPTION", "Local LightRAG Simple and Fast Graph Based RAG System")
-			.WithEnvironment("CHUNK_SIZE", "512")
-			.WithEnvironment("CHUNK_OVERLAP", "32")
-			.WithEnvironment("LLM_TIMEOUT", "420")
-			.WithEnvironment("LLM_BINDING", "ollama")
-			.WithEnvironment("LLM_BINDING_HOST", ollama.GetEndpoint("http"))
-			.WithEnvironment("LLM_MODEL", aiChatModel.Resource)
-			.WithEnvironment("MAX_PARALLEL_INSERT", "2")
-			.WithEnvironment("EMBEDDING_FUNC_MAX_ASYNC", "1")
-			.WithEnvironment("EMBEDDING_BATCH_NUM", "1")
-			.WithEnvironment("EMBEDDING_TIMEOUT", "420")
-			.WithEnvironment("EMBEDDING_BINDING_HOST", ollama.GetEndpoint("http"))
-			.WithEnvironment("EMBEDDING_MODEL", aiEmbeddings.Resource)
-			.WithEnvironment("EMBEDDING_DIM", "1024")
-			.WithEnvironment("INPUT_DIR", "/app/data/inputs")
-			.WithEnvironment("WORKING_DIR", "/app/data/rag_storage")
-			.WithEnvironment("NEO4J_URI", neo4jBoltUri)
-			.WithEnvironment("NEO4J_USERNAME", neo4jUser.Resource)
-			.WithEnvironment("NEO4J_PASSWORD", neo4jPass.Resource)
-			.WithEnvironment("NEO4J_DATABASE", "neo4j")
-			.WithEnvironment("NEO4J_MAX_CONNECTION_POOL_SIZE", "100")
-			.WithEnvironment("NEO4J_CONNECTION_TIMEOUT", "30")
-			.WithEnvironment("NEO4J_CONNECTION_ACQUISITION_TIMEOUT", "30")
-			.WithEnvironment("NEO4J_MAX_TRANSACTION_RETRY_TIME", "30")
-			.WithEnvironment("NEO4J_MAX_CONNECTION_LIFETIME", "420")
-			.WithEnvironment("NEO4J_LIVENESS_CHECK_TIMEOUT", "30")
-			.WithEnvironment("NEO4J_KEEP_ALIVE", "true")
-			.WithHttpEndpoint(port: 9621, targetPort: 9621, name: "http")
-			.WaitFor(ollama)
-			.WaitFor(neo4jDb);
+        var pythonServices = builder
+            .AddDockerfile("python-service", "../../src/AspireApp.PythonServices/", pythonDockerfile)
+            .WithHttpEndpoint(port: 8000, targetPort: 8000, name: "http")
+            .WithBindMount(sharedDataPath, "/app/data")
+            .WithBindMount(sharedDatabasePath, "/app/docs-database")               // Align with Python docs-mounted candidate
+            .WithVolume("python-pip-cache", "/root/.cache/pip")                    // Persist pip cache
+            .WithEnvironment("POSTGRES_USER", postgresUser.Resource)               // Pass Postgres username to Python services
+            .WithEnvironment("POSTGRES_PASSWORD", postgresPass.Resource)           // Pass Postgres password to Python services
+            .WithEnvironment("NEO4J_URI", neo4jBoltUri)                            // Pass Neo4j connection info to Python services
+            .WithEnvironment("NEO4J_USER", neo4jUser.Resource)                     // Neo4j username for Python services
+            .WithEnvironment("NEO4J_PASSWORD", neo4jPass.Resource)                 // Neo4j password for Python services
+            .WithEnvironment("PIP_CACHE_DIR", "/root/.cache/pip")                  // Use persistent pip cache
+            .WithEnvironment("DOCKER_BUILDKIT", "1")                               // Enable BuildKit for better caching
+            .WithEnvironment("ASPIRE_DB_PATH", $"/app/docs-database/{sharedDatabaseFileName}")  // Prefer docs-mounted path
+            .WithHttpHealthCheck("/health")
+            .WaitFor(postgres)  // Ensure Postgres starts before Python service
+            .WaitFor(redis)     // Ensure Redis starts before Python service
+            .WaitFor(neo4jDb);  // Ensure Neo4j starts before Python service
 
-		pythonServices.WithEnvironment("LIGHTRAG_URL", lightrag.GetEndpoint("http"));
+        var pythonRunAsRoot = builder.Configuration.GetValue<bool>("PYTHON_RUN_AS_ROOT");
+        if (pythonRunAsRoot)
+        {
+            pythonServices.WithContainerRuntimeArgs("--user", "0");
+        }
 
-		// Now you can reference it in the web frontend
-		builder.AddProject<Projects.AspireApp_Web>("webfrontend")
-			.WithExternalHttpEndpoints()
-			.WithHttpHealthCheck("/health")
-			.WithReference(apiService)
-			.WithReference(ollama)
-			.WithReference(appmodel)
-			.WithEnvironment("AI-Endpoint", aiEndpoint.Resource)
-			.WithEnvironment("AI-Chat-Model", aiChatModel.Resource)
-			.WithEnvironment("ConnectionStrings__DefaultConnection", sharedDatabaseConnectionString)
-			.WithEnvironment("FileUpload__DataDirectory", sharedDataPath)
-			.WithEnvironment("NEO4J_HTTP_URL", neo4jDb.GetEndpoint("http"))     // Neo4j browser endpoint
-			.WithEnvironment("NEO4J_BOLT_URL", neo4jBoltUri)                    // Neo4j bolt endpoint
-			.WithEnvironment("NEO4J_AUTH", $"neo4j/{neo4jPassValue}")               // Neo4j credentials
-			.WithEnvironment("PYTHON_SERVICE_URL", pythonServices.GetEndpoint("http")) // Get Python service endpoint
-			.WaitFor(ollama)
-			.WaitFor(appmodel)
-			.WaitFor(apiService)
-			.WaitFor(neo4jDb)
-			.WaitFor(pythonServices);
-		// When running from the TestFixture, this causes a System.Threading.Tasks.TaskCanceledException: 'A task was canceled.'
-		try
-		{
-			await builder.Build().RunAsync();
-		}
-		catch (TaskCanceledException)
-		{
-			// Expected when running from TestFixture, ignore to allow graceful shutdown
-			Console.WriteLine("Application run was canceled, likely due to test fixture shutdown. Ignoring exception for graceful exit.");
-		}
+        // SETUP CONTAINER LightRAG service
+        // see: https://github.com/hkuds/LightRAG
+        // video: https://www.youtube.com/watch?v=g21royNJ4fw
+        var lightrag = builder.AddContainer("lightrag", "ghcr.io/hkuds/lightrag")
+            .WithReference(ollama)
+            .WithBindMount(sharedDataPath, "/app/data")
+            .WithEnvironment("LIGHTRAG_KV_STORAGE", "JsonKVStorage")
+            .WithEnvironment("LIGHTRAG_DOC_STATUS_STORAGE", "JsonDocStatusStorage")
+            .WithEnvironment("LIGHTRAG_GRAPH_STORAGE", "Neo4JStorage")
+            .WithEnvironment("LIGHTRAG_VECTOR_STORAGE", "NanoVectorDBStorage")
+            .WithEnvironment("ENTITY_TYPES", "['Person', 'Creature', 'Organization', 'Location', 'Event', 'Concept', 'Method', 'Content', 'Data', 'Artifact', 'NaturalObject']")
+            .WithEnvironment("WORKERS", "2")
+            .WithEnvironment("MAX_ASYNC", "1")
+            .WithEnvironment("WEBUI_TITLE", "Local LightRAG")
+            .WithEnvironment("WEBUI_DESCRIPTION", "Local LightRAG Simple and Fast Graph Based RAG System")
+            .WithEnvironment("CHUNK_SIZE", "512")
+            .WithEnvironment("CHUNK_OVERLAP", "32")
+            .WithEnvironment("LLM_TIMEOUT", "420")
+            .WithEnvironment("LLM_BINDING", "ollama")
+            .WithEnvironment("LLM_BINDING_HOST", ollama.GetEndpoint("http"))
+            .WithEnvironment("LLM_MODEL", aiChatModel.Resource)
+            .WithEnvironment("MAX_PARALLEL_INSERT", "2")
+            .WithEnvironment("EMBEDDING_FUNC_MAX_ASYNC", "1")
+            .WithEnvironment("EMBEDDING_BATCH_NUM", "1")
+            .WithEnvironment("EMBEDDING_TIMEOUT", "420")
+            .WithEnvironment("EMBEDDING_BINDING_HOST", ollama.GetEndpoint("http"))
+            .WithEnvironment("EMBEDDING_MODEL", aiEmbeddings.Resource)
+            .WithEnvironment("EMBEDDING_DIM", "1024")
+            .WithEnvironment("INPUT_DIR", "/app/data/inputs")
+            .WithEnvironment("WORKING_DIR", "/app/data/rag_storage")
+            .WithEnvironment("NEO4J_URI", neo4jBoltUri)
+            .WithEnvironment("NEO4J_USERNAME", neo4jUser.Resource)
+            .WithEnvironment("NEO4J_PASSWORD", neo4jPass.Resource)
+            .WithEnvironment("NEO4J_DATABASE", "neo4j")
+            .WithEnvironment("NEO4J_MAX_CONNECTION_POOL_SIZE", "100")
+            .WithEnvironment("NEO4J_CONNECTION_TIMEOUT", "30")
+            .WithEnvironment("NEO4J_CONNECTION_ACQUISITION_TIMEOUT", "30")
+            .WithEnvironment("NEO4J_MAX_TRANSACTION_RETRY_TIME", "30")
+            .WithEnvironment("NEO4J_MAX_CONNECTION_LIFETIME", "420")
+            .WithEnvironment("NEO4J_LIVENESS_CHECK_TIMEOUT", "30")
+            .WithEnvironment("NEO4J_KEEP_ALIVE", "true")
+            .WithHttpEndpoint(port: 9621, targetPort: 9621, name: "http")
+            .WaitFor(ollama)
+            .WaitFor(neo4jDb);
 
-	}
+        pythonServices.WithEnvironment("LIGHTRAG_URL", lightrag.GetEndpoint("http"));
 
-	private static string ResolveSharedPath(
-		IConfiguration configuration,
-		string configurationKey,
-		string repositoryRoot,
-		string defaultRelativePath)
-	{
-		var configuredPath = configuration.GetValue<string>(configurationKey);
-		var candidatePath = string.IsNullOrWhiteSpace(configuredPath)
-			? Path.Combine(repositoryRoot, defaultRelativePath)
-			: configuredPath;
+        // Now you can reference it in the web frontend
+        builder.AddProject<Projects.AspireApp_Web>("webfrontend")
+            .WithExternalHttpEndpoints()
+            .WithHttpHealthCheck("/health")
+            .WithReference(apiService)
+            .WithReference(ollama)
+            .WithReference(appmodel)
+            .WithEnvironment("AI-Endpoint", aiEndpoint.Resource)
+            .WithEnvironment("AI-Chat-Model", aiChatModel.Resource)
+            .WithEnvironment("ConnectionStrings__DefaultConnection", sharedDatabaseConnectionString) // SQLite connection string for web frontend
+            .WithEnvironment("POSTGRES_USER", postgresUser.Resource)               // Pass Postgres username to Web UI services
+            .WithEnvironment("POSTGRES_PASSWORD", postgresPass.Resource)           // Pass Postgres password to Web UI services
+            .WithEnvironment("FileUpload__DataDirectory", sharedDataPath)          // Shared data directory for file uploads and processing
+            .WithEnvironment("NEO4J_HTTP_URL", neo4jDb.GetEndpoint("http"))        // Neo4j browser endpoint
+            .WithEnvironment("NEO4J_BOLT_URL", neo4jBoltUri)                       // Neo4j bolt endpoint
+            .WithEnvironment("NEO4J_AUTH", $"neo4j/{neo4jPassValue}")              // Neo4j credentials
+            .WithEnvironment("PYTHON_SERVICE_URL", pythonServices.GetEndpoint("http")) // Get Python service endpoint
+            .WaitFor(ollama)
+            .WaitFor(appmodel)
+            .WaitFor(apiService)
+            .WaitFor(postgres)
+            .WaitFor(redis)
+            .WaitFor(neo4jDb)
+            .WaitFor(pythonServices);
+        // When running from the TestFixture, this causes a System.Threading.Tasks.TaskCanceledException: 'A task was canceled.'
+        try
+        {
+            await builder.Build().RunAsync();
+        }
+        catch (TaskCanceledException)
+        {
+            // Expected when running from TestFixture, ignore to allow graceful shutdown
+            Console.WriteLine("Application run was canceled, likely due to test fixture shutdown. Ignoring exception for graceful exit.");
+        }
 
-		return Path.GetFullPath(
-			Path.IsPathRooted(candidatePath)
-				? candidatePath
-				: Path.Combine(repositoryRoot, candidatePath));
-	}
+    }
+
+    private static string ResolveSharedPath(
+        IConfiguration configuration,
+        string configurationKey,
+        string repositoryRoot,
+        string defaultRelativePath)
+    {
+        var configuredPath = configuration.GetValue<string>(configurationKey);
+        var candidatePath = string.IsNullOrWhiteSpace(configuredPath)
+            ? Path.Combine(repositoryRoot, defaultRelativePath)
+            : configuredPath;
+
+        return Path.GetFullPath(
+            Path.IsPathRooted(candidatePath)
+                ? candidatePath
+                : Path.Combine(repositoryRoot, candidatePath));
+    }
 }
