@@ -685,6 +685,28 @@
 ---
 
 
+
+## Core Context (Summarized from 2025-11-02 — 2026-03-26)
+
+**Foundational Work:**
+- **2025-11-02:** Auth UX assessment + blueprint (identified need for unauthenticated landing + mock providers; designed pluggable IAuthProvider abstraction)
+- **2026-02-21:** Deep .NET analysis of codebase structure, cross-agent findings, squad orchestration completion
+- **2026-02-27:** Cross-agent coordination during P0: upload path normalization, Python footprint minimization, DocumentPage FK fixes
+- **2026-03-20:** P0 completion: upload status casing, Python footprint, Aspire dashboard test harness
+- **2026-03-21:** Aspire dashboard auth capture and redirect/title poll refinement (Bob's rejection → Jeff's fix)
+- **2026-03-26:** FlowEndToEnd FastAPI proof harness creation; detailed trace of upload flow + ingestion pipeline
+- **2026-04-05:** Postgres cutover coordination; BRAIN pivot context established
+
+**Key Learnings from Core Context:**
+1. Pluggable auth pattern: Separate interface (IAuthProvider) from implementation; inject via DI for swappability
+2. Session-scoped auth sufficient for dev/testing phases; persistence (JWT/cookies) deferred to Phase 6
+3. TenantContextService works well; tenant selection UI is functional end-to-end
+4. Mock providers reduce scope; real OAuth integrates without component rewrites
+5. Playwright tests require explicit page closure; keep WebTest fixtures lightweight
+6. Aspire dashboard integration supports auth capture for acceptance gate testing
+
+---
+
 ### 2026-04-05 — Auth UX Blueprint Designed (Cross-Agent Consensus)
 
 **Agent Assessment:** Jeff designed concrete Blazor UX + services for mock auth.  
