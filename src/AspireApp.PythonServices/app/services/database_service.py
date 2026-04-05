@@ -9,7 +9,13 @@ from datetime import UTC, datetime
 from pathlib import Path, PureWindowsPath
 from typing import Any, Callable, Dict, List, Optional, Union
 
-from psycopg_pool import ConnectionPool as PsycopgConnectionPool
+try:
+    from psycopg_pool import ConnectionPool as PsycopgConnectionPool
+except ModuleNotFoundError as exc:
+    PsycopgConnectionPool = None
+    _PSYCOPG_POOL_IMPORT_ERROR = exc
+else:
+    _PSYCOPG_POOL_IMPORT_ERROR = None
 
 from ..models.models import Document, ProcessingStatus
 
@@ -25,6 +31,12 @@ class ConnectionPool:
         max_connections: int = 10,
         timeout: float = 30.0,
     ):
+        if PsycopgConnectionPool is None:
+            raise RuntimeError(
+                "psycopg_pool is required to initialize DatabaseService. "
+                "Install src\\AspireApp.PythonServices\\requirements.txt before using the live PostgreSQL store."
+            ) from _PSYCOPG_POOL_IMPORT_ERROR
+
         self.conninfo = conninfo
         self.max_connections = max_connections
         self.timeout = timeout

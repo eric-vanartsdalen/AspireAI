@@ -1,8 +1,18 @@
 from __future__ import annotations
 
 import asyncio
+import sys
 import unittest
+from pathlib import Path
 from types import SimpleNamespace
+
+PROJECT_ROOT = Path(__file__).resolve().parents[1]
+TEST_ROOT = Path(__file__).resolve().parent
+
+sys.path = [path for path in sys.path if path != str(PROJECT_ROOT)]
+sys.path.insert(0, str(PROJECT_ROOT))
+if str(TEST_ROOT) not in sys.path:
+    sys.path.insert(0, str(TEST_ROOT))
 
 from fastapi import BackgroundTasks, HTTPException
 

@@ -4,7 +4,7 @@ FastAPI service for document processing, page extraction, and retrieval support 
 
 ## What it owns
 
-- Reads uploaded file metadata from SQLite
+- Reads uploaded file metadata from PostgreSQL
 - Resolves the physical upload path inside the container
 - Processes files with Docling or the fallback processor
 - Persists extracted page content to `document_pages`
@@ -12,7 +12,7 @@ FastAPI service for document processing, page extraction, and retrieval support 
 
 ## Canonical database footprint
 
-The live Python service is built on two SQLite tables:
+The live Python service is built on two PostgreSQL tables:
 
 - `files` — upload + processing lifecycle state
 - `document_pages` — extracted page content keyed by `file_id`
@@ -44,7 +44,7 @@ dotnet run --project src\AspireApp.AppHost
 - `GET /documents/unprocessed` — list rows still eligible for processing
 - `GET /documents/{document_id}` — get one document
 - `GET /documents/{document_id}/status` — get processing status for one document
-- `GET /documents/health/database` — lightweight SQLite health check
+- `GET /documents/health/database` — lightweight PostgreSQL health check
 
 ### Processing
 
@@ -60,7 +60,7 @@ dotnet run --project src\AspireApp.AppHost
 - `GET /rag/page-content/{document_id}/{page_number}` — retrieve one page
 - `GET /rag/surrounding-pages/{document_id}/{page_number}` — retrieve nearby pages
 - `POST /rag/semantic-search` — semantic retrieval with optional filters
-- `GET /rag/health` — check SQLite + Neo4j retrieval dependencies
+- `GET /rag/health` — check PostgreSQL + Neo4j retrieval dependencies
 
 ## Processing flow
 
@@ -71,7 +71,7 @@ dotnet run --project src\AspireApp.AppHost
 5. Python writes page content to `document_pages`.
 6. Neo4j receives document/page nodes for retrieval features.
 
-## SQLite schema
+## PostgreSQL schema
 
 ### `files`
 
@@ -126,6 +126,6 @@ python ..\..\test_database_schema.py
 ## Validation
 
 ```powershell
-python src\AspireApp.PythonServices\tests\test_p0_contract_audit.py
-python test_database_schema.py
+Set-Location src\AspireApp.PythonServices
+python -m pytest -q
 ```

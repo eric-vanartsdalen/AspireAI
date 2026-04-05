@@ -49,6 +49,9 @@
     <Compile Include="test_app_main.py" />
     <Compile Include="test_build_config.py" />
     <Compile Include="test_services.py" />
+    <Compile Include="tests\fake_postgres.py" />
+    <Compile Include="tests\test_p0_contract_audit.py" />
+    <Compile Include="tests\test_processing_pipeline_regression.py" />
     <Compile Include="verify_service.py" />
   </ItemGroup>
   <ItemGroup>
@@ -70,6 +73,7 @@
     <Folder Include="app\services\" />
     <Folder Include="docs\" />
     <Folder Include="scripts\" />
+    <Folder Include="tests\" />
   </ItemGroup>
   <ItemGroup>
     <Interpreter Include=".venv\">

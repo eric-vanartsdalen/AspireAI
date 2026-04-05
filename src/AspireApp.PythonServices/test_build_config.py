@@ -41,7 +41,7 @@ def run_command_with_timeout(command, description, timeout=300):
         print(f"? {description} error after {duration:.1f} seconds: {e}")
         return False, duration, str(e)
 
-def test_docker_builds():
+def run_docker_builds():
     """Test different Docker build configurations"""
     print("?? Testing Docker Build Configurations")
     print("=" * 50)
@@ -81,7 +81,7 @@ def test_docker_builds():
                 pip_cmd = ".venv/bin/pip"
             
             success, duration, output = run_command_with_timeout(
-                f"{pip_cmd} install fastapi uvicorn neo4j pypdf2 python-docx aiofiles pydantic python-multipart",
+                f"{pip_cmd} install fastapi uvicorn neo4j pypdf2 python-docx aiofiles pydantic python-multipart psycopg[binary] psycopg-pool pytest",
                 "Installing basic dependencies in venv",
                 timeout=300
             )
@@ -166,7 +166,7 @@ def main():
         sys.exit(1)
     
     # Run tests
-    results = test_docker_builds()
+    results = run_docker_builds()
     
     # Print recommendations
     print_recommendations(results)

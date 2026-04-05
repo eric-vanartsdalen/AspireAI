@@ -7,10 +7,16 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
+PROJECT_ROOT = Path(__file__).resolve().parents[1]
+TEST_ROOT = Path(__file__).resolve().parent
+
+sys.path = [path for path in sys.path if path != str(PROJECT_ROOT)]
+sys.path.insert(0, str(PROJECT_ROOT))
+if str(TEST_ROOT) not in sys.path:
+    sys.path.insert(0, str(TEST_ROOT))
+
 from app.services import database_service as database_service_module
 from app.services.database_service import DatabaseService
-
-sys.path.append(str(Path(__file__).parent))
 
 from fake_postgres import FakeConnectionPool
 

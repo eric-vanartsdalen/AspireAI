@@ -42,6 +42,6 @@ When debugging, suggest logging improvements, error handling, and targeted fixes
 
 ## Example Commands
 - `python -m pip install -r src/AspireApp.PythonServices/requirements.txt`
-- `python -m pytest src/AspireApp.PythonServices/test_services.py`
+- `python -m pytest src/AspireApp.PythonServices -q`
 - `python src/AspireApp.PythonServices/diagnose_database.py`
 - `docker ps --filter "name=python" --format "table {{.Names}}\t{{.Status}}"`
