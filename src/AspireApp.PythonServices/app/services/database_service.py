@@ -1,17 +1,15 @@
-import sqlite3
+from __future__ import annotations
+
 import json
-import os
-import time
 import logging
-import stat
+import os
 import threading
-from datetime import UTC, datetime
-from typing import Callable, List, Optional, Dict, Any, Union
-from pathlib import Path, PureWindowsPath
 from contextlib import contextmanager
-import queue
-import weakref
-from uuid import uuid4
+from datetime import UTC, datetime
+from pathlib import Path, PureWindowsPath
+from typing import Any, Callable, Dict, List, Optional, Union
+
+from psycopg_pool import ConnectionPool as PsycopgConnectionPool
 
 from ..models.models import Document, ProcessingStatus
 
@@ -19,163 +17,71 @@ logger = logging.getLogger(__name__)
 
 
 class ConnectionPool:
-    """Thread-safe SQLite connection pool for better concurrency"""
+    """Thread-safe PostgreSQL connection pool."""
 
     def __init__(
         self,
-        db_path: str,
+        conninfo: str,
         max_connections: int = 10,
         timeout: float = 30.0,
-        *,
-        prefer_delete_journal: bool = False,
     ):
-        self.db_path = db_path
+        self.conninfo = conninfo
         self.max_connections = max_connections
         self.timeout = timeout
-        self.prefer_delete_journal = prefer_delete_journal
-        self._pool = queue.Queue(maxsize=max_connections)
-        self._lock = threading.Lock()
-        self._created_connections = 0
-
-    def _apply_pragma(
-        self,
-        conn: sqlite3.Connection,
-        statement: str,
-        *,
-        fallback: Optional[str] = None,
-        ignore_disk_io: bool = False,
-    ) -> None:
-        try:
-            conn.execute(statement)
-        except sqlite3.OperationalError as exc:
-            message = str(exc).lower()
-            if "disk i/o error" in message or "disk io error" in message:
-                if fallback:
-                    logger.warning(
-                        "SQLite pragma '%s' failed with disk I/O error; falling back to '%s'.",
-                        statement,
-                        fallback,
-                    )
-                    conn.execute(fallback)
-                    return
-                if ignore_disk_io:
-                    logger.warning(
-                        "SQLite pragma '%s' failed with disk I/O error; skipping.",
-                        statement,
-                    )
-                    return
-            raise
-
-    def _create_connection(self) -> sqlite3.Connection:
-        """Create a new connection with optimal settings"""
-        conn = sqlite3.connect(
-            self.db_path, 
-            timeout=self.timeout,
-            check_same_thread=False  # Allow connection sharing between threads
+        self._pool = PsycopgConnectionPool(
+            conninfo=conninfo,
+            min_size=1,
+            max_size=max_connections,
+            timeout=timeout,
+            open=True,
+            kwargs={"autocommit": False},
         )
+        self._pool.wait()
 
-        # Apply optimizations for concurrent access
-        if self.prefer_delete_journal:
-            self._apply_pragma(conn, "PRAGMA journal_mode=DELETE")
-        else:
-            self._apply_pragma(
-                conn,
-                "PRAGMA journal_mode=WAL",
-                fallback="PRAGMA journal_mode=DELETE",
-            )
-        self._apply_pragma(conn, "PRAGMA synchronous=NORMAL", ignore_disk_io=True)
-        self._apply_pragma(conn, "PRAGMA temp_store=memory", ignore_disk_io=True)
-        self._apply_pragma(conn, "PRAGMA mmap_size=268435456", ignore_disk_io=True)  # 256MB
-        self._apply_pragma(conn, "PRAGMA cache_size=-64000", ignore_disk_io=True)    # 64MB cache
-        self._apply_pragma(conn, "PRAGMA busy_timeout=30000", ignore_disk_io=True)   # 30 second busy timeout
-
-        return conn
-    
     @contextmanager
     def get_connection(self):
-        """Get a connection from the pool"""
-        conn = None
-        try:
-            # Try to get an existing connection
+        with self._pool.connection() as conn:
             try:
-                conn = self._pool.get_nowait()
-            except queue.Empty:
-                # Create new connection if pool is empty and under limit
-                with self._lock:
-                    if self._created_connections < self.max_connections:
-                        conn = self._create_connection()
-                        self._created_connections += 1
-                    else:
-                        # Wait for an available connection
-                        conn = self._pool.get(timeout=self.timeout)
-            
-            yield conn
-            
-        except Exception as e:
-            # If connection is bad, don't return it to pool
-            if conn:
-                try:
-                    conn.close()
-                except:
-                    pass
-                with self._lock:
-                    self._created_connections -= 1
-            raise e
-        else:
-            # Return healthy connection to pool
-            if conn:
-                try:
-                    # Test connection health before returning
-                    conn.execute("SELECT 1")
-                    self._pool.put_nowait(conn)
-                except (queue.Full, sqlite3.Error):
-                    # Pool full or connection bad, close it
-                    try:
-                        conn.close()
-                    except:
-                        pass
-                    with self._lock:
-                        self._created_connections -= 1
-    
+                yield conn
+            except Exception:
+                conn.rollback()
+                raise
+            else:
+                conn.commit()
+
     def close_all(self):
-        """Close all connections in the pool"""
-        with self._lock:
-            while not self._pool.empty():
-                try:
-                    conn = self._pool.get_nowait()
-                    conn.close()
-                except (queue.Empty, sqlite3.Error):
-                    pass
-            self._created_connections = 0
+        self._pool.close()
+
+    def get_statistics(self) -> Dict[str, Any]:
+        return {
+            "driver": "psycopg_pool",
+            "max_connections": self.max_connections,
+            "timeout": self.timeout,
+        }
 
 
 class DatabaseService:
     """
-    Simplified database service for file upload and document processing lifecycle.
-    
-    Schema Design:
-    - files: Single table tracking upload ? processing ? completion
-    - document_pages: Page-level content for RAG retrieval
-    
+    PostgreSQL-backed operational document store.
+
     Workflow:
-    1. Blazor uploads file ? creates 'files' record (status='uploaded')
-    2. Python service detects unprocessed files
-    3. Docling processes document ? updates status, creates pages
-    4. Future: Pages linked to Neo4j for GraphRAG
+    1. Web uploads create `files` rows with status `uploaded`
+    2. Python reads unprocessed rows from `files`
+    3. Processing writes page content to `document_pages`
+    4. Status and processing metadata stay on the `files` row
     """
-    
-    # Class-level pool management to ensure singleton behavior
+
     _pools: Dict[str, ConnectionPool] = {}
     _pools_lock = threading.Lock()
     _files_column_definitions: Dict[str, str] = {
         "original_file_name": "TEXT NOT NULL DEFAULT ''",
         "file_hash": "TEXT NOT NULL DEFAULT ''",
-        "file_size": "INTEGER NOT NULL DEFAULT 0",
+        "file_size": "BIGINT NOT NULL DEFAULT 0",
         "mime_type": "TEXT",
-        "uploaded_at": "DATETIME",
+        "uploaded_at": "TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP",
         "status": "TEXT NOT NULL DEFAULT 'uploaded'",
-        "processing_started_at": "DATETIME",
-        "processing_completed_at": "DATETIME",
+        "processing_started_at": "TIMESTAMPTZ",
+        "processing_completed_at": "TIMESTAMPTZ",
         "processing_error": "TEXT",
         "docling_document_path": "TEXT",
         "total_pages": "INTEGER",
@@ -187,155 +93,102 @@ class DatabaseService:
         "page_metadata": "TEXT",
         "neo4j_page_node_id": "TEXT",
     }
-    
+
     def __init__(self, db_path: str = None):
-        candidates = self._get_database_path_candidates(db_path)
-        self._initialize_database(candidates)
-        
-        # Statistics tracking
+        conninfo, source, target = self._resolve_connection_settings(db_path)
+        self.connection_string = conninfo
+        self.db_path_source = source
+        self.db_path = target
+        self._pool = None
+        self._ensure_connection_pool()
+        self._ensure_database_schema()
+        self._runtime_data_roots = self._build_runtime_data_roots()
+
         self._stats = {
-            'queries_executed': 0,
-            'transactions_committed': 0,
-            'retries_performed': 0,
-            'lock_timeouts': 0,
-            'last_health_check': None
+            "queries_executed": 0,
+            "transactions_committed": 0,
+            "retries_performed": 0,
+            "lock_timeouts": 0,
+            "last_health_check": None,
         }
         self._stats_lock = threading.Lock()
 
-    def _resolve_database_path(self, db_path: Optional[str]) -> tuple[str, str]:
-        """Resolve the SQLite path while keeping local and container defaults predictable."""
-        candidates = self._get_database_path_candidates(db_path)
-        candidate_path, candidate_source = candidates[0]
-        return str(candidate_path), candidate_source
+    def _resolve_connection_settings(self, explicit_conninfo: Optional[str]) -> tuple[str, str, str]:
+        if explicit_conninfo:
+            return explicit_conninfo, "explicit", self._describe_conninfo(explicit_conninfo)
 
-    def _get_database_path_candidates(self, db_path: Optional[str]) -> List[tuple[Path, str]]:
-        """Return ordered database path candidates, including fallbacks."""
-        if db_path:
-            return [(Path(db_path), "explicit")]
+        for env_name in (
+            "ASPIRE_DB_CONNECTION_STRING",
+            "POSTGRES_CONNECTION_STRING",
+            "DATABASE_URL",
+        ):
+            env_value = os.environ.get(env_name)
+            if env_value:
+                return env_value, env_name, self._describe_conninfo(env_value)
 
-        candidates: List[tuple[Path, str]] = []
-        env_path = os.environ.get("ASPIRE_DB_PATH")
-        if env_path:
-            candidates.append((Path(env_path), "ASPIRE_DB_PATH"))
+        conninfo, target = self._build_conninfo_from_environment()
+        return conninfo, "environment", target
 
-        candidates.extend(self._get_default_database_candidates())
+    def _build_conninfo_from_environment(self) -> tuple[str, str]:
+        host = os.environ.get("POSTGRES_HOST") or os.environ.get("PGHOST") or "postgres"
+        port = os.environ.get("POSTGRES_PORT") or os.environ.get("PGPORT") or "5432"
+        database = (
+            os.environ.get("POSTGRES_DATABASE")
+            or os.environ.get("POSTGRES_DB")
+            or os.environ.get("PGDATABASE")
+            or "appdb"
+        )
+        user = os.environ.get("POSTGRES_USER") or os.environ.get("PGUSER") or "postgres"
+        password = os.environ.get("POSTGRES_PASSWORD") or os.environ.get("PGPASSWORD") or ""
 
-        unique_candidates: List[tuple[Path, str]] = []
-        seen: set[str] = set()
-        for candidate_path, candidate_source in candidates:
-            candidate_key = str(candidate_path)
-            if candidate_key in seen:
+        conninfo = (
+            f"host={host} port={port} dbname={database} "
+            f"user={user} password={password}"
+        )
+        target = f"postgresql://{host}:{port}/{database}"
+        return conninfo, target
+
+    def _describe_conninfo(self, conninfo: str) -> str:
+        if "://" in conninfo:
+            without_scheme = conninfo.split("://", 1)[1]
+            if "@" in without_scheme:
+                without_credentials = without_scheme.split("@", 1)[1]
+            else:
+                without_credentials = without_scheme
+            return f"postgresql://{without_credentials}"
+
+        parts: Dict[str, str] = {}
+        for token in conninfo.split():
+            if "=" not in token:
                 continue
-            seen.add(candidate_key)
-            unique_candidates.append((candidate_path, candidate_source))
+            key, value = token.split("=", 1)
+            parts[key.strip()] = value.strip()
 
-        if not unique_candidates:
-            raise RuntimeError("No database path candidates could be resolved.")
-
-        return unique_candidates
-
-    def _initialize_database(self, candidates: List[tuple[Path, str]]) -> None:
-        """Attempt database initialization across ordered candidates."""
-        last_error: Optional[Exception] = None
-        last_message: Optional[str] = None
-
-        for candidate_path, candidate_source in candidates:
-            self.db_path = str(candidate_path)
-            self.db_path_source = candidate_source
-            self._pool = None
-            logger.info("Using %s database path: %s", self.db_path_source, self.db_path)
-
-            try:
-                self._ensure_database_directory()
-                self._ensure_connection_pool()
-                self._ensure_database_schema()
-                self._runtime_data_roots = self._build_runtime_data_roots()
-                return
-            except Exception as e:
-                last_error = e
-                last_message = self._format_initialization_failure(e)
-                logger.warning(
-                    "Database initialization failed for %s path '%s': %s",
-                    candidate_source,
-                    self.db_path,
-                    last_message,
-                )
-                self._reset_connection_pool(self.db_path)
-
-        if last_message is not None:
-            raise RuntimeError(last_message) from last_error
-
-        raise RuntimeError("Failed to initialize database; no candidates available.")
+        host = parts.get("host", "postgres")
+        port = parts.get("port", "5432")
+        database = parts.get("dbname", parts.get("database", "appdb"))
+        return f"postgresql://{host}:{port}/{database}"
 
     def _ensure_connection_pool(self) -> None:
-        """Ensure a connection pool exists for the active database path."""
-        prefer_delete_journal = self._should_prefer_delete_journal()
         with self._pools_lock:
-            existing_pool = self._pools.get(self.db_path)
-            if (
-                existing_pool is None
-                or existing_pool.prefer_delete_journal != prefer_delete_journal
-            ):
-                if existing_pool is not None:
-                    existing_pool.close_all()
-                self._pools[self.db_path] = ConnectionPool(
-                    self.db_path,
-                    prefer_delete_journal=prefer_delete_journal,
-                )
-            self._pool = self._pools[self.db_path]
+            existing_pool = self._pools.get(self.connection_string)
+            if existing_pool is None:
+                self._pools[self.connection_string] = ConnectionPool(self.connection_string)
+            self._pool = self._pools[self.connection_string]
 
-    def _reset_connection_pool(self, db_path: str) -> None:
-        """Dispose and remove a connection pool for a failed database path."""
+    def _reset_connection_pool(self, conninfo: str) -> None:
         with self._pools_lock:
-            pool = self._pools.pop(db_path, None)
+            pool = self._pools.pop(conninfo, None)
         if pool is not None:
             pool.close_all()
 
-    def _get_default_database_candidates(self) -> List[tuple[Path, str]]:
-        """Return ordered default database candidates for the current runtime."""
-        docs_db = Path("/app/docs-database/data-resources.db")
-        volume_db = Path("/app/database/data-resources.db")
-        repo_root = self._get_repository_root()
-        repo_db = repo_root / "database" / "data-resources.db" if repo_root else None
-        cwd_db = Path.cwd() / "database" / "data-resources.db"
-
-        if self._is_running_in_container():
-            ordered_candidates = [
-                (docs_db, "docs-mounted"),
-                (volume_db, "volume-backed"),
-                (repo_db, "repository"),
-                (cwd_db, "cwd"),
-            ]
-        else:
-            ordered_candidates = [
-                (repo_db, "repository"),
-                (cwd_db, "cwd"),
-                (docs_db, "docs-mounted"),
-                (volume_db, "volume-backed"),
-            ]
-
-        candidates: List[tuple[Path, str]] = []
-        seen: set[str] = set()
-        for candidate_path, candidate_source in ordered_candidates:
-            if candidate_path is None:
-                continue
-            candidate_key = str(candidate_path)
-            if candidate_key in seen:
-                continue
-            seen.add(candidate_key)
-            candidates.append((candidate_path, candidate_source))
-
-        return candidates
-
     def _get_repository_root(self) -> Optional[Path]:
-        """Return the repository root when this module is running from the source tree."""
         service_file = Path(__file__).resolve()
         if len(service_file.parents) > 4:
             return service_file.parents[4]
         return None
 
     def _is_running_in_container(self) -> bool:
-        """Detect Linux container execution so /app mounts stay preferred there."""
         if os.name == "nt":
             return False
 
@@ -349,154 +202,77 @@ class DatabaseService:
 
         return Path("/.dockerenv").exists() or Path("/run/.containerenv").exists()
 
-    def _should_prefer_delete_journal(self) -> bool:
-        """Avoid WAL for host-mounted SQLite files shared between Windows and containers."""
-        if not self._is_running_in_container():
-            return False
-
-        normalized_path = self.db_path.replace("\\", "/")
-        return normalized_path.startswith("/app/docs-database/") or normalized_path.startswith("/app/database/")
-
     def _should_prefer_fresh_reads(self) -> bool:
-        """Prefer fresh SQLite connections for shared host-mounted databases."""
-        return self._should_prefer_delete_journal()
+        return False
 
-    def _ensure_database_directory(self):
-        """Ensure the database directory exists with proper permissions"""
-        try:
-            db_dir = Path(self.db_path).parent
-            # Create directory if it doesn't exist
-            if not db_dir.exists():
-                logger.info(f"Creating database directory: {db_dir}")
-                db_dir.mkdir(parents=True, exist_ok=True)
-            # Try to set proper permissions if we can
-            try:
-                if os.access(db_dir, os.W_OK | os.X_OK):
-                    os.chmod(db_dir, stat.S_IRWXU | stat.S_IRGRP | stat.S_IXGRP | stat.S_IROTH | stat.S_IXOTH)
-                    logger.debug(f"Set permissions on database directory: {db_dir}")
-                else:
-                    logger.debug(f"Skipping chmod on database directory (insufficient rights): {db_dir}")
-            except (OSError, PermissionError) as e:
-                logger.info(f"Skipping chmod on database directory (likely bind mount): {e}")
-            # Check if we can write to the directory
-            test_file = db_dir / f".write_test_{os.getpid()}_{threading.get_ident()}_{uuid4().hex}"
-            try:
-                with open(test_file, 'w', encoding='utf-8') as f:
-                    f.write("test")
-                if test_file.exists():
-                    test_file.unlink()
-                logger.info(f"Database directory is writable: {db_dir}")
-            except Exception as e:
-                logger.error(f"Database directory is not writable: {db_dir}, error: {e}")
-                raise RuntimeError(f"Cannot write to database directory: {db_dir}. Error: {e}")
-        except Exception as e:
-            logger.error(f"Error ensuring database directory: {e}")
-            raise RuntimeError(f"Failed to ensure database directory for {self.db_path}: {e}")
+    @contextmanager
+    def _get_fresh_connection(self):
+        with self._pool.get_connection() as conn:
+            yield conn
 
     def _ensure_database_schema(self):
-        """
-        Ensure the simplified database schema exists.
-        
-        Schema:
-        - files: Single source of truth for file lifecycle (upload ? processing ? completion)
-        - document_pages: Page-level content extracted by docling
-        """
         try:
-            logger.info(f"Using database path: {self.db_path}")
-            self._test_database_connection()
             with self._pool.get_connection() as conn:
                 cursor = conn.cursor()
-                
-                # Create unified files table
-                cursor.execute("""
+                cursor.execute(
+                    """
                     CREATE TABLE IF NOT EXISTS files (
-                        id INTEGER PRIMARY KEY AUTOINCREMENT,
-                        
-                        -- Core file identification
+                        id INTEGER GENERATED BY DEFAULT AS IDENTITY PRIMARY KEY,
                         file_name TEXT NOT NULL,
                         original_file_name TEXT NOT NULL,
                         file_path TEXT NOT NULL,
                         file_hash TEXT NOT NULL DEFAULT '',
-                        
-                        -- File metadata
-                        file_size INTEGER NOT NULL DEFAULT 0,
+                        file_size BIGINT NOT NULL DEFAULT 0,
                         mime_type TEXT,
-                        
-                        -- Upload tracking
-                        uploaded_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-                        
-                        -- Processing lifecycle (uploaded ? processing ? processed | error)
+                        uploaded_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
                         status TEXT NOT NULL DEFAULT 'uploaded',
-                        processing_started_at DATETIME,
-                        processing_completed_at DATETIME,
+                        processing_started_at TIMESTAMPTZ,
+                        processing_completed_at TIMESTAMPTZ,
                         processing_error TEXT,
-                        
-                        -- Docling processing output
                         docling_document_path TEXT,
                         total_pages INTEGER,
-                        
-                        -- Neo4j integration (future)
                         neo4j_document_node_id TEXT,
-                        
-                        -- Future extensibility (website scraping, etc.)
                         source_type TEXT NOT NULL DEFAULT 'upload',
                         source_url TEXT
                     )
-                """)
-                
-                # Create document_pages table for RAG retrieval
-                cursor.execute("""
+                    """
+                )
+                cursor.execute(
+                    """
                     CREATE TABLE IF NOT EXISTS document_pages (
-                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        id INTEGER GENERATED BY DEFAULT AS IDENTITY PRIMARY KEY,
                         file_id INTEGER NOT NULL,
-                        
                         page_number INTEGER NOT NULL,
                         content TEXT NOT NULL,
                         page_metadata TEXT,
-                        
                         neo4j_page_node_id TEXT,
-                        
-                        FOREIGN KEY (file_id) REFERENCES files(id) ON DELETE CASCADE,
-                        UNIQUE(file_id, page_number)
+                        CONSTRAINT fk_document_pages_file
+                            FOREIGN KEY (file_id) REFERENCES files(id) ON DELETE CASCADE
                     )
-                """)
+                    """
+                )
 
-                self._ensure_required_columns(
-                    cursor,
-                    "files",
-                    self._files_column_definitions,
-                )
-                self._ensure_required_columns(
-                    cursor,
-                    "document_pages",
-                    self._document_pages_column_definitions,
-                )
-                 
-                # Create indexes for performance
+                self._ensure_required_columns(cursor, "files", self._files_column_definitions)
+                self._ensure_required_columns(cursor, "document_pages", self._document_pages_column_definitions)
+
                 cursor.execute("CREATE INDEX IF NOT EXISTS idx_files_status ON files(status)")
                 cursor.execute("CREATE INDEX IF NOT EXISTS idx_files_hash ON files(file_hash)")
                 cursor.execute("CREATE INDEX IF NOT EXISTS idx_files_uploaded ON files(uploaded_at)")
-                cursor.execute("CREATE INDEX IF NOT EXISTS idx_files_source_type ON files(source_type)")
-                
                 cursor.execute("CREATE INDEX IF NOT EXISTS idx_pages_file_id ON document_pages(file_id)")
-                cursor.execute("CREATE INDEX IF NOT EXISTS idx_pages_file_page ON document_pages(file_id, page_number)")
-                
-                conn.commit()
-                logger.info(f"? Simplified database schema initialized successfully at: {self.db_path}")
-                
-                # Log database file info
-                db_file = Path(self.db_path)
-                if db_file.exists():
-                    size = db_file.stat().st_size
-                    logger.info(f"Database file size: {size} bytes")
-                
-        except Exception as e:
-            message = self._format_initialization_failure(e)
+                cursor.execute(
+                    """
+                    CREATE UNIQUE INDEX IF NOT EXISTS idx_pages_document_page
+                    ON document_pages(file_id, page_number)
+                    """
+                )
+
+                logger.info("PostgreSQL operational schema initialized at %s", self.db_path)
+        except Exception as exc:
+            message = self._format_initialization_failure(exc)
             logger.error(message, exc_info=True)
-            raise RuntimeError(message) from e
+            raise RuntimeError(message) from exc
 
     def _format_initialization_failure(self, error: Exception) -> str:
-        """Format startup failures with schema context when available."""
         diagnostic = self._collect_schema_diagnostics()
         message = f"Failed to initialize database at {self.db_path}: {type(error).__name__}: {error}"
         if diagnostic:
@@ -504,38 +280,33 @@ class DatabaseService:
         return message
 
     def _collect_schema_diagnostics(self) -> str:
-        """Capture schema details so incompatible SQLite files are reported clearly."""
         try:
-            with sqlite3.connect(self.db_path, timeout=5.0) as conn:
+            with self._pool.get_connection() as conn:
                 cursor = conn.cursor()
-                tables = [
-                    row[0]
-                    for row in cursor.execute(
-                        "SELECT name FROM sqlite_master WHERE type = 'table' ORDER BY name"
-                    ).fetchall()
-                ]
-                files_table = cursor.execute(
+                cursor.execute(
                     """
-                    SELECT name
-                    FROM sqlite_master
-                    WHERE type = 'table' AND LOWER(name) = 'files'
-                    LIMIT 1
+                    SELECT table_name
+                    FROM information_schema.tables
+                    WHERE table_schema = 'public'
+                    ORDER BY table_name
                     """
-                ).fetchone()
-
+                )
+                tables = [row[0] for row in cursor.fetchall()]
                 tables_display = ", ".join(tables) if tables else "<none>"
-                if files_table is None:
-                    return (
-                        f"Existing tables: {tables_display}. "
-                        "Canonical 'files' table is missing."
-                    )
 
-                files_table_name = files_table[0]
-                columns = [
-                    row[1]
-                    for row in cursor.execute(f'PRAGMA table_info("{files_table_name}")').fetchall()
-                ]
-                columns_display = ", ".join(columns) if columns else "<none>"
+                cursor.execute(
+                    """
+                    SELECT column_name
+                    FROM information_schema.columns
+                    WHERE table_schema = 'public' AND table_name = 'files'
+                    ORDER BY ordinal_position
+                    """
+                )
+                columns = [row[0] for row in cursor.fetchall()]
+                if not columns:
+                    return f"Existing tables: {tables_display}. Canonical 'files' table is missing."
+
+                columns_display = ", ".join(columns)
                 required_columns = {
                     "id",
                     "file_name",
@@ -543,23 +314,18 @@ class DatabaseService:
                     *self._files_column_definitions.keys(),
                 }
                 missing_columns = [
-                    column
-                    for column in sorted(required_columns)
-                    if column not in columns
+                    column_name
+                    for column_name in sorted(required_columns)
+                    if column_name not in columns
                 ]
-
                 if missing_columns:
                     return (
                         f"Existing tables: {tables_display}. "
-                        f"Table '{files_table_name}' columns: {columns_display}. "
-                        f"Missing canonical columns: {', '.join(missing_columns)}. "
-                        "This database appears to use an incompatible legacy schema."
+                        f"Table 'files' columns: {columns_display}. "
+                        f"Missing canonical columns: {', '.join(missing_columns)}."
                     )
 
-                return (
-                    f"Existing tables: {tables_display}. "
-                    f"Table '{files_table_name}' columns: {columns_display}."
-                )
+                return f"Existing tables: {tables_display}. Table 'files' columns: {columns_display}."
         except Exception as diagnostic_error:
             return (
                 "Schema diagnostics unavailable: "
@@ -568,11 +334,10 @@ class DatabaseService:
 
     def _ensure_required_columns(
         self,
-        cursor: sqlite3.Cursor,
+        cursor,
         table_name: str,
         required_columns: Dict[str, str],
     ) -> None:
-        """Add missing canonical columns to an existing table before dependent indexes run."""
         existing_columns = self._get_table_columns(cursor, table_name)
         for column_name, column_definition in required_columns.items():
             if column_name in existing_columns:
@@ -583,143 +348,116 @@ class DatabaseService:
                 table_name,
                 column_name,
             )
-            try:
-                cursor.execute(
-                    f"ALTER TABLE {table_name} ADD COLUMN {column_name} {column_definition}"
-                )
-            except sqlite3.OperationalError as exc:
-                if "duplicate column name" not in str(exc).lower():
-                    raise
+            cursor.execute(
+                f"ALTER TABLE {table_name} ADD COLUMN IF NOT EXISTS {column_name} {column_definition}"
+            )
             existing_columns.add(column_name)
 
-    def _get_table_columns(self, cursor: sqlite3.Cursor, table_name: str) -> set[str]:
-        """Return the current column names for a SQLite table."""
-        cursor.execute(f"PRAGMA table_info({table_name})")
-        return {row[1] for row in cursor.fetchall()}
+    def _get_table_columns(self, cursor, table_name: str) -> set[str]:
+        cursor.execute(
+            """
+            SELECT column_name
+            FROM information_schema.columns
+            WHERE table_schema = 'public' AND table_name = %s
+            """,
+            (table_name,),
+        )
+        return {row[0] for row in cursor.fetchall()}
 
     def _test_database_connection(self):
-        """Test if the database file can be opened/created."""
         try:
             with self._pool.get_connection() as conn:
-                conn.execute("SELECT 1")
-        except Exception as e:
-            raise RuntimeError(f"Database connection test failed: {e}")
+                conn.cursor().execute("SELECT 1")
+        except Exception as exc:
+            raise RuntimeError(f"Database connection test failed: {exc}") from exc
+
+    def get_schema_snapshot(self) -> Dict[str, Any]:
+        with self._pool.get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute(
+                """
+                SELECT table_name
+                FROM information_schema.tables
+                WHERE table_schema = 'public'
+                ORDER BY table_name
+                """
+            )
+            tables = [row[0] for row in cursor.fetchall()]
+
+            schema: Dict[str, Any] = {
+                "database_target": self.db_path,
+                "tables": tables,
+                "columns": {},
+            }
+            for table_name in ("files", "document_pages"):
+                cursor.execute(
+                    """
+                    SELECT column_name
+                    FROM information_schema.columns
+                    WHERE table_schema = 'public' AND table_name = %s
+                    ORDER BY ordinal_position
+                    """,
+                    (table_name,),
+                )
+                schema["columns"][table_name] = [row[0] for row in cursor.fetchall()]
+
+            cursor.execute("SELECT COUNT(*) FROM files")
+            schema["files_count"] = cursor.fetchone()[0]
+            cursor.execute("SELECT COUNT(*) FROM document_pages")
+            schema["document_pages_count"] = cursor.fetchone()[0]
+            return schema
 
     def health_check(self):
-        """Simple health check for the database connection."""
         try:
-            self._test_database_connection()
-            return {"status": "healthy"}
-        except Exception as e:
-            return {"status": "unhealthy", "error": str(e)}
+            with self._pool.get_connection() as conn:
+                cursor = conn.cursor()
+                cursor.execute("SELECT COUNT(*) FROM files")
+                document_count = cursor.fetchone()[0]
+                cursor.execute("SELECT COUNT(*) FROM document_pages")
+                page_count = cursor.fetchone()[0]
 
-    # ==================== File Management Methods ====================
-    
+            return {
+                "status": "healthy",
+                "database_provider": "postgres",
+                "database_target": self.db_path,
+                "connection_source": self.db_path_source,
+                "document_count": document_count,
+                "page_count": page_count,
+            }
+        except Exception as exc:
+            return {
+                "status": "unhealthy",
+                "database_provider": "postgres",
+                "database_target": self.db_path,
+                "connection_source": self.db_path_source,
+                "error": str(exc),
+            }
+
     def get_file_by_id(self, file_id: int) -> Optional[Dict[str, Any]]:
-        """Get file record by ID"""
         try:
-            if self._should_prefer_fresh_reads():
-                row = self._fetch_file_row_from_fresh_connection(file_id)
-                if row is not None:
-                    return self._row_to_file_dict(row)
-
             with self._pool.get_connection() as conn:
                 row = self._fetch_file_row(conn, file_id)
-
-            if row is None:
-                row = self._fetch_file_row_from_fresh_connection(file_id)
-                if row is not None:
-                    logger.warning(
-                        "File %s was not visible through the pooled SQLite connection; "
-                        "a fresh connection located the row.",
-                        file_id,
-                    )
-
-            if row:
-                return self._row_to_file_dict(row)
-
-            fallback_file = next(
-                (
-                    file_dict
-                    for file_dict in self.get_all_files()
-                    if file_dict.get("id") == file_id
-                ),
-                None,
-            )
-            if fallback_file is not None:
-                logger.warning(
-                    "File %s was not visible through direct SQLite lookup; "
-                    "the fallback full-file scan located the row.",
-                    file_id,
-                )
-                return fallback_file
-
-            return None
-        except Exception as e:
-            logger.error(f"Error fetching file {file_id}: {e}")
+            return self._row_to_file_dict(row) if row else None
+        except Exception as exc:
+            logger.error("Error fetching file %s: %s", file_id, exc)
             raise
 
     def get_all_files(self) -> List[Dict[str, Any]]:
-        """Return all files from the database"""
         try:
-            if self._should_prefer_fresh_reads():
-                rows = self._fetch_rows_from_fresh_connection(self._fetch_all_file_rows)
-                logger.info("Fetched %s files from database via fresh SQLite connection", len(rows))
-                return [self._row_to_file_dict(row) for row in rows]
-
             with self._pool.get_connection() as conn:
                 rows = self._fetch_all_file_rows(conn)
-
-            if rows:
-                logger.info("Fetched %s files from database", len(rows))
-                return [self._row_to_file_dict(row) for row in rows]
-
-            fresh_rows = self._fetch_rows_from_fresh_connection(self._fetch_all_file_rows)
-            if fresh_rows:
-                logger.warning(
-                    "File list was empty through the pooled SQLite connection; "
-                    "a fresh connection found %s file(s).",
-                    len(fresh_rows),
-                )
-                return [self._row_to_file_dict(row) for row in fresh_rows]
-
-            logger.info("Fetched 0 files from database")
-            return []
-        except Exception as e:
-            logger.error(f"Error fetching all files: {e}")
+            return [self._row_to_file_dict(row) for row in rows]
+        except Exception as exc:
+            logger.error("Error fetching all files: %s", exc)
             raise
 
     def get_unprocessed_files(self) -> List[Dict[str, Any]]:
-        """Get all files currently eligible for processing or retry."""
         try:
-            if self._should_prefer_fresh_reads():
-                rows = self._fetch_rows_from_fresh_connection(self._fetch_unprocessed_file_rows)
-                logger.info(
-                    "Found %s files ready for processing via fresh SQLite connection",
-                    len(rows),
-                )
-                return [self._row_to_file_dict(row) for row in rows]
-
             with self._pool.get_connection() as conn:
                 rows = self._fetch_unprocessed_file_rows(conn)
-
-            if rows:
-                logger.info("Found %s files ready for processing", len(rows))
-                return [self._row_to_file_dict(row) for row in rows]
-
-            fresh_rows = self._fetch_rows_from_fresh_connection(self._fetch_unprocessed_file_rows)
-            if fresh_rows:
-                logger.warning(
-                    "Unprocessed file list was empty through the pooled SQLite connection; "
-                    "a fresh connection found %s retryable file(s).",
-                    len(fresh_rows),
-                )
-                return [self._row_to_file_dict(row) for row in fresh_rows]
-
-            logger.info("Found 0 files ready for processing")
-            return []
-        except Exception as e:
-            logger.error(f"Error fetching unprocessed files: {e}")
+            return [self._row_to_file_dict(row) for row in rows]
+        except Exception as exc:
+            logger.error("Error fetching unprocessed files: %s", exc)
             raise
 
     def create_file_record(
@@ -736,14 +474,9 @@ class DatabaseService:
         source_type: str = "upload",
         source_url: Optional[str] = None,
     ) -> int:
-        """Create a file row using the canonical `files` contract."""
         try:
             normalized_status = self._normalize_file_status(status)
-            uploaded_at_value = uploaded_at
-            if isinstance(uploaded_at_value, datetime):
-                uploaded_at_value = uploaded_at_value.isoformat()
-            elif uploaded_at_value is None:
-                uploaded_at_value = datetime.now(UTC).isoformat()
+            uploaded_at_value = uploaded_at or datetime.now(UTC)
 
             with self._pool.get_connection() as conn:
                 cursor = conn.cursor()
@@ -761,7 +494,8 @@ class DatabaseService:
                         source_type,
                         source_url
                     )
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                    RETURNING id
                     """,
                     (
                         file_name,
@@ -776,23 +510,14 @@ class DatabaseService:
                         source_url,
                     ),
                 )
-                conn.commit()
-                file_id = cursor.lastrowid
+                file_id = cursor.fetchone()[0]
                 logger.debug("Created file record %s with status '%s'", file_id, normalized_status)
                 return file_id
-        except Exception as e:
-            logger.error(f"Error creating file record for {file_name}: {e}")
+        except Exception as exc:
+            logger.error("Error creating file record for %s: %s", file_name, exc)
             raise
 
     def resolve_upload_path(self, source: Union[Document, Dict[str, Any]]) -> Path:
-        """
-        Resolve the physical file path for an uploaded document.
-
-        The database stores the upload directory in `file_path` and the timestamped
-        filename in `file_name` / `Document.filename`. This helper joins them, then
-        adds container guardrails so Windows host paths such as
-        `C:\\repo\\AspireAI\\data` can be mapped to the runtime mount at `/app/data`.
-        """
         if isinstance(source, Document):
             stored_path = source.file_path
             file_name = source.filename
@@ -817,14 +542,7 @@ class DatabaseService:
         candidates = self._build_upload_path_candidates(stored_path, safe_file_name)
         for candidate in candidates:
             if candidate.exists() and candidate.is_file():
-                resolved = candidate.resolve()
-                logger.debug(
-                    "Resolved upload path '%s' + '%s' to '%s'.",
-                    stored_path,
-                    safe_file_name,
-                    resolved,
-                )
-                return resolved
+                return candidate.resolve()
 
         checked_paths = ", ".join(str(candidate) for candidate in candidates)
         raise FileNotFoundError(
@@ -833,7 +551,6 @@ class DatabaseService:
         )
 
     def _build_runtime_data_roots(self) -> List[Path]:
-        """Build the set of data roots that may contain uploaded files."""
         roots: List[Path] = []
         env_root = os.environ.get("ASPIRE_DATA_PATH")
         repo_root = self._get_repository_root()
@@ -855,7 +572,6 @@ class DatabaseService:
         return unique_roots
 
     def _build_upload_path_candidates(self, stored_path: str, file_name: str) -> List[Path]:
-        """Generate candidate physical paths for an uploaded file."""
         normalized_path = stored_path.strip()
         raw_candidates = [
             normalized_path
@@ -882,9 +598,7 @@ class DatabaseService:
         return candidates
 
     def _expand_runtime_candidates(self, raw_path: str) -> List[Path]:
-        """Expand a stored path into direct and mount-mapped runtime candidates."""
         candidates: List[Path] = []
-
         direct_candidate = self._create_direct_path_candidate(raw_path)
         if direct_candidate is not None:
             candidates.append(direct_candidate)
@@ -897,21 +611,11 @@ class DatabaseService:
         return candidates
 
     def _create_direct_path_candidate(self, raw_path: str) -> Optional[Path]:
-        """Create a direct `Path` candidate when the stored path matches the runtime OS."""
         if self._looks_like_windows_path(raw_path) and os.name != "nt":
             return None
         return Path(raw_path)
 
     def _extract_runtime_relative_parts(self, raw_path: str) -> Optional[List[str]]:
-        """
-        Extract the path relative to the shared data root.
-
-        Examples:
-        - `C:\\repo\\AspireAI\\data\\foo.pdf` -> ['foo.pdf']
-        - `C:\\repo\\AspireAI\\data\\uploads\\foo.pdf` -> ['uploads', 'foo.pdf']
-        - `/app/data/foo.pdf` -> ['foo.pdf']
-        - `uploads/foo.pdf` -> ['uploads', 'foo.pdf']
-        """
         parts = self._split_stored_path(raw_path)
         if not parts:
             return None
@@ -930,259 +634,259 @@ class DatabaseService:
         return None
 
     def _split_stored_path(self, raw_path: str) -> List[str]:
-        """Split a stored path into stable segments across Windows and POSIX forms."""
         if self._looks_like_windows_path(raw_path):
             return [
                 part
                 for part in PureWindowsPath(raw_path).parts
                 if part not in {"\\", "/"} and not part.endswith(":\\") and not part.endswith(":")
             ]
-
         return [part for part in Path(raw_path).parts if part not in {"\\", "/"}]
 
     def _combine_path(self, directory: str, file_name: str) -> str:
-        """Combine a stored directory path and file name without assuming the current OS."""
         if directory.endswith(("\\", "/")):
             return f"{directory}{file_name}"
-
         if "\\" in directory and "/" not in directory:
             return f"{directory}\\{file_name}"
-
         return f"{directory}/{file_name}"
 
     def _path_includes_filename(self, raw_path: str, file_name: str) -> bool:
-        """Return True when the stored path already ends with the file name."""
         normalized = raw_path.replace("\\", "/").rstrip("/")
         return normalized.lower().endswith(f"/{file_name.lower()}") or normalized.lower() == file_name.lower()
 
     def _looks_like_windows_path(self, raw_path: str) -> bool:
-        """Detect Windows-style stored paths regardless of the current runtime OS."""
         return (len(raw_path) >= 2 and raw_path[1] == ":") or ("\\" in raw_path)
 
     def _looks_like_absolute_path(self, raw_path: str) -> bool:
-        """Detect absolute paths across Windows and POSIX styles."""
         return raw_path.startswith("/") or self._looks_like_windows_path(raw_path)
 
     def update_file_status(self, file_id: int, status: str, error: str = None) -> None:
-        """
-        Update the processing status of a file.
-        
-        Status values: 'uploaded', 'processing', 'processed', 'error'
-        """
         try:
             normalized_status = self._normalize_file_status(status)
-            connection_factory = self._get_fresh_connection if self._should_prefer_fresh_reads() else self._pool.get_connection
-            with connection_factory() as conn:
+            with self._pool.get_connection() as conn:
                 cursor = conn.cursor()
-                
-                if normalized_status == 'processing':
-                    cursor.execute("""
+                if normalized_status == "processing":
+                    cursor.execute(
+                        """
                         UPDATE files
-                        SET status = ?,
+                        SET status = %s,
                             processing_started_at = CURRENT_TIMESTAMP,
                             processing_completed_at = NULL,
                             processing_error = NULL,
                             docling_document_path = NULL,
                             total_pages = NULL,
                             neo4j_document_node_id = NULL
-                        WHERE id = ?
-                    """, (normalized_status, file_id))
-                    cursor.execute("DELETE FROM document_pages WHERE file_id = ?", (file_id,))
-                elif normalized_status == 'processed':
-                    cursor.execute("""
-                        UPDATE files 
-                        SET status = ?, 
+                        WHERE id = %s
+                        """,
+                        (normalized_status, file_id),
+                    )
+                    cursor.execute("DELETE FROM document_pages WHERE file_id = %s", (file_id,))
+                elif normalized_status == "processed":
+                    cursor.execute(
+                        """
+                        UPDATE files
+                        SET status = %s,
                             processing_completed_at = CURRENT_TIMESTAMP,
                             processing_error = NULL
-                        WHERE id = ?
-                    """, (normalized_status, file_id))
-                elif normalized_status == 'error':
-                    cursor.execute("""
-                        UPDATE files 
-                        SET status = ?, 
-                            processing_completed_at = CURRENT_TIMESTAMP,
-                            processing_error = ?
-                        WHERE id = ?
-                    """, (normalized_status, error, file_id))
-                elif normalized_status == 'uploaded':
-                    cursor.execute("""
+                        WHERE id = %s
+                        """,
+                        (normalized_status, file_id),
+                    )
+                elif normalized_status == "error":
+                    cursor.execute(
+                        """
                         UPDATE files
-                        SET status = ?,
+                        SET status = %s,
+                            processing_completed_at = CURRENT_TIMESTAMP,
+                            processing_error = %s
+                        WHERE id = %s
+                        """,
+                        (normalized_status, error, file_id),
+                    )
+                elif normalized_status == "uploaded":
+                    cursor.execute(
+                        """
+                        UPDATE files
+                        SET status = %s,
                             processing_started_at = NULL,
                             processing_completed_at = NULL,
                             processing_error = NULL,
                             docling_document_path = NULL,
                             total_pages = NULL,
                             neo4j_document_node_id = NULL
-                        WHERE id = ?
-                    """, (normalized_status, file_id))
-                    cursor.execute("DELETE FROM document_pages WHERE file_id = ?", (file_id,))
+                        WHERE id = %s
+                        """,
+                        (normalized_status, file_id),
+                    )
+                    cursor.execute("DELETE FROM document_pages WHERE file_id = %s", (file_id,))
                 else:
-                    cursor.execute("""
-                        UPDATE files SET status = ? WHERE id = ?
-                    """, (normalized_status, file_id))
-                
-                conn.commit()
-                logger.debug(f"Updated file {file_id} status to '{normalized_status}'")
-        except Exception as e:
-            logger.error(f"Error updating file {file_id} status: {e}")
+                    cursor.execute("UPDATE files SET status = %s WHERE id = %s", (normalized_status, file_id))
+        except Exception as exc:
+            logger.error("Error updating file %s status: %s", file_id, exc)
             raise
 
-    def update_file_processing_results(self, file_id: int, docling_path: str, 
-                                       total_pages: int, neo4j_node_id: str = None) -> None:
-        """Update file with docling processing results"""
-        try:
-            connection_factory = self._get_fresh_connection if self._should_prefer_fresh_reads() else self._pool.get_connection
-            with connection_factory() as conn:
-                cursor = conn.cursor()
-                cursor.execute("""
-                    UPDATE files 
-                    SET docling_document_path = ?,
-                        total_pages = ?,
-                        neo4j_document_node_id = ?
-                    WHERE id = ?
-                """, (docling_path, total_pages, neo4j_node_id, file_id))
-                conn.commit()
-                logger.debug(f"Updated file {file_id} with processing results")
-        except Exception as e:
-            logger.error(f"Error updating file {file_id} processing results: {e}")
-            raise
-
-    # ==================== Document Page Methods ====================
-
-    def save_document_page(self, file_id: int, page_number: int, content: str, 
-                          metadata: Dict[str, Any] = None, neo4j_node_id: str = None) -> int:
-        """Save a document page"""
+    def update_file_processing_results(
+        self,
+        file_id: int,
+        docling_path: str,
+        total_pages: int,
+        neo4j_node_id: str = None,
+    ) -> None:
         try:
             with self._pool.get_connection() as conn:
                 cursor = conn.cursor()
-                cursor.execute("""
-                    INSERT INTO document_pages 
-                    (file_id, page_number, content, page_metadata, neo4j_page_node_id)
-                    VALUES (?, ?, ?, ?, ?)
-                """, (
-                    file_id,
-                    page_number,
-                    content,
-                    json.dumps(metadata) if metadata else None,
-                    neo4j_node_id
-                ))
-                conn.commit()
-                page_id = cursor.lastrowid
-                logger.debug(f"Saved page {page_number} for file {file_id} (page_id={page_id})")
-                return page_id
-        except Exception as e:
-            logger.error(f"Error saving page {page_number} for file {file_id}: {e}")
+                cursor.execute(
+                    """
+                    UPDATE files
+                    SET docling_document_path = %s,
+                        total_pages = %s,
+                        neo4j_document_node_id = %s
+                    WHERE id = %s
+                    """,
+                    (docling_path, total_pages, neo4j_node_id, file_id),
+                )
+        except Exception as exc:
+            logger.error("Error updating file %s processing results: %s", file_id, exc)
+            raise
+
+    def save_document_page(
+        self,
+        file_id: int,
+        page_number: int,
+        content: str,
+        metadata: Dict[str, Any] = None,
+        neo4j_node_id: str = None,
+    ) -> int:
+        try:
+            with self._pool.get_connection() as conn:
+                cursor = conn.cursor()
+                cursor.execute(
+                    """
+                    INSERT INTO document_pages (file_id, page_number, content, page_metadata, neo4j_page_node_id)
+                    VALUES (%s, %s, %s, %s, %s)
+                    ON CONFLICT (file_id, page_number) DO UPDATE
+                    SET content = EXCLUDED.content,
+                        page_metadata = EXCLUDED.page_metadata,
+                        neo4j_page_node_id = EXCLUDED.neo4j_page_node_id
+                    RETURNING id
+                    """,
+                    (
+                        file_id,
+                        page_number,
+                        content,
+                        json.dumps(metadata) if metadata else None,
+                        neo4j_node_id,
+                    ),
+                )
+                return cursor.fetchone()[0]
+        except Exception as exc:
+            logger.error("Error saving page %s for file %s: %s", page_number, file_id, exc)
             raise
 
     def get_document_pages(self, file_id: int) -> List[Dict[str, Any]]:
-        """Get all pages for a file"""
         try:
             with self._pool.get_connection() as conn:
                 cursor = conn.cursor()
-                cursor.execute("""
+                cursor.execute(
+                    """
                     SELECT id, file_id, page_number, content, page_metadata, neo4j_page_node_id
                     FROM document_pages
-                    WHERE file_id = ?
+                    WHERE file_id = %s
                     ORDER BY page_number
-                """, (file_id,))
+                    """,
+                    (file_id,),
+                )
                 rows = cursor.fetchall()
-                
-                pages = []
-                for row in rows:
-                    metadata = json.loads(row[4]) if row[4] else None
-                    pages.append({
-                        'id': row[0],
-                        'file_id': row[1],
-                        'page_number': row[2],
-                        'content': row[3],
-                        'metadata': metadata,
-                        'neo4j_page_node_id': row[5]
-                    })
-                
-                return pages
-        except Exception as e:
-            logger.error(f"Error fetching pages for file {file_id}: {e}")
+
+            return [self._row_to_page_dict(row) for row in rows]
+        except Exception as exc:
+            logger.error("Error fetching pages for file %s: %s", file_id, exc)
             raise
 
     def get_page_by_number(self, file_id: int, page_number: int) -> Optional[Dict[str, Any]]:
-        """Get a specific page by file ID and page number"""
         try:
             with self._pool.get_connection() as conn:
                 cursor = conn.cursor()
-                cursor.execute("""
+                cursor.execute(
+                    """
                     SELECT id, file_id, page_number, content, page_metadata, neo4j_page_node_id
                     FROM document_pages
-                    WHERE file_id = ? AND page_number = ?
-                """, (file_id, page_number))
+                    WHERE file_id = %s AND page_number = %s
+                    """,
+                    (file_id, page_number),
+                )
                 row = cursor.fetchone()
-                
-                if row:
-                    metadata = json.loads(row[4]) if row[4] else None
-                    return {
-                        'id': row[0],
-                        'file_id': row[1],
-                        'page_number': row[2],
-                        'content': row[3],
-                        'metadata': metadata,
-                        'neo4j_page_node_id': row[5]
-                    }
-                return None
-        except Exception as e:
-            logger.error(f"Error fetching page {page_number} for file {file_id}: {e}")
+            return self._row_to_page_dict(row) if row else None
+        except Exception as exc:
+            logger.error("Error fetching page %s for file %s: %s", page_number, file_id, exc)
             raise
 
-    # ==================== Helper Methods ====================
-
-    def _row_to_file_dict(self, row: tuple) -> Dict[str, Any]:
-        """Convert database row to file dictionary"""
+    def _row_to_page_dict(self, row: tuple) -> Dict[str, Any]:
+        metadata = json.loads(row[4]) if row[4] else None
         return {
-            'id': row[0],
-            'file_name': row[1],
-            'original_file_name': row[2],
-            'file_path': row[3],
-            'file_hash': row[4],
-            'file_size': row[5],
-            'mime_type': row[6],
-            'uploaded_at': row[7],
-            'status': row[8],
-            'processing_started_at': row[9],
-            'processing_completed_at': row[10],
-            'processing_error': row[11],
-            'docling_document_path': row[12],
-            'total_pages': row[13],
-            'neo4j_document_node_id': row[14],
-            'source_type': row[15],
-            'source_url': row[16]
+            "id": row[0],
+            "file_id": row[1],
+            "page_number": row[2],
+            "content": row[3],
+            "metadata": metadata,
+            "neo4j_page_node_id": row[5],
         }
 
-    def _fetch_file_row(self, conn: sqlite3.Connection, file_id: int):
+    def _row_to_file_dict(self, row: tuple) -> Dict[str, Any]:
+        return {
+            "id": row[0],
+            "file_name": row[1],
+            "original_file_name": row[2],
+            "file_path": row[3],
+            "file_hash": row[4],
+            "file_size": row[5],
+            "mime_type": row[6],
+            "uploaded_at": row[7],
+            "status": row[8],
+            "processing_started_at": row[9],
+            "processing_completed_at": row[10],
+            "processing_error": row[11],
+            "docling_document_path": row[12],
+            "total_pages": row[13],
+            "neo4j_document_node_id": row[14],
+            "source_type": row[15],
+            "source_url": row[16],
+        }
+
+    def _fetch_file_row(self, conn, file_id: int):
         cursor = conn.cursor()
-        cursor.execute("""
+        cursor.execute(
+            """
             SELECT id, file_name, original_file_name, file_path, file_hash,
                    file_size, mime_type, uploaded_at, status,
                    processing_started_at, processing_completed_at, processing_error,
                    docling_document_path, total_pages, neo4j_document_node_id,
                    source_type, source_url
-            FROM files WHERE id = ?
-        """, (file_id,))
+            FROM files
+            WHERE id = %s
+            """,
+            (file_id,),
+        )
         return cursor.fetchone()
 
-    def _fetch_all_file_rows(self, conn: sqlite3.Connection):
+    def _fetch_all_file_rows(self, conn):
         cursor = conn.cursor()
-        cursor.execute("""
+        cursor.execute(
+            """
             SELECT id, file_name, original_file_name, file_path, file_hash,
                    file_size, mime_type, uploaded_at, status,
                    processing_started_at, processing_completed_at, processing_error,
                    docling_document_path, total_pages, neo4j_document_node_id,
                    source_type, source_url
-            FROM files ORDER BY uploaded_at DESC
-        """)
+            FROM files
+            ORDER BY uploaded_at DESC
+            """
+        )
         return cursor.fetchall()
 
-    def _fetch_unprocessed_file_rows(self, conn: sqlite3.Connection):
+    def _fetch_unprocessed_file_rows(self, conn):
         cursor = conn.cursor()
-        cursor.execute("""
+        cursor.execute(
+            """
             SELECT id, file_name, original_file_name, file_path, file_hash,
                    file_size, mime_type, uploaded_at, status,
                    processing_started_at, processing_completed_at, processing_error,
@@ -1191,164 +895,94 @@ class DatabaseService:
             FROM files
             WHERE LOWER(status) IN ('uploaded', 'error')
             ORDER BY uploaded_at ASC
-        """)
+            """
+        )
         return cursor.fetchall()
 
     def _fetch_file_row_from_fresh_connection(self, file_id: int):
-        conn = sqlite3.connect(
-            self.db_path,
-            timeout=self._pool.timeout,
-            check_same_thread=False,
-        )
-        try:
-            conn.execute("PRAGMA busy_timeout=30000")
+        with self._pool.get_connection() as conn:
             return self._fetch_file_row(conn, file_id)
-        finally:
-            conn.close()
 
-    def _fetch_rows_from_fresh_connection(
-        self,
-        fetcher: Callable[[sqlite3.Connection], list[tuple]],
-    ) -> list[tuple]:
-        conn = sqlite3.connect(
-            self.db_path,
-            timeout=self._pool.timeout,
-            check_same_thread=False,
-        )
-        try:
-            conn.execute("PRAGMA busy_timeout=30000")
+    def _fetch_rows_from_fresh_connection(self, fetcher: Callable[[Any], list[tuple]]) -> list[tuple]:
+        with self._pool.get_connection() as conn:
             return fetcher(conn)
-        finally:
-            conn.close()
-
-    @contextmanager
-    def _get_fresh_connection(self):
-        conn = sqlite3.connect(
-            self.db_path,
-            timeout=self._pool.timeout,
-            check_same_thread=False,
-        )
-        try:
-            conn.execute("PRAGMA busy_timeout=30000")
-            yield conn
-        finally:
-            conn.close()
 
     def _file_dict_to_document(self, file_dict: Dict[str, Any]) -> Document:
-        """Project a canonical `files` row into the document API response model."""
-        status = self._normalize_file_status(file_dict.get('status', 'uploaded'))
+        status = self._normalize_file_status(file_dict.get("status", "uploaded"))
         return Document(
-            id=file_dict['id'],
-            filename=file_dict['file_name'],
-            original_filename=file_dict['original_file_name'],
-            file_path=file_dict['file_path'],
-            file_size=file_dict['file_size'],
-            mime_type=file_dict['mime_type'],
-            upload_date=file_dict['uploaded_at'],
-            processed=(status == 'processed'),
-            processing_status=status
+            id=file_dict["id"],
+            filename=file_dict["file_name"],
+            original_filename=file_dict["original_file_name"],
+            file_path=file_dict["file_path"],
+            file_size=file_dict["file_size"],
+            mime_type=file_dict["mime_type"],
+            upload_date=file_dict["uploaded_at"],
+            processed=(status == "processed"),
+            processing_status=status,
         )
 
     def _normalize_file_status(self, status: str) -> str:
-        """Normalize incoming statuses to the canonical file lifecycle."""
         normalized = (status or "uploaded").lower()
         status_map = {
-            'pending': 'uploaded',
-            'processing': 'processing',
-            'completed': 'processed',
-            'processed': 'processed',
-            'error': 'error',
-            'failed': 'error',
-            'uploaded': 'uploaded',
+            "pending": "uploaded",
+            "processing": "processing",
+            "completed": "processed",
+            "processed": "processed",
+            "error": "error",
+            "failed": "error",
+            "uploaded": "uploaded",
         }
         return status_map.get(normalized, normalized)
 
     def list_documents(self) -> List[Document]:
-        """Return API document models projected from canonical `files` rows."""
-        try:
-            return [self._file_dict_to_document(file_dict) for file_dict in self.get_all_files()]
-        except Exception as e:
-            logger.error(f"Error in list_documents: {e}")
-            raise
+        return [self._file_dict_to_document(file_dict) for file_dict in self.get_all_files()]
 
     def get_document_by_id(self, document_id: int) -> Optional[Document]:
-        """Return a single API document model projected from the `files` table."""
-        try:
-            file_dict = self.get_file_by_id(document_id)
-            if file_dict is None:
-                return None
-            return self._file_dict_to_document(file_dict)
-        except Exception as e:
-            logger.error(f"Error in get_document_by_id({document_id}): {e}")
-            raise
+        file_dict = self.get_file_by_id(document_id)
+        if file_dict is None:
+            return None
+        return self._file_dict_to_document(file_dict)
 
     def list_unprocessed_documents(self) -> List[Document]:
-        """Return document models for files still eligible for processing."""
-        try:
-            return [self._file_dict_to_document(file_dict) for file_dict in self.get_unprocessed_files()]
-        except Exception as e:
-            logger.error(f"Error in list_unprocessed_documents: {e}")
-            raise
+        return [self._file_dict_to_document(file_dict) for file_dict in self.get_unprocessed_files()]
 
     def get_processing_status(self, document_id: int) -> Optional[ProcessingStatus]:
-        """Return processing status directly from the canonical `files` row."""
         try:
             file_dict = self.get_file_by_id(document_id)
             if file_dict is None:
                 return None
 
-            if self._should_prefer_fresh_reads():
-                with sqlite3.connect(
-                    self.db_path,
-                    timeout=self._pool.timeout,
-                    check_same_thread=False,
-                ) as conn:
-                    conn.execute("PRAGMA busy_timeout=30000")
-                    cursor = conn.cursor()
-                    cursor.execute(
-                        "SELECT COUNT(*) FROM document_pages WHERE file_id = ?",
-                        (document_id,),
-                    )
-                    count_row = cursor.fetchone()
-            else:
-                with self._pool.get_connection() as conn:
-                    cursor = conn.cursor()
-                    cursor.execute(
-                        "SELECT COUNT(*) FROM document_pages WHERE file_id = ?",
-                        (document_id,),
-                    )
-                    count_row = cursor.fetchone()
+            with self._pool.get_connection() as conn:
+                cursor = conn.cursor()
+                cursor.execute("SELECT COUNT(*) FROM document_pages WHERE file_id = %s", (document_id,))
+                count_row = cursor.fetchone()
 
             processed_pages = count_row[0] if count_row is not None else 0
-
             return ProcessingStatus(
                 document_id=document_id,
-                status=self._normalize_file_status(file_dict.get('status')),
-                total_pages=file_dict.get('total_pages'),
+                status=self._normalize_file_status(file_dict.get("status")),
+                total_pages=file_dict.get("total_pages"),
                 processed_pages=processed_pages,
-                error_message=file_dict.get('processing_error'),
-                started_at=file_dict.get('processing_started_at') or file_dict.get('uploaded_at'),
-                completed_at=file_dict.get('processing_completed_at'),
+                error_message=file_dict.get("processing_error"),
+                started_at=file_dict.get("processing_started_at") or file_dict.get("uploaded_at"),
+                completed_at=file_dict.get("processing_completed_at"),
             )
-        except Exception as e:
-            logger.error(f"Error in get_processing_status({document_id}): {e}")
+        except Exception as exc:
+            logger.error("Error in get_processing_status(%s): %s", document_id, exc)
             raise
 
     def get_statistics(self) -> Dict[str, Any]:
-        """Return database and connection pool statistics for monitoring."""
-        try:
-            with self._stats_lock:
-                stats = dict(self._stats)
-            stats.update({
-                'connection_pool_size': self._pool._created_connections,
-                'max_pool_size': self._pool.max_connections,
-                'pool_queue_size': self._pool._pool.qsize(),
-            })
-            return stats
-        except Exception as e:
-            logger.error(f"Error in get_statistics: {e}")
-            raise
+        with self._stats_lock:
+            stats = dict(self._stats)
+        stats.update(self._pool.get_statistics())
+        stats.update(
+            {
+                "database_provider": "postgres",
+                "database_target": self.db_path,
+                "connection_source": self.db_path_source,
+            }
+        )
+        return stats
 
     def get_active_services(self) -> List[Dict[str, Any]]:
-        """Return a list of services actively using this database."""
         return [{"name": "python-service", "type": "FastAPI", "status": "active"}]

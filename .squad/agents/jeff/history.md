@@ -9,6 +9,22 @@
 
 <!-- Append new learnings below. Each entry is something lasting about the project. -->
 
+### 2026-04-05 — Web Upload Store Postgres Cutover
+
+**Status:** Complete (Jeff)
+
+**Key paths:**
+- `src/AspireApp.AppHost/AppHost.cs` — the operational upload store now comes from Aspire Postgres via `AddDatabase("DefaultConnection")`, and the Web frontend consumes it through `WithReference(uploadStore)`.
+- `src/AspireApp.Web/Program.cs` — `UploadDbContext` now uses `UseNpgsql(...)`; the SQLite path resolution and journal-mode interceptor were removed.
+- `src/AspireApp.Web/Shared/FileStorageService.cs` — SQLite WAL checkpoint logic was removed; upload metadata writes are provider-agnostic again.
+- `src/AspireApp.Web/appsettings.json` — local default connection string now points at PostgreSQL instead of the old SQLite file.
+- `src/AspireApp.WebTest/Fixtures/TestFixture.cs`, `src/AspireApp.WebTest/Tests/OperationalUploadStoreTests.cs` — test fixture captures the injected upload-store connection string and the new integration test proves the upload API persists rows into Postgres.
+
+**Patterns learned:**
+- In this repo, the clean Aspire cutover pattern is: name the database resource `DefaultConnection`, inject it with `.WithReference(...)`, and let the Web project keep using `GetConnectionString("DefaultConnection")`.
+- For this migration phase, keep Python’s legacy `ASPIRE_DB_PATH` wiring alive in AppHost while the Web project moves first; that preserves current Python startup behavior while making the Web upload store cut over cleanly.
+- The most direct regression proof for the .NET half is an upload API test that verifies both the stored file on disk and the corresponding `files` row in Postgres through an `NpgsqlConnection`.
+
 ### 2025-02-21 — Deep .NET Analysis
 
 **Build:** Clean, 0 warnings. Target `net10.0` preview, SDK 10.0.200-preview via `global.json`.

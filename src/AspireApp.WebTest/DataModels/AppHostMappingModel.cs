@@ -15,6 +15,7 @@ public class AppHostMappingModel
     public string ApiServiceUri { get; set; } = string.Empty;
     public string SharedDataPath { get; set; } = string.Empty;
     public string SharedDatabasePath { get; set; } = string.Empty;
+    public string UploadStoreConnectionString { get; set; } = string.Empty;
 
     public PageGotoOptions Options { get; } = new()
 	{

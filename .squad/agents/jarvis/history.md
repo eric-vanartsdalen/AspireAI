@@ -9,6 +9,25 @@
 
 <!-- Append new learnings below. Each entry is something lasting about the project. -->
 
+### 2026-04-05 — Python Operational Store Cutover to Postgres
+
+**Completed:**
+- Replaced Python-side SQLite lifecycle storage with PostgreSQL pooling in `src/AspireApp.PythonServices/app/services/database_service.py`.
+- Kept the shared contract anchored on the existing `files` and `document_pages` tables so uploads from the Web side and Python processing results still project through the same column names.
+- Swapped database scripts and smoke/regression tests to use a Postgres-oriented contract, with fake pooled connections for fast local validation.
+
+**Key contract:**
+- Python now resolves the operational store from `ASPIRE_DB_CONNECTION_STRING`, `POSTGRES_CONNECTION_STRING`, `DATABASE_URL`, or the `POSTGRES_HOST` / `POSTGRES_PORT` / `POSTGRES_DATABASE` / `POSTGRES_USER` / `POSTGRES_PASSWORD` environment set.
+- `files.status` remains the canonical lifecycle field (`uploaded` → `processing` → `processed` | `error`).
+- `document_pages` stays keyed by `(file_id, page_number)` and Python writes page metadata as JSON text to stay aligned with the Web EF model.
+
+**Key file paths:**
+- Python store service: `src/AspireApp.PythonServices/app/services/database_service.py`
+- Python health/startup surface: `src/AspireApp.PythonServices/app/fastapi.py`
+- Python schema utilities: `src/AspireApp.PythonServices/scripts/init_database.py`, `src/AspireApp.PythonServices/scripts/fix_schema.py`, `src/AspireApp.PythonServices/diagnose_database.py`
+- Python regression harness: `src/AspireApp.PythonServices/tests/fake_postgres.py`, `src/AspireApp.PythonServices/tests/test_p0_contract_audit.py`, `src/AspireApp.PythonServices/tests/test_processing_pipeline_regression.py`
+- Aspire wiring: `src/AspireApp.AppHost/AppHost.cs`
+
 ### 2026-03-28 — Optional Docling Smoke Tests: Root Cause Fixed
 
 **Symptom:** `python src\AspireApp.PythonServices\test_services.py` failed with `Optional dependency 'docling' is not installed`.

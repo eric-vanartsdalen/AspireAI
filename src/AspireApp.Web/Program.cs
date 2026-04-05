@@ -3,10 +3,7 @@ using AspireApp.Web.Components;
 using AspireApp.Web.Components.Pages;
 using AspireApp.Web.Components.Shared;
 using AspireApp.Web.Shared;
-using Microsoft.Data.Sqlite;
 using Microsoft.EntityFrameworkCore;
-using Microsoft.EntityFrameworkCore.Diagnostics;
-using System.Data.Common;
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -33,13 +30,11 @@ builder.Services.AddHttpClient<WeatherApiClient>(client =>
 builder.Services.AddHttpClient();
 
 // ADDING CONFIGURATIONS FOR STORAGE OF FILES
-// Configure SQLite database (and location)
-var rawConnectionString = builder.Configuration.GetConnectionString("DefaultConnection") ?? "Data Source=../../database/data-resources.db";
-var connectionString = ResolveSqliteConnectionString(rawConnectionString, builder.Environment.ContentRootPath);
-builder.Services.AddSingleton<DeleteJournalModeInterceptor>();
-builder.Services.AddDbContext<UploadDbContext>((sp, options) =>
-    options.UseSqlite(connectionString)
-           .AddInterceptors(sp.GetRequiredService<DeleteJournalModeInterceptor>()));
+var connectionString = builder.Configuration.GetConnectionString("DefaultConnection")
+    ?? throw new InvalidOperationException("Connection string 'DefaultConnection' is required for the operational upload store.");
+
+builder.Services.AddDbContext<UploadDbContext>(options =>
+    options.UseNpgsql(connectionString));
 
 // Register the FileStorageService with data directory (simplified - no bridge service needed)
 var dataDirectory = ResolveContentRootPath(
@@ -74,8 +69,8 @@ HomeConfigurations.PullConfigure();
 
 var app = builder.Build();
 
-// Initialize database and directories with enhanced bridge support
-await InitializeDatabaseAsync(app.Services, connectionString, dataDirectory);
+// Initialize database and directories
+await InitializeDatabaseAsync(app.Services, dataDirectory);
 
 if (!app.Environment.IsDevelopment())
 {
@@ -106,20 +101,10 @@ app.MapGet("/health", () => Results.Ok("Healthy"));
 await app.RunAsync();
 
 // Simplified database initialization method
-static async Task InitializeDatabaseAsync(IServiceProvider services, string connectionString, string dataDirectory)
+static async Task InitializeDatabaseAsync(IServiceProvider services, string dataDirectory)
 {
     try
     {
-        // Create database directory if it doesn't exist
-        var dbPath = GetSqliteDataSource(connectionString);
-        
-        var dbDirectory = Path.GetDirectoryName(dbPath);
-        if (!string.IsNullOrEmpty(dbDirectory) && !Directory.Exists(dbDirectory))
-        {
-            Directory.CreateDirectory(dbDirectory);
-            Console.WriteLine($"Created database directory: {dbDirectory}");
-        }
-
         // Create data directory if it doesn't exist
         if (!Directory.Exists(dataDirectory))
         {
@@ -133,7 +118,7 @@ static async Task InitializeDatabaseAsync(IServiceProvider services, string conn
         
         // Ensure database schema is created
         await context.Database.EnsureCreatedAsync();
-        Console.WriteLine($"? Database schema initialized successfully at: {dbPath}");
+        Console.WriteLine("? Database schema initialized successfully");
 
         // Test database connection
         var canConnect = await context.Database.CanConnectAsync();
@@ -162,21 +147,6 @@ static async Task InitializeDatabaseAsync(IServiceProvider services, string conn
     }
 }
 
-static string ResolveSqliteConnectionString(string connectionString, string contentRootPath)
-{
-    var sqliteBuilder = new SqliteConnectionStringBuilder(connectionString);
-
-    sqliteBuilder.Pooling = false;
-
-    if (ShouldResolveAgainstContentRoot(sqliteBuilder.DataSource))
-    {
-        sqliteBuilder.DataSource = Path.GetFullPath(
-            Path.Combine(contentRootPath, sqliteBuilder.DataSource));
-    }
-
-    return sqliteBuilder.ToString();
-}
-
 static string ResolveContentRootPath(string? configuredPath, string contentRootPath, string defaultRelativePath)
 {
     var path = string.IsNullOrWhiteSpace(configuredPath)
@@ -188,39 +158,3 @@ static string ResolveContentRootPath(string? configuredPath, string contentRootP
         : Path.GetFullPath(Path.Combine(contentRootPath, path));
 }
 
-static string GetSqliteDataSource(string connectionString)
-{
-    var sqliteBuilder = new SqliteConnectionStringBuilder(connectionString);
-    return sqliteBuilder.DataSource;
-}
-
-static bool ShouldResolveAgainstContentRoot(string? dataSource)
-{
-    return !string.IsNullOrWhiteSpace(dataSource)
-        && !Path.IsPathRooted(dataSource)
-        && !dataSource.Equals(":memory:", StringComparison.OrdinalIgnoreCase)
-        && !dataSource.StartsWith("file:", StringComparison.OrdinalIgnoreCase);
-}
-
-// Runs PRAGMA journal_mode=DELETE on every connection open so the Web app
-// uses the same journal mode as the Python service (which forces DELETE mode
-// because WAL's shared-memory file doesn't work reliably across the
-// Windows host / Linux container boundary via Docker bind mounts).
-public class DeleteJournalModeInterceptor : DbConnectionInterceptor
-{
-    public override void ConnectionOpened(DbConnection connection, ConnectionEndEventData eventData)
-        => ApplyDeleteJournalMode(connection);
-
-    public override Task ConnectionOpenedAsync(DbConnection connection, ConnectionEndEventData eventData, CancellationToken cancellationToken = default)
-    {
-        ApplyDeleteJournalMode(connection);
-        return Task.CompletedTask;
-    }
-
-    private static void ApplyDeleteJournalMode(DbConnection connection)
-    {
-        using var cmd = connection.CreateCommand();
-        cmd.CommandText = "PRAGMA journal_mode=DELETE;";
-        cmd.ExecuteNonQuery();
-    }
-}

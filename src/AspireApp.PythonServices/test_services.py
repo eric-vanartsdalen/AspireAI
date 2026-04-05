@@ -5,17 +5,22 @@ import sys
 import unittest
 from importlib import import_module
 from pathlib import Path
+from unittest.mock import patch
 
 
 PROJECT_ROOT = Path(__file__).resolve().parent
 REPO_ROOT = PROJECT_ROOT.parents[1]
 DATA_ROOT = REPO_ROOT / "data"
+TEST_ROOT = PROJECT_ROOT / "tests"
 
 
 def _ensure_project_root_on_path() -> None:
     project_root = str(PROJECT_ROOT)
     sys.path = [path for path in sys.path if path != project_root]
     sys.path.insert(0, project_root)
+    tests_root = str(TEST_ROOT)
+    if tests_root not in sys.path:
+        sys.path.insert(0, tests_root)
 
 
 _ensure_project_root_on_path()
@@ -43,8 +48,16 @@ class ServiceSmokeTests(unittest.TestCase):
         )
         self.assertIsNone(import_error)
 
-        db = database_service()
-        documents = db.list_documents()
+        database_service_module = import_module("app.services.database_service")
+        fake_postgres = import_module("fake_postgres")
+        fake_postgres.FakeConnectionPool.reset()
+        database_service_module.DatabaseService._pools.clear()
+
+        with patch.object(database_service_module, "ConnectionPool", fake_postgres.FakeConnectionPool):
+            db = database_service_module.DatabaseService(
+                "host=test port=5432 dbname=smoke user=postgres password=pw"
+            )
+            documents = db.list_documents()
 
         self.assertIsInstance(documents, list)
 

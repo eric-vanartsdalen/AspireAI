@@ -30,7 +30,7 @@ def read_root():
         "endpoints": [
             "/docs - API documentation",
             "/documents - Upload inventory and per-document status",
-            "/documents/health/database - SQLite health",
+            "/documents/health/database - Operational store health",
             "/processing - Document processing",
             "/rag - Retrieval endpoints",
             "/rag/lightrag-query - LightRAG retrieval via Python API"
@@ -43,7 +43,7 @@ def health_check():
     try:
         # Basic health check - can be enhanced to check services
         data_path = "/app/data"
-        db_path = "/app/database"
+        db_target = os.getenv("POSTGRES_HOST", "postgres")
         
         # Check service capabilities
         try:
@@ -66,10 +66,12 @@ def health_check():
         health_status = {
             "status": "healthy",
             "data_path_exists": os.path.exists(data_path),
-            "database_path_exists": os.path.exists(db_path),
+            "database_target": db_target,
             "database_status": db_status,
             "service_info": service_info,
             "environment": {
+                "POSTGRES_HOST": os.getenv("POSTGRES_HOST", "not_set"),
+                "POSTGRES_DATABASE": os.getenv("POSTGRES_DATABASE", os.getenv("POSTGRES_DB", "not_set")),
                 "NEO4J_URI": os.getenv("NEO4J_URI", "not_set"),
                 "NEO4J_USER": os.getenv("NEO4J_USER", "not_set"),
             }
@@ -94,8 +96,7 @@ async def startup_event():
     directories = [
         "/app/data/processed/documents",
         "/app/data/uploads",
-        "/app/database",
-        "/tmp/aspire_database"
+        "/app/data/rag_storage"
     ]
     
     for directory in directories:

@@ -234,11 +234,14 @@ public class BasicAspireAppHostTests : IClassFixture<TestFixture>
         await WaitForPageLoadCompletion(page);
 
         var uploadedFile = await WaitForUploadedFileAsync(webClient);
+        var originalTestFileName = PullFilename(TestFile);
 
         Assert.True(uploadedFile.Id > 0,
             "Upload completed, but the API-backed file state did not expose a valid document id.");
         Assert.False(string.IsNullOrWhiteSpace(uploadedFile.FileName),
             "Upload completed, but the API-backed file state did not expose the stored file name.");
+        Assert.Equal(originalTestFileName, uploadedFile.OriginalFileName);
+        Assert.Equal("upload", uploadedFile.SourceType);
         Assert.Equal("uploaded", uploadedFile.Status);
 
         var documentId = uploadedFile.Id;
@@ -268,8 +271,14 @@ public class BasicAspireAppHostTests : IClassFixture<TestFixture>
 
         var finalStatus = await PollForProcessingCompletionAsync(pythonClient, documentId);
         Assert.Equal("processed", finalStatus.Status);
+        Assert.NotNull(finalStatus.StartedAt);
+        Assert.NotNull(finalStatus.CompletedAt);
+        Assert.True(finalStatus.TotalPages > 0,
+            $"Python processing status for document {documentId} did not report extracted pages. Payload: {finalStatus.RawJson}");
 
         var finalDocument = await WaitForPythonDocumentVisibleAsync(pythonClient, documentId);
+        Assert.Equal(uploadedFile.FileName, finalDocument.FileName);
+        Assert.Equal(uploadedFile.OriginalFileName, finalDocument.OriginalFilename);
         Assert.Equal("processed", finalDocument.ProcessingStatus);
 
         var finalUploadState = await WaitForUploadedFileStatusAsync(webClient, documentId, "processed");

@@ -5,6 +5,7 @@ using AspireApp.WebTest.DataModels;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Playwright;
+using Npgsql;
 using System.Diagnostics;
 using System.Text;
 
@@ -276,27 +277,34 @@ public class TestFixture : IAsyncLifetime
 		}
 	}
 
-	private void ValidateDatabaseBindings(IEnumerable<EnvironmentVariableSnapshot> webVariables, IEnumerable<EnvironmentVariableSnapshot> pythonVariables)
-	{
-		if (string.IsNullOrWhiteSpace(_testDatabaseFileName))
-		{
-			return;
-		}
+    private void ValidateDatabaseBindings(IEnumerable<EnvironmentVariableSnapshot> webVariables, IEnumerable<EnvironmentVariableSnapshot> pythonVariables)
+    {
+        if (string.IsNullOrWhiteSpace(_testDatabaseFileName))
+        {
+            return;
+        }
 
-		var webConnectionString = GetEnvironmentVariable(webVariables, "ConnectionStrings__DefaultConnection");
-		if (!string.IsNullOrWhiteSpace(webConnectionString) &&
-			!webConnectionString.Contains(_testDatabaseFileName, StringComparison.OrdinalIgnoreCase))
-		{
-			throw new InvalidOperationException(
-				$"Web frontend connection string did not include expected test database '{_testDatabaseFileName}'. Value: {webConnectionString}");
-		}
+        var webConnectionString = GetEnvironmentVariable(webVariables, "ConnectionStrings__DefaultConnection");
+        if (string.IsNullOrWhiteSpace(webConnectionString))
+        {
+            throw new InvalidOperationException(
+                "Web frontend did not receive the operational upload store connection string.");
+        }
 
-		var pythonDbPath = GetEnvironmentVariable(pythonVariables, "ASPIRE_DB_PATH");
-		if (!string.IsNullOrWhiteSpace(pythonDbPath) &&
-			!pythonDbPath.EndsWith(_testDatabaseFileName, StringComparison.OrdinalIgnoreCase))
-		{
-			throw new InvalidOperationException(
-				$"Python service database path did not include expected test database '{_testDatabaseFileName}'. Value: {pythonDbPath}");
-		}
-	}
+        AppHostMapping.UploadStoreConnectionString = webConnectionString;
+
+        var uploadStoreConnection = new NpgsqlConnectionStringBuilder(webConnectionString);
+        if (!string.Equals(uploadStoreConnection.Database, "DefaultConnection", StringComparison.OrdinalIgnoreCase))
+        {
+            throw new InvalidOperationException(
+                $"Web frontend connection string targeted unexpected PostgreSQL database '{uploadStoreConnection.Database}'.");
+        }
+
+        var pythonDatabase = GetEnvironmentVariable(pythonVariables, "POSTGRES_DATABASE");
+        if (!string.Equals(pythonDatabase, "DefaultConnection", StringComparison.OrdinalIgnoreCase))
+        {
+            throw new InvalidOperationException(
+                $"Python service targeted unexpected PostgreSQL database '{pythonDatabase ?? "<missing>"}'.");
+        }
+    }
 }
