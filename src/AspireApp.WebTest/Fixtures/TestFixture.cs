@@ -8,6 +8,7 @@ using Microsoft.Playwright;
 using Npgsql;
 using System.Diagnostics;
 using System.Text;
+using System.Threading;
 
 namespace AspireApp.WebTest.Fixtures;
 
@@ -30,11 +31,11 @@ public class TestFixture : IAsyncLifetime
 
 	private IPlaywright? _playwright;
 	private IBrowser? _browser;
-	private IBrowserContext? _context;
 	private string? _testRunRoot;
 	private string? _testDataPath;
 	private string? _testDatabasePath;
 	private string? _testDatabaseFileName;
+	private int _disposeSignaled;
 
 	public async Task InitializeAsync()
 	{
@@ -117,25 +118,37 @@ public class TestFixture : IAsyncLifetime
         _playwright = await Playwright.CreateAsync();
 		_browser = await _playwright.Chromium.LaunchAsync(new()
 		{
-			Headless = false
+			Headless = true
 		});
-		_context = await _browser.NewContextAsync(new()
-		{
-			IgnoreHTTPSErrors = true
-		});
-        // Map main browser context for tests to use.
-		AppHostMapping.BrowserContext = _context;
+        // Reuse the browser process, but let each test create its own context.
+		AppHostMapping.Browser = _browser;
 	}
 
 	public async Task DisposeAsync()
 	{
-		if (_context != null)
-			await _context.DisposeAsync();
+		if (Interlocked.Exchange(ref _disposeSignaled, 1) != 0)
+		{
+			return;
+		}
+
+		AppHostMapping.Browser = null;
+
 		if (_browser != null)
+		{
 			await _browser.DisposeAsync();
+			_browser = null;
+		}
+
 		_playwright?.Dispose();
+		_playwright = null;
+
 		if (_app != null)
+		{
+			await _app.StopAsync(CancellationToken.None);
 			await _app.DisposeAsync();
+			_app = null;
+		}
+
 		RestoreEnvironmentVariables();
 		CleanupIsolatedStorage();
 	}
@@ -284,7 +297,7 @@ public class TestFixture : IAsyncLifetime
             return;
         }
 
-        var webConnectionString = GetEnvironmentVariable(webVariables, "ConnectionStrings__DefaultConnection");
+        var webConnectionString = GetEnvironmentVariable(webVariables, "ConnectionStrings__appdb");
         if (string.IsNullOrWhiteSpace(webConnectionString))
         {
             throw new InvalidOperationException(
@@ -294,14 +307,14 @@ public class TestFixture : IAsyncLifetime
         AppHostMapping.UploadStoreConnectionString = webConnectionString;
 
         var uploadStoreConnection = new NpgsqlConnectionStringBuilder(webConnectionString);
-        if (!string.Equals(uploadStoreConnection.Database, "DefaultConnection", StringComparison.OrdinalIgnoreCase))
+        if (!string.Equals(uploadStoreConnection.Database, "appdb", StringComparison.OrdinalIgnoreCase))
         {
             throw new InvalidOperationException(
                 $"Web frontend connection string targeted unexpected PostgreSQL database '{uploadStoreConnection.Database}'.");
         }
 
         var pythonDatabase = GetEnvironmentVariable(pythonVariables, "POSTGRES_DATABASE");
-        if (!string.Equals(pythonDatabase, "DefaultConnection", StringComparison.OrdinalIgnoreCase))
+        if (!string.Equals(pythonDatabase, "appdb", StringComparison.OrdinalIgnoreCase))
         {
             throw new InvalidOperationException(
                 $"Python service targeted unexpected PostgreSQL database '{pythonDatabase ?? "<missing>"}'.");

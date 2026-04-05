@@ -24,20 +24,20 @@ public class BasicAspireAppHostTests : IClassFixture<TestFixture>
     private const string FilenameCellInRow = "td[class='file-name-cell'] span[class='file-name-full']";
     private const string DeleteButtonInCell = "td button";
     private static readonly string TestFile = Path.Combine(AppContext.BaseDirectory, "..", "..", "..", "..",
-            "AspireApp.WebTest", "DataExample", "increase_green_energy_one_rooftop_at_a_time.pdf");
+            "AspireApp.WebTest", "DataExample", "processing-smoke.pdf");
     private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web);
     private static readonly TimeSpan PythonVisibilityTimeout = TimeSpan.FromSeconds(30);
     private static readonly TimeSpan PythonVisibilityPollInterval = TimeSpan.FromMilliseconds(500);
     private static readonly TimeSpan ProcessingPollTimeout = TimeSpan.FromMinutes(2);
     private static readonly TimeSpan ProcessingPollInterval = TimeSpan.FromSeconds(1);
     private readonly AppHostMappingModel _data;
-    protected IBrowserContext _browserContext;
+    private readonly IBrowser _browser;
 
     public BasicAspireAppHostTests(TestFixture fixture)
     {
         _data = fixture.AppHostMapping;
-        Assert.NotNull(_data.BrowserContext);
-        _browserContext = _data.BrowserContext!;
+        Assert.NotNull(_data.Browser);
+        _browser = _data.Browser!;
     }
 
     [Fact, Priority(0)]
@@ -45,146 +45,147 @@ public class BasicAspireAppHostTests : IClassFixture<TestFixture>
     {
         Assert.False(string.IsNullOrWhiteSpace(_data.AspireDashboardLoginUri));
 
-        IPage page = await _browserContext.NewPageAsync();
-
-        // Navigate to the tokenized login URI. The dashboard validates the
-        // browser token, sets an auth cookie, and redirects to the root page.
-        await page.GotoAsync(_data.AspireDashboardLoginUri, _data.Options);
-        await WaitForPageLoadCompletion(page);
-
-        // Wait for the post-authentication redirect to leave /login.
-        // If GotoAsync already followed a server-side 302 this resolves immediately;
-        // otherwise it waits for the Blazor-driven redirect after token validation.
-        await page.WaitForURLAsync(
-            url => !url.Contains("/login", StringComparison.OrdinalIgnoreCase),
-            new PageWaitForURLOptions { Timeout = 120_000 });
-
-        // Blazor Server sets the page title asynchronously via <PageTitle>
-        // after the SignalR circuit initializes. Give it generous time.
-        await page.WaitForFunctionAsync(
-            "() => document.title && document.title.length > 0",
-            null,
-            new PageWaitForFunctionOptions { Timeout = 60_000 });
-
-        await WaitForPageLoadCompletion(page);
-        var title = await page.TitleAsync();
-        if (!title.Equals("AspireApp resources", StringComparison.OrdinalIgnoreCase))
+        await WithPageAsync(async page =>
         {
-            Debug.WriteLine($"Page title is not as expected: {title}");
-            // wait for 2 seconds and check the title again to see if it was just delayed in updating.
-            await Task.Delay(2000);
-            title = await page.TitleAsync();
-        }
+            // Navigate to the tokenized login URI. The dashboard validates the
+            // browser token, sets an auth cookie, and redirects to the root page.
+            await page.GotoAsync(_data.AspireDashboardLoginUri, _data.Options);
+            await WaitForPageLoadCompletion(page);
 
-        // Check basic Dashboard items
-        Assert.DoesNotContain("/login", page.Url, StringComparison.OrdinalIgnoreCase);
-        Assert.Equivalent("AspireApp resources", title);
+            // Wait for the post-authentication redirect to leave /login.
+            // If GotoAsync already followed a server-side 302 this resolves immediately;
+            // otherwise it waits for the Blazor-driven redirect after token validation.
+            await page.WaitForURLAsync(
+                url => !url.Contains("/login", StringComparison.OrdinalIgnoreCase),
+                new PageWaitForURLOptions { Timeout = 120_000 });
 
-        // Capture all the Configured AppHost Resources and where appropropriate, their expected configuration endpoint links.
-        await page.Locator(AspireTableNameColumn).First.WaitForAsync(new LocatorWaitForOptions()
-        {
-            Timeout = 5000
+            // Blazor Server sets the page title asynchronously via <PageTitle>
+            // after the SignalR circuit initializes. Give it generous time.
+            await page.WaitForFunctionAsync(
+                "() => document.title && document.title.length > 0",
+                null,
+                new PageWaitForFunctionOptions { Timeout = 60_000 });
+
+            await WaitForPageLoadCompletion(page);
+            var title = await page.TitleAsync();
+            if (!title.Equals("AspireApp resources", StringComparison.OrdinalIgnoreCase))
+            {
+                Debug.WriteLine($"Page title is not as expected: {title}");
+                await Task.Delay(2000);
+                title = await page.TitleAsync();
+            }
+
+            Assert.DoesNotContain("/login", page.Url, StringComparison.OrdinalIgnoreCase);
+            Assert.Equivalent("AspireApp resources", title);
+
+            await page.Locator(AspireTableNameColumn).First.WaitForAsync(new LocatorWaitForOptions()
+            {
+                Timeout = 5000
+            });
+            List<ILocator> rowNames = (await page.Locator(AspireTableNameColumn).AllAsync()).ToList();
+            List<ILocator> rowResources = (await page.Locator(AspireTableResourceColumn).AllAsync()).ToList();
+            List<ILocator> rowLinks = (await page.Locator(AspireTableLinksColumn).AllAsync()).ToList();
+            string ollamaLink = string.Empty;
+            string webFrontendLink = string.Empty;
+            string graphDbLink = string.Empty;
+            string lightRagLink = string.Empty;
+            string pythonServiceLink = string.Empty;
+            string apiServiceLink = string.Empty;
+
+            for (int i = 0; i < rowNames.Count; i++)
+            {
+                var name = await rowNames[i].TextContentAsync();
+                var resource = await rowResources[i].TextContentAsync();
+                var link = await rowLinks[i].TextContentAsync();
+                var message = $"{name.Trim()} | {resource.Trim()} | {link.Trim()}";
+                Console.WriteLine(message);
+                if (name.Contains("Ollama", StringComparison.OrdinalIgnoreCase))
+                {
+                    ollamaLink = link.Trim();
+                }
+                if (name.Contains("WebFrontend", StringComparison.OrdinalIgnoreCase))
+                {
+                    webFrontendLink = link.Trim();
+                }
+                if (name.Contains("Graph-Db", StringComparison.OrdinalIgnoreCase))
+                {
+                    graphDbLink = link.Trim();
+                }
+                if (name.Contains("LightRag", StringComparison.OrdinalIgnoreCase))
+                {
+                    lightRagLink = link.Trim();
+                }
+                if (name.Contains("Python-Service", StringComparison.OrdinalIgnoreCase))
+                {
+                    pythonServiceLink = link.Trim();
+                }
+                if (name.Contains("ApiService", StringComparison.OrdinalIgnoreCase))
+                {
+                    apiServiceLink = link.Trim();
+                }
+            }
+
+            Assert.False(string.IsNullOrWhiteSpace(ollamaLink), "Ollama link should not be empty");
+            Assert.False(string.IsNullOrWhiteSpace(webFrontendLink), "Web Frontend link should not be empty");
+            Assert.False(string.IsNullOrWhiteSpace(graphDbLink), "Graph-Db link should not be empty");
+            Assert.False(string.IsNullOrEmpty(pythonServiceLink), "PythonService link should not be empty");
+            Assert.False(string.IsNullOrEmpty(apiServiceLink), "ApiService link should not be empty");
+
+            Assert.True(ollamaLink.Contains(_data.OllamaUri, StringComparison.OrdinalIgnoreCase),
+                $"Ollama link ({ollamaLink}) should contain {_data.OllamaUri}");
+            Assert.True(webFrontendLink.Contains(_data.WebfrontendUri, StringComparison.OrdinalIgnoreCase),
+                $"Web Frontend link ({webFrontendLink}) should contain {_data.WebfrontendUri}");
+            Assert.True(graphDbLink.Contains(_data.GraphDBUri, StringComparison.OrdinalIgnoreCase),
+                $"Graph-Db link ({graphDbLink}) should contain {_data.GraphDBUri}");
+            if (!string.IsNullOrWhiteSpace(lightRagLink))
+            {
+                Assert.True(lightRagLink.Contains(_data.LightRagUri, StringComparison.OrdinalIgnoreCase),
+                    $"LightRag link ({lightRagLink}) should contain {_data.LightRagUri}");
+            }
+            Assert.True(pythonServiceLink.Contains(_data.PythonServiceUri, StringComparison.OrdinalIgnoreCase),
+                $"PythonService link ({pythonServiceLink}) should contain {_data.PythonServiceUri}");
+            Assert.True(apiServiceLink.Contains(_data.ApiServiceUri, StringComparison.OrdinalIgnoreCase),
+                $"ApiService link ({apiServiceLink}) should contain {_data.ApiServiceUri}");
         });
-        List<ILocator> rowNames = (await page.Locator(AspireTableNameColumn).AllAsync()).ToList();
-        List<ILocator> rowResources = (await page.Locator(AspireTableResourceColumn).AllAsync()).ToList();
-        List<ILocator> rowLinks = (await page.Locator(AspireTableLinksColumn).AllAsync()).ToList();
-        string ollamaLink = string.Empty;
-        string webFrontendLink = string.Empty;
-        string graphDbLink = string.Empty;
-        string lightRagLink = string.Empty;
-        string pythonServiceLink = string.Empty;
-        string apiServiceLink = string.Empty;
-
-        for (int i = 0; i < rowNames.Count; i++)
-        {
-            var name = await rowNames[i].TextContentAsync();
-            var resource = await rowResources[i].TextContentAsync();
-            var link = await rowLinks[i].TextContentAsync();
-            var message = $"{name.Trim()} | {resource.Trim()} | {link.Trim()}";
-            Console.WriteLine(message);
-            if (name.Contains("Ollama", StringComparison.OrdinalIgnoreCase))
-            {
-                ollamaLink = link.Trim();
-            }
-            if (name.Contains("WebFrontend", StringComparison.OrdinalIgnoreCase))
-            {
-                webFrontendLink = link.Trim();
-            }
-            if (name.Contains("Graph-Db", StringComparison.OrdinalIgnoreCase))
-            {
-                graphDbLink = link.Trim();
-            }
-            if (name.Contains("LightRag", StringComparison.OrdinalIgnoreCase))
-            {
-                lightRagLink = link.Trim();
-            }
-            if (name.Contains("Python-Service", StringComparison.OrdinalIgnoreCase))
-            {
-                pythonServiceLink = link.Trim();
-            }
-            if (name.Contains("ApiService", StringComparison.OrdinalIgnoreCase))
-            {
-                apiServiceLink = link.Trim();
-            }
-        }
-        // Find service for Ollama and Web Frontend and check their links are correct.
-        Assert.False(string.IsNullOrWhiteSpace(ollamaLink), "Ollama link should not be empty");
-        Assert.False(string.IsNullOrWhiteSpace(webFrontendLink), "Web Frontend link should not be empty");
-        Assert.False(string.IsNullOrWhiteSpace(graphDbLink), "Graph-Db link should not be empty");
-        Assert.False(string.IsNullOrEmpty(pythonServiceLink), "PythonService link should not be empty");
-        Assert.False(string.IsNullOrEmpty(apiServiceLink), "ApiService link should not be empty");
-
-        Assert.True(ollamaLink.Contains(_data.OllamaUri, StringComparison.OrdinalIgnoreCase),
-            $"Ollama link ({ollamaLink}) should contain {_data.OllamaUri}");
-        Assert.True(webFrontendLink.Contains(_data.WebfrontendUri, StringComparison.OrdinalIgnoreCase),
-            $"Web Frontend link ({webFrontendLink}) should contain {_data.WebfrontendUri}");
-        Assert.True(graphDbLink.Contains(_data.GraphDBUri, StringComparison.OrdinalIgnoreCase),
-            $"Graph-Db link ({graphDbLink}) should contain {_data.GraphDBUri}");
-        if (!string.IsNullOrWhiteSpace(lightRagLink))
-        {
-            Assert.True(lightRagLink.Contains(_data.LightRagUri, StringComparison.OrdinalIgnoreCase),
-                $"LightRag link ({lightRagLink}) should contain {_data.LightRagUri}");
-        }
-        Assert.True(pythonServiceLink.Contains(_data.PythonServiceUri, StringComparison.OrdinalIgnoreCase),
-            $"PythonService link ({pythonServiceLink}) should contain {_data.PythonServiceUri}");
-        Assert.True(apiServiceLink.Contains(_data.ApiServiceUri, StringComparison.OrdinalIgnoreCase),
-            $"ApiService link ({apiServiceLink}) should contain {_data.ApiServiceUri}");
     }
 
     [Fact, Priority(2)]
     public async Task WebHomeUILoads()
     {
         Console.WriteLine($"Navigating to Web Frontend at: {_data.WebfrontendUri}");
-        IPage page = await _browserContext.NewPageAsync();
-        await page.GotoAsync(_data.WebfrontendUri, _data.Options);
-        await WaitForPageLoadCompletion(page);
-        // Check page title equal "Home"
-        var title = await page.TitleAsync();
-        Assert.Equivalent("Home", title);
+        await WithPageAsync(async page =>
+        {
+            await page.GotoAsync(_data.WebfrontendUri, _data.Options);
+            await WaitForPageLoadCompletion(page);
+            var title = await page.TitleAsync();
+            Assert.Equivalent("Home", title);
+        });
     }
 
     [Fact, Priority(2)]
     public async Task OllamaLoads()
     {
         Console.WriteLine($"Navigating to Ollama Frontend at: {_data.OllamaUri}");
-        IPage page = await _browserContext.NewPageAsync();
-        await page.GotoAsync(_data.OllamaUri, _data.Options);
-        await WaitForPageLoadCompletion(page);
-        // Check the page contains text "Ollama is running"
-        var content = await page.ContentAsync();
-        Assert.Contains("Ollama is running", content, StringComparison.OrdinalIgnoreCase);
+        await WithPageAsync(async page =>
+        {
+            await page.GotoAsync(_data.OllamaUri, _data.Options);
+            await WaitForPageLoadCompletion(page);
+            var content = await page.ContentAsync();
+            Assert.Contains("Ollama is running", content, StringComparison.OrdinalIgnoreCase);
+        });
     }
 
     [Fact, Priority(2)]
     public async Task PythonServiceLoads()
     {
         Console.WriteLine($"Navigating to Python Services Frontend at: {_data.PythonServiceUri}");
-        IPage page = await _browserContext.NewPageAsync();
-        await page.GotoAsync(_data.PythonServiceUri, _data.Options);
-        await WaitForPageLoadCompletion(page);
-        // Check the page shows json of python service
-        var content = await page.ContentAsync();
-        Assert.Contains("AspireAI Document Processing Service", content, StringComparison.OrdinalIgnoreCase);
+        await WithPageAsync(async page =>
+        {
+            await page.GotoAsync(_data.PythonServiceUri, _data.Options);
+            await WaitForPageLoadCompletion(page);
+            var content = await page.ContentAsync();
+            Assert.Contains("AspireAI Document Processing Service", content, StringComparison.OrdinalIgnoreCase);
+        });
     }
 
     [Fact, Priority(2)]
@@ -192,26 +193,28 @@ public class BasicAspireAppHostTests : IClassFixture<TestFixture>
     {
         var PythonOpenAPIEndpoint = $"{_data.PythonServiceUri.TrimEnd('/')}/docs";
         Console.WriteLine($"Navigating to Python Services Open API at: {PythonOpenAPIEndpoint}");
-        IPage page = await _browserContext.NewPageAsync();
-        await page.GotoAsync(PythonOpenAPIEndpoint, _data.Options);
-        await WaitForPageLoadCompletion(page);
-        // Check the page shows json of python service
-        var title = await page.TitleAsync();
-        var content = await page.ContentAsync();
-        Assert.Equivalent("AspireAI Document Processing Service - Swagger UI", title);
-        Assert.Contains("AspireAI Document Processing Service", content, StringComparison.OrdinalIgnoreCase);
+        await WithPageAsync(async page =>
+        {
+            await page.GotoAsync(PythonOpenAPIEndpoint, _data.Options);
+            await WaitForPageLoadCompletion(page);
+            var title = await page.TitleAsync();
+            var content = await page.ContentAsync();
+            Assert.Equivalent("AspireAI Document Processing Service - Swagger UI", title);
+            Assert.Contains("AspireAI Document Processing Service", content, StringComparison.OrdinalIgnoreCase);
+        });
     }
 
     [Fact, Priority(2)]
     public async Task GraphDbLoads()
     {
         Console.WriteLine($"Navigating to Graph DB Services Frontend at: {_data.GraphDBUri}");
-        IPage page = await _browserContext.NewPageAsync();
-        await page.GotoAsync(_data.GraphDBUri, _data.Options);
-        await WaitForPageLoadCompletion(page);
-        // Check the Graph DB page shows expected content
-        var title = await page.TitleAsync();
-        Assert.Equivalent("Neo4j Browser", title);
+        await WithPageAsync(async page =>
+        {
+            await page.GotoAsync(_data.GraphDBUri, _data.Options);
+            await WaitForPageLoadCompletion(page);
+            var title = await page.TitleAsync();
+            Assert.Equivalent("Neo4j Browser", title);
+        });
     }
 
     [Fact, Priority(1)]
@@ -220,132 +223,133 @@ public class BasicAspireAppHostTests : IClassFixture<TestFixture>
         using var webClient = CreateWebFrontendHttpClient();
         await DeleteExistingTestUploadsAsync(webClient);
 
-        IPage page = await _browserContext.NewPageAsync();
-        await page.GotoAsync(_data.WebfrontendUri, _data.Options);
-        await WaitForPageLoadCompletion(page);
-
-        await ClickByRole(AriaRole.Link, "Upload Documents", page);
-        await SetUploadInput(TestFile, AriaRole.Button, "Choose File", page);
-
-        var uploadButton = page.GetByRole(AriaRole.Button, new() { Name = "Start Upload" });
-        await WaitForLocator(uploadButton);
-        await uploadButton.HoverAsync();
-        await uploadButton.ClickAsync(new LocatorClickOptions() { Delay = 250 });
-        await WaitForPageLoadCompletion(page);
-
-        var uploadedFile = await WaitForUploadedFileAsync(webClient);
-        var originalTestFileName = PullFilename(TestFile);
-
-        Assert.True(uploadedFile.Id > 0,
-            "Upload completed, but the API-backed file state did not expose a valid document id.");
-        Assert.False(string.IsNullOrWhiteSpace(uploadedFile.FileName),
-            "Upload completed, but the API-backed file state did not expose the stored file name.");
-        Assert.Equal(originalTestFileName, uploadedFile.OriginalFileName);
-        Assert.Equal("upload", uploadedFile.SourceType);
-        Assert.Equal("uploaded", uploadedFile.Status);
-
-        var documentId = uploadedFile.Id;
-        await WaitForUploadedFileRowAsync(page, uploadedFile.FileName!);
-
-        using var pythonClient = CreatePythonServiceHttpClient();
-        var triggerEndpoint = "processing/process-all";
-        using var triggerResponse = await pythonClient.PostAsync(triggerEndpoint, content: null, TestContext.Current.CancellationToken);
-        var triggerBody = await triggerResponse.Content.ReadAsStringAsync(TestContext.Current.CancellationToken);
-
-        if (!triggerResponse.IsSuccessStatusCode)
+        await WithPageAsync(async page =>
         {
-            var pythonVisibilityDiagnostic = await GetPythonDocumentVisibilityDiagnosticAsync(pythonClient, documentId);
-            Assert.Fail(
-                $"Python processing trigger '{BuildAbsoluteUri(_data.PythonServiceUri, triggerEndpoint)}' returned {(int)triggerResponse.StatusCode} {triggerResponse.ReasonPhrase}. Response: {triggerBody}{Environment.NewLine}{pythonVisibilityDiagnostic}");
-        }
+            await page.GotoAsync(_data.WebfrontendUri, _data.Options);
+            await WaitForPageLoadCompletion(page);
 
-        var triggerResult = DeserializeJson<BatchProcessingTriggerResponse>(triggerBody, $"POST /{triggerEndpoint}");
-        Assert.False(string.IsNullOrWhiteSpace(triggerResult.Message),
-            $"Python processing trigger returned success but no message. Response: {triggerBody}");
-        if (!triggerResult.DocumentIds.Contains(documentId))
-        {
-            var pythonVisibilityDiagnostic = await GetPythonDocumentVisibilityDiagnosticAsync(pythonClient, documentId);
-            Assert.Fail(
-                $"Python processing trigger '{BuildAbsoluteUri(_data.PythonServiceUri, triggerEndpoint)}' did not queue uploaded document {documentId}. Response: {triggerBody}{Environment.NewLine}{pythonVisibilityDiagnostic}");
-        }
+            await ClickByRole(AriaRole.Link, "Upload Documents", page);
+            await SetUploadInput(TestFile, AriaRole.Button, "Choose File", page);
 
-        var finalStatus = await PollForProcessingCompletionAsync(pythonClient, documentId);
-        Assert.Equal("processed", finalStatus.Status);
-        Assert.NotNull(finalStatus.StartedAt);
-        Assert.NotNull(finalStatus.CompletedAt);
-        Assert.True(finalStatus.TotalPages > 0,
-            $"Python processing status for document {documentId} did not report extracted pages. Payload: {finalStatus.RawJson}");
+            var uploadButton = page.GetByRole(AriaRole.Button, new() { Name = "Start Upload" });
+            await WaitForLocator(uploadButton);
+            await uploadButton.HoverAsync();
+            await uploadButton.ClickAsync(new LocatorClickOptions() { Delay = 250 });
+            await WaitForPageLoadCompletion(page);
 
-        var finalDocument = await WaitForPythonDocumentVisibleAsync(pythonClient, documentId);
-        Assert.Equal(uploadedFile.FileName, finalDocument.FileName);
-        Assert.Equal(uploadedFile.OriginalFileName, finalDocument.OriginalFilename);
-        Assert.Equal("processed", finalDocument.ProcessingStatus);
+            var uploadedFile = await WaitForUploadedFileAsync(webClient);
+            var originalTestFileName = PullFilename(TestFile);
 
-        var finalUploadState = await WaitForUploadedFileStatusAsync(webClient, documentId, "processed");
-        Assert.Equal("processed", finalUploadState.Status);
+            Assert.True(uploadedFile.Id > 0,
+                "Upload completed, but the API-backed file state did not expose a valid document id.");
+            Assert.False(string.IsNullOrWhiteSpace(uploadedFile.FileName),
+                "Upload completed, but the API-backed file state did not expose the stored file name.");
+            Assert.Equal(originalTestFileName, uploadedFile.OriginalFileName);
+            Assert.Equal("upload", uploadedFile.SourceType);
+            Assert.Equal("uploaded", uploadedFile.Status);
 
-        var artifacts = await WaitForProcessedArtifactsAsync(documentId);
-        Assert.True(File.Exists(artifacts.DocumentJsonPath),
-            $"Expected Docling document artifact at '{artifacts.DocumentJsonPath}', but it was not created.");
-        Assert.True(File.Exists(artifacts.FirstPagePath),
-            $"Expected at least one page artifact for document {documentId}, but none were created under '{Path.GetDirectoryName(artifacts.FirstPagePath)}'.");
-        Assert.True(File.Exists(artifacts.MarkdownPath),
-            $"Expected exported markdown artifact for document {documentId}, but none were created under '{Path.GetDirectoryName(artifacts.MarkdownPath)}'.");
-        Assert.True(File.Exists(artifacts.MetadataPath),
-            $"Expected processing metadata artifact for document {documentId}, but it was not created at '{artifacts.MetadataPath}'.");
-        Assert.True(artifacts.LightRagScanRequested,
-            $"Expected metadata at '{artifacts.MetadataPath}' to record a LightRAG scan request for document {documentId}.");
-        Assert.False(string.IsNullOrWhiteSpace(artifacts.LightRagStagedInputPath),
-            $"Expected metadata at '{artifacts.MetadataPath}' to record the staged LightRAG input path for document {documentId}.");
+            var documentId = uploadedFile.Id;
+            await WaitForUploadedFileRowAsync(page, uploadedFile.FileName!);
+
+            using var pythonClient = CreatePythonServiceHttpClient();
+            var triggerEndpoint = $"processing/process-document/{documentId}";
+            using var triggerResponse = await pythonClient.PostAsync(triggerEndpoint, content: null, TestContext.Current.CancellationToken);
+            var triggerBody = await triggerResponse.Content.ReadAsStringAsync(TestContext.Current.CancellationToken);
+
+            if (!triggerResponse.IsSuccessStatusCode)
+            {
+                var pythonVisibilityDiagnostic = await GetPythonDocumentVisibilityDiagnosticAsync(pythonClient, documentId);
+                Assert.Fail(
+                    $"Python processing trigger '{BuildAbsoluteUri(_data.PythonServiceUri, triggerEndpoint)}' returned {(int)triggerResponse.StatusCode} {triggerResponse.ReasonPhrase}. Response: {triggerBody}{Environment.NewLine}{pythonVisibilityDiagnostic}");
+            }
+
+            var triggerResult = DeserializeJson<ProcessingTriggerResponse>(triggerBody, $"POST /{triggerEndpoint}");
+            Assert.False(string.IsNullOrWhiteSpace(triggerResult.Message),
+                $"Python processing trigger returned success but no message. Response: {triggerBody}");
+
+            var finalStatus = await PollForProcessingCompletionAsync(pythonClient, documentId);
+            Assert.Equal("processed", finalStatus.Status);
+            Assert.NotNull(finalStatus.StartedAt);
+            Assert.NotNull(finalStatus.CompletedAt);
+            Assert.True(finalStatus.TotalPages > 0,
+                $"Python processing status for document {documentId} did not report extracted pages. Payload: {finalStatus.RawJson}");
+            Assert.True(finalStatus.ProcessedPages > 0,
+                $"Python processing status for document {documentId} did not report processed pages. Payload: {finalStatus.RawJson}");
+
+            var finalDocument = await WaitForPythonDocumentVisibleAsync(pythonClient, documentId);
+            Assert.Equal(uploadedFile.FileName, finalDocument.FileName);
+            Assert.Equal(uploadedFile.OriginalFileName, finalDocument.OriginalFilename);
+            Assert.Equal("processed", finalDocument.ProcessingStatus);
+
+            var finalUploadState = await WaitForUploadedFileStatusAsync(webClient, documentId, "processed");
+            Assert.Equal("processed", finalUploadState.Status);
+
+            var artifacts = await WaitForProcessedArtifactsAsync(documentId);
+            Assert.True(File.Exists(artifacts.DocumentJsonPath),
+                $"Expected Docling document artifact at '{artifacts.DocumentJsonPath}', but it was not created.");
+            Assert.True(File.Exists(artifacts.FirstPagePath),
+                $"Expected at least one page artifact for document {documentId}, but none were created under '{Path.GetDirectoryName(artifacts.FirstPagePath)}'.");
+            Assert.True(File.Exists(artifacts.MarkdownPath),
+                $"Expected exported markdown artifact for document {documentId}, but none were created under '{Path.GetDirectoryName(artifacts.MarkdownPath)}'.");
+            Assert.True(File.Exists(artifacts.MetadataPath),
+                $"Expected processing metadata artifact for document {documentId}, but it was not created at '{artifacts.MetadataPath}'.");
+            Assert.True(artifacts.LightRagScanRequested,
+                $"Expected metadata at '{artifacts.MetadataPath}' to record a LightRAG scan request for document {documentId}.");
+            Assert.False(string.IsNullOrWhiteSpace(artifacts.LightRagStagedInputPath),
+                $"Expected metadata at '{artifacts.MetadataPath}' to record the staged LightRAG input path for document {documentId}.");
+        });
     }
 
     [Fact, Priority(3)]
     public async Task DeleteUploadedTestFile()
     {
-        IPage page = await _browserContext.NewPageAsync();
-        await page.GotoAsync(_data.WebfrontendUri, _data.Options);
-        await WaitForPageLoadCompletion(page);
-        // STEP: Navigate to Upload Documents tab in the Web Frontend, identify the test document in the list of uploaded documents, and click the delete button to remove it from the system.
-        await ClickByRole(AriaRole.Link, "Upload Documents", page);
+        using var webClient = CreateWebFrontendHttpClient();
+        await DeleteExistingTestUploadsAsync(webClient);
+        var uploadedFile = await UploadTestFileViaApiAsync(webClient);
 
-        IReadOnlyList<ILocator> filenameRows = await GetDocumentSourceTableRows(page);
-        ILocator targetFileToDelete = null;
-        string filename = PullFilename(TestFile).Split(".")[0];
-
-        targetFileToDelete = await PullFileDeleteButton(filenameRows, filename);
-        if (targetFileToDelete != null)
+        await WithPageAsync(async page =>
         {
+            await page.GotoAsync(_data.WebfrontendUri, _data.Options);
+            await WaitForPageLoadCompletion(page);
+            await ClickByRole(AriaRole.Link, "Upload Documents", page);
+            await WaitForUploadedFileRowAsync(page, uploadedFile.FileName!);
+
+            IReadOnlyList<ILocator> filenameRows = await GetDocumentSourceTableRows(page);
+            var targetFileToDelete = await PullFileDeleteButton(filenameRows, uploadedFile.FileName!);
+            Assert.NotNull(targetFileToDelete);
+
             await targetFileToDelete.HoverAsync();
             await targetFileToDelete.ClickAsync(new LocatorClickOptions() { Delay = 250 });
             await WaitForPageLoadCompletion(page);
+            await WaitForUploadedFileRowRemovedAsync(page, uploadedFile.FileName!);
 
-            // STEP: Verify the file is deleted from the list of uploaded documents in the Web Frontend.
             IReadOnlyList<ILocator> updatedFilenameRows = await GetDocumentSourceTableRows(page);
-            int countDown = 5;
-            while (updatedFilenameRows.Count() >= filenameRows.Count() && countDown > 0)
+            foreach (var fileCell in updatedFilenameRows)
             {
-                await Task.Delay(1000);
-                countDown--;
-                updatedFilenameRows = await GetDocumentSourceTableRows(page);
-                await WaitForPageLoadCompletion(page);
+                var cellText = await fileCell.Locator(FullFilenameCell).TextContentAsync();
+                Assert.False(string.Equals(cellText, uploadedFile.FileName, StringComparison.OrdinalIgnoreCase),
+                    $"File {cellText} should have been deleted but still appears in the list.");
+                Debug.WriteLine(cellText);
             }
-            if (updatedFilenameRows.Count() >= filenameRows.Count())
-            {
-                Debug.WriteLine("Problem - File deletion did not complete within the expected time.");
-            }
-            if (updatedFilenameRows.Count > 0)
-            {
-                foreach (var fileCell in updatedFilenameRows)
-                {
-                    var cellText = await fileCell.Locator(FullFilenameCell).TextContentAsync();
-                    Assert.False(cellText.StartsWith(filename.Split(".")[0]), $"File {cellText} should have been deleted but still appears in the list.");
-                    Debug.WriteLine(cellText);
-                }
-            }
-        }
-        else
+        });
+    }
+
+    private async Task WithPageAsync(Func<IPage, Task> testAction)
+    {
+        await using var browserContext = await _browser.NewContextAsync(new BrowserNewContextOptions
         {
-            Debug.WriteLine($"Could not find file that starts with {filename} to delete. It may have already been deleted or never uploaded.");
+            IgnoreHTTPSErrors = true
+        });
+
+        var page = await browserContext.NewPageAsync();
+
+        try
+        {
+            await testAction(page);
+        }
+        finally
+        {
+            await page.CloseAsync();
         }
     }
 
@@ -435,6 +439,27 @@ public class BasicAspireAppHostTests : IClassFixture<TestFixture>
         Assert.Fail(
             $"Timed out after {timeoutMs}ms waiting for '{testFileName}' to appear in API-backed upload state. Last payload: {lastPayload}");
         return default!;
+    }
+
+    private async Task<UploadedFileApiModel> UploadTestFileViaApiAsync(HttpClient webClient)
+    {
+        await using var fileStream = File.OpenRead(TestFile);
+        using var form = new MultipartFormDataContent();
+        using var streamContent = new StreamContent(fileStream);
+        streamContent.Headers.ContentType = new System.Net.Http.Headers.MediaTypeHeaderValue("application/pdf");
+        form.Add(streamContent, "file", Path.GetFileName(TestFile));
+
+        using var uploadResponse = await webClient.PostAsync("api/FileUpload", form, TestContext.Current.CancellationToken);
+        var uploadBody = await uploadResponse.Content.ReadAsStringAsync(TestContext.Current.CancellationToken);
+
+        Assert.True(uploadResponse.IsSuccessStatusCode,
+            $"Seed upload API returned {(int)uploadResponse.StatusCode} {uploadResponse.ReasonPhrase}. Response: {uploadBody}");
+
+        var uploadResult = DeserializeJson<FileUploadApiResponse>(uploadBody, "POST /api/FileUpload");
+        Assert.True(uploadResult.Success, $"Seed upload returned success=false. Response: {uploadBody}");
+        Assert.False(uploadResult.IsDuplicate, $"Seed upload unexpectedly returned a duplicate response. Response: {uploadBody}");
+
+        return await WaitForUploadedFileAsync(webClient);
     }
 
     private async Task<string> GetPythonDocumentVisibilityDiagnosticAsync(HttpClient pythonClient, int documentId)
@@ -848,6 +873,36 @@ public class BasicAspireAppHostTests : IClassFixture<TestFixture>
         Assert.Fail($"Uploaded file '{fileName}' did not appear in the Upload Documents table within {timeoutMs}ms.");
     }
 
+    private static async Task WaitForUploadedFileRowRemovedAsync(IPage page, string fileName, int timeoutMs = 15000)
+    {
+        var waitStopwatch = Stopwatch.StartNew();
+
+        while (waitStopwatch.ElapsedMilliseconds < timeoutMs)
+        {
+            var rows = await GetDocumentSourceTableRows(page);
+            var stillPresent = false;
+
+            foreach (var row in rows)
+            {
+                var cellText = (await row.Locator(FilenameCellInRow).TextContentAsync())?.Trim();
+                if (string.Equals(cellText, fileName, StringComparison.OrdinalIgnoreCase))
+                {
+                    stillPresent = true;
+                    break;
+                }
+            }
+
+            if (!stillPresent)
+            {
+                return;
+            }
+
+            await Task.Delay(500, TestContext.Current.CancellationToken);
+        }
+
+        Assert.Fail($"Uploaded file '{fileName}' still appeared in the Upload Documents table after deletion.");
+    }
+
     private static T DeserializeJson<T>(string payload, string endpoint)
     {
         try
@@ -886,26 +941,28 @@ public class BasicAspireAppHostTests : IClassFixture<TestFixture>
 
     private static async Task<ILocator> PullFileDeleteButton(IReadOnlyList<ILocator> filenameRows, string filename)
     {
-        ILocator targetFileToDelete = null;
-        int countDown = 10;
-        await CheckAtleastOneCellExists(filenameRows);
-        while (targetFileToDelete == null && countDown > 0)
+        foreach (var fileRow in filenameRows)
         {
-            countDown--;
-            // Look for the file in the list of uploaded files and get its corresponding delete button locator.
-            foreach (var fileRow in filenameRows)
+            var cellText = await fileRow.Locator(FilenameCellInRow).TextContentAsync();
+            if (string.IsNullOrWhiteSpace(cellText))
             {
-                var cellText = await fileRow.Locator(FilenameCellInRow).TextContentAsync();
-                if (cellText.StartsWith(filename.Split(".")[0]))
-                {
-                    IReadOnlyList<ILocator> deleteButtons = await fileRow.Locator(DeleteButtonInCell).AllAsync();
-                    targetFileToDelete = deleteButtons.FirstOrDefault();
-                    Debug.WriteLine($"Found file ({cellText}) that starts with {filename}");
-                    return targetFileToDelete;
-                }
-                Debug.WriteLine(cellText);
+                continue;
             }
+
+            var exactMatch = string.Equals(cellText, filename, StringComparison.OrdinalIgnoreCase);
+            var stemMatch = cellText.StartsWith(Path.GetFileNameWithoutExtension(filename), StringComparison.OrdinalIgnoreCase);
+            if (!exactMatch && !stemMatch)
+            {
+                Debug.WriteLine(cellText);
+                continue;
+            }
+
+            IReadOnlyList<ILocator> deleteButtons = await fileRow.Locator(DeleteButtonInCell).AllAsync();
+            var targetFileToDelete = deleteButtons.FirstOrDefault();
+            Debug.WriteLine($"Found file ({cellText}) matching {filename}");
+            return targetFileToDelete;
         }
+
         return null;
     }
 
@@ -1011,17 +1068,15 @@ public class BasicAspireAppHostTests : IClassFixture<TestFixture>
         public string? Status { get; set; }
     }
 
+    private sealed class FileUploadApiResponse
+    {
+        public bool Success { get; set; }
+        public bool IsDuplicate { get; set; }
+    }
+
     private sealed class ProcessingTriggerResponse
     {
         public string? Message { get; set; }
-    }
-
-    private sealed class BatchProcessingTriggerResponse
-    {
-        public string? Message { get; set; }
-
-        [JsonPropertyName("document_ids")]
-        public List<int> DocumentIds { get; set; } = [];
     }
 
     private sealed class PythonDocumentApiResponse
@@ -1049,6 +1104,9 @@ public class BasicAspireAppHostTests : IClassFixture<TestFixture>
 
         [JsonPropertyName("total_pages")]
         public int? TotalPages { get; set; }
+
+        [JsonPropertyName("processed_pages")]
+        public int? ProcessedPages { get; set; }
 
         [JsonPropertyName("error_message")]
         public string? ErrorMessage { get; set; }

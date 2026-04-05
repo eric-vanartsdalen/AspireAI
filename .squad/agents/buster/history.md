@@ -9,6 +9,9 @@
 
 <!-- Append new learnings below. Each entry is something lasting about the project. -->
 
+- **Browser smoke fixture rule (2026-04-05):** `BasicAspireAppHostTests.FlowEndToEnd` needs a *small, processable PDF* fixture, not a plain-text stand-in and not a large real-world document. Swapping to unsupported `.txt` input produced false UI-level confidence while the Python pipeline stayed stuck in `processing`; the stable regression path is a tiny PDF like `src\AspireApp.WebTest\DataExample\processing-smoke.pdf`.
+- **Browser regression verdict (2026-04-05):** Jeff's `.txt` smoke-fixture change was not acceptable QA state because it made the browser suite validate an upload type the processing pipeline does not complete. The corrected, verifiable gate is: Python contract audit passes, `OperationalUploadStoreTests.UploadApiPersistsMetadataToPostgres` passes, and the full `BasicAspireAppHostTests` suite passes after clearing stale `AspireApp.WebTest.exe` runners.
+
 ## Core Context
 
 **Key QA learnings from active development (Feb-Apr 2026):**

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 import sys
 import tempfile
 import unittest
@@ -235,9 +236,19 @@ class SharedUploadContractAuditTests(unittest.TestCase):
             REPO_ROOT / "src" / "AspireApp.PythonServices" / "requirements.txt"
         ).read_text(encoding="utf-8")
 
-        self.assertIn('var uploadStore = postgres.AddDatabase("DefaultConnection");', app_host_source)
+        upload_store_match = re.search(
+            r'var uploadStore = postgres\.AddDatabase\("(?P<database>[^"]+)"\);',
+            app_host_source,
+        )
+        self.assertIsNotNone(upload_store_match, "AppHost should register a named Postgres upload store")
+        upload_store_name = upload_store_match.group("database")
+
         self.assertIn('.WithReference(uploadStore)', app_host_source)
-        self.assertIn('.WithEnvironment("POSTGRES_DATABASE", "DefaultConnection")', app_host_source)
+        self.assertIn(
+            f'.WithEnvironment("POSTGRES_DATABASE", "{upload_store_name}")',
+            app_host_source,
+        )
+        self.assertIn(f'GetConnectionString("{upload_store_name}")', program_source)
         self.assertIn("options.UseNpgsql(connectionString)", program_source)
         self.assertNotIn("UseSqlite", program_source)
         self.assertNotIn("SqliteConnection", file_storage_source)

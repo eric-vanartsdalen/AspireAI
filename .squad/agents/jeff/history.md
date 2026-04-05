@@ -9,6 +9,17 @@
 
 <!-- Append new learnings below. Each entry is something lasting about the project. -->
 
+### 2026-04-05 — Browser smoke tests must close Playwright pages explicitly
+
+- `src\AspireApp.WebTest\Tests\BasicAspireAppHostTests.cs` should close every `IPage` it opens before fixture teardown; leaving pages alive can trigger an xUnit v3 `TestPipelineException` during shutdown even after assertions pass.
+- For this suite, the failure mode looked like a browser-host crash at ~60-90 seconds, but the underlying issue was teardown hanging after successful tests rather than the app failing during navigation.
+
+### 2026-04-05 — WebTest smoke fixtures should stay lightweight and match UI affordances
+
+- `src/AspireApp.WebTest\Tests\BasicAspireAppHostTests.cs` is more reliable when `FlowEndToEnd` uses a tiny text fixture (`src/AspireApp.WebTest\DataExample\processing-smoke.txt`) instead of the large rooftop PDF.
+- `src/AspireApp.Web\Components\Pages\UploadData.razor` must keep its `<InputFile accept=...>` list aligned with `src/AspireApp.Web\Controllers\FileUploadController.cs`; otherwise UI tests can silently fail even when backend upload support is correct.
+- The Postgres regression proof remains split: `OperationalUploadStoreTests` verifies upload metadata lands in `files`, while the UI flow proves the Web→Python processing handoff with a low-cost document.
+
 ## Core Context
 
 **Key architectural learnings from active development (Feb-Apr 2026):**
