@@ -9,6 +9,7 @@
 
 <!-- Append new learnings below. Each entry is something lasting about the project. -->
 
+- **Test scaffolding for unimplemented features (2026-07-26):** When a feature doesn't exist yet (tenant context UI), stage commented test templates showing expected test coverage rather than inventing the contract yourself. The implementation team (Jeff/Bob) owns the contract design; QA owns the test shape once the contract exists. Blocked requests should document why blocking is correct and what unblocks progress.
 - **Browser smoke fixture rule (2026-04-05):** `BasicAspireAppHostTests.FlowEndToEnd` needs a *small, processable PDF* fixture, not a plain-text stand-in and not a large real-world document. Swapping to unsupported `.txt` input produced false UI-level confidence while the Python pipeline stayed stuck in `processing`; the stable regression path is a tiny PDF like `src\AspireApp.WebTest\DataExample\processing-smoke.pdf`.
 - **Browser regression verdict (2026-04-05):** Jeff's `.txt` smoke-fixture change was not acceptable QA state because it made the browser suite validate an upload type the processing pipeline does not complete. The corrected, verifiable gate is: Python contract audit passes, `OperationalUploadStoreTests.UploadApiPersistsMetadataToPostgres` passes, and the full `BasicAspireAppHostTests` suite passes after clearing stale `AspireApp.WebTest.exe` runners.
 
@@ -41,6 +42,49 @@
 - **Do not hardcode legacy connection names in regression tests.** `src/AspireApp.PythonServices/tests/test_p0_contract_audit.py` now derives the database name from `postgres.AddDatabase("...")` and asserts Web/Python consume that same name instead of assuming `DefaultConnection`.
 - **WebTest fixture contract:** `src/AspireApp.WebTest/Fixtures/TestFixture.cs` must validate `ConnectionStrings__appdb` and `POSTGRES_DATABASE=appdb`; otherwise the Aspire E2E harness rejects a correct runtime.
 - **Operational validation path:** fast QA proof for this area is `python -m pytest tests\test_p0_contract_audit.py -q`; heavier `dotnet test src\AspireApp.WebTest\AspireApp.WebTest.csproj --disable-build-servers` also needs stale `AspireApp.WebTest.exe` processes cleared if a prior run left the binary locked.
+
+### 2026-04-05 — Final Tenant Context Verdict — Data Layer APPROVED
+
+**Scope:** Comprehensive validation of tenant-context data layer and API contract after multi-revision cycle.
+
+**QA Path:**
+1. Jeff's initial implementation → Buster rejected (API coherence gap)
+2. Bob revised (FileStorageService alignment) → Buster rejected (schema not persisted in Python)
+3. Jarvis fixed Python schema → Buster rejected (contract audit gap—column existed but not persisted/read)
+4. Kujan closed audit gap (explicit round-trip assertion) → Buster approved ✅
+
+**Validation Results:**
+
+| Component | Tests | Result |
+|-----------|-------|--------|
+| Python contract audit | 8/8 | ✅ PASS |
+| C# operational test | 1/1 | ✅ PASS |
+| API contract review | — | ✅ Coherent |
+| Service layer alignment | — | ✅ Complete |
+
+**Key validations:**
+- `test_database_service_initializes_canonical_schema_and_indexes` — tenant_id column and indexes exist
+- `test_web_file_metadata_columns_match_python_projection` — tenant_id alignment across boundary
+- `create_file_record(tenant_id="test-tenant")` → `get_file_by_id()` → assertion on tenant_id value (explicit round-trip)
+- `OperationalUploadStoreTests.UploadApiPersistsMetadataToPostgres` — SELECT includes tenant_id, default value persists
+
+**What's Ready:**
+- ✅ Schema: tenant_id with NOT NULL + DEFAULT 'default'
+- ✅ Indexes: idx_files_tenant, idx_files_tenant_status
+- ✅ API: GetTenantId() extraction, X-Tenant-Id header propagation
+- ✅ Service: Both C# and Python accept/persist tenant_id
+- ✅ Query filtering: GetAllFilesAsync(tenantId) scopes results
+
+**What's Deferred to UI Phase (with test scaffolding provided):**
+- Tenant selector UI (NavMenu component)
+- Session state management
+- Frontend header attachment
+- Multi-tenant duplicate detection
+- Tenant-aware delete operations
+
+**Pattern:** Tenant_id is a schema concern. Multi-tenancy is implemented via column, indexes, and optional query filtering. Authentication (which tenants you're allowed to see) is Phase 6. This slice closes the infrastructure gap for data isolation.
+
+**Verdict:** ✅ **APPROVED** — Data layer is coherent, protected by validation, ready for UI implementation.
 
 ### 2026-03-28 — Docling Smoke Gate Alignment (QA Audit Complete)
 

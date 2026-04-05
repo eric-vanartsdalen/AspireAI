@@ -1,10 +1,11 @@
 ---
-updated_at: 2026-03-25T13:28:24Z
-focus_area: Processing pipeline stabilization (P1)
+updated_at: 2026-04-05T16-15-46Z
+focus_area: Tenant-context UI / Multi-tenant foundations (BRAIN Phase 1)
 active_issues:
-  - roadmap/Tasks.md :: Processing Pipeline Stabilization (P1)
+  - roadmap/Plan.md :: BRAIN Phase 1 Multi-Tenancy (lines 95-100)
+  - .squad/decisions.md :: Tenant Context UI Slice (Data layer APPROVED)
 ---
 
 # What We're Focused On
 
-Stabilizing the Python document processing pipeline so uploaded `files` rows move cleanly through Docling into `document_pages`, with canonical status transitions, consistent timestamps/error persistence, and retry handling for failed records.
+Building multi-tenant foundations for BRAIN Phase 1. Tenant-context data layer and API contract are complete and APPROVED (tenant_id persisted, indexed, validated across Web↔Python boundary). Next: UI implementation (NavMenu tenant selector, session state, header propagation). All infrastructure in place; ready for UI frontend work.

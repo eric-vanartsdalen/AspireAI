@@ -9,6 +9,102 @@
 
 <!-- Append new learnings below. Each entry is something lasting about the project. -->
 
+### 2026-07-26 — Tenant Context UI Slice for BRAIN Multi-Tenancy
+
+**Status:** Complete and verified.
+
+**Implementation Results:**
+- ✅ TenantContextService registered as scoped DI service for Blazor session isolation
+- ✅ TenantSelector component added to NavMenu with dropdown and building icon
+- ✅ FileUploadController reads X-Tenant-Id header from upload requests
+- ✅ FileStorageService includes tenant_id in file metadata writes
+- ✅ FileMetadata schema updated with TenantId property and indexes
+- ✅ UploadData component injects TenantContext and sends header
+- ✅ Chat component prepared with TODO for Phase 3 Gateway integration
+- ✅ Build succeeded (AspireApp.sln) with no errors
+
+**Key Paths for Tenant Context:**
+- `src/AspireApp.Web/Services/TenantContextService.cs` — scoped service managing tenant state
+- `src/AspireApp.Web/Components/Shared/TenantSelector.razor` — UI dropdown component
+- `src/AspireApp.Web/Components/Layout/NavMenu.razor` — integrated selector in navigation
+- `src/AspireApp.Web/Controllers/FileUploadController.cs` — GetTenantId() reads X-Tenant-Id header
+- `src/AspireApp.Web/Shared/FileStorageService.cs` — AddFileAsync/AddUrlAsync accept tenantId param
+- `src/AspireApp.Web/Data/DocumentEntities.cs` — TenantId column (default "default")
+- `src/AspireApp.Web/Shared/UploadDbContext.cs` — tenant indexes (idx_files_tenant, idx_files_tenant_status)
+
+**BRAIN Roadmap Context:**
+- Aligns with Phase 1 requirement: all contracts include tenant_id (Plan.md line 97)
+- Prepares for Phase 2 ingestion: Python will read tenant_id from files table
+- Prepares for Phase 3 Gateway: Chat will inject TenantContext and pass tenant_id to POST /brain/chat
+- Defers authentication to Phase 6: hardcoded tenant list acceptable for dev (default, tenant-a, tenant-b, demo)
+
+**First Tenant Context Slice Decision:**
+- Scoped service pattern isolates context per Blazor SignalR circuit (session-based, no auth yet)
+- X-Tenant-Id header pattern chosen for API calls (backward compatible: defaults to "default" if absent)
+- Schema change: FileMetadata.TenantId column with composite index for tenant+status queries
+- No tenant-scoped queries yet: Python/Gateway will enforce isolation in Phase 2-3
+- Zero Python changes needed yet: tenant_id column exists in schema, Python reads it when ready
+- Decision documented in `.squad/decisions/inbox/jeff-tenant-context-impl.md`
+
+**Pattern Learned:**
+- When adding multi-tenant scaffolding before auth, use scoped DI services for session isolation, default values for backward compat, and prepare components with TODO comments for future integration points. This keeps the slice low-risk while establishing the tenant propagation pattern early.
+
+### 2026-04-05 — Tenant-Context UI Slice - Implementation Rejected & Revised by Bob
+
+**Status:** 🔴 REJECTED by Buster (coherence gap), then ✅ Fixed by Bob
+
+**What Happened:**
+1. Jeff's initial implementation added TenantContextService, TenantSelector component, and X-Tenant-Id header propagation
+2. FileUploadController signatures were updated to extract and pass tenant_id
+3. **Build failed:** FileStorageService.GetAllFilesAsync() signature was not updated to accept tenantId parameter
+4. Buster rejected: "API layer changed but service layer incomplete"
+
+**Bob's Revision (2026-04-05):**
+- `FileStorageService.GetAllFilesAsync(string? tenantId)` now accepts optional tenant parameter
+- `FileUploadController.GetUploadedFiles()` calls `GetTenantId()` helper and passes to service
+- Tenant filtering: `.Where(f => f.TenantId == tenantId)` when tenant provided; null returns all (backward compatible)
+- Chat.razor.cs build errors fixed (duplicate property declarations removed)
+- Build: ✅ passes
+
+**Key Learning:** API surface changes must be coordinated with service layer signatures before build. Always verify end-to-end flow (controller → service → query → persistence) before declaring implementation complete.
+
+**Next Steps:** Jarvis to align Python schema, Kujan to validate contract audit, Buster to issue final verdict on data layer readiness for UI phase.
+
+**First Tenant Context Slice Decision:**
+
+### 2026-07-26 — Postgres Migration Verified, BRAIN Auth/Tenant UI Planning
+
+**Status:** Postgres migration complete and verified. Next UI objective identified.
+
+**Verification Results:**
+- ✅ AppHost.cs wires Postgres container with bind mount (`../../database/postgres/`), pgWeb admin UI, and user/pass parameters
+- ✅ Program.cs uses `builder.AddNpgsqlDbContext<UploadDbContext>("appdb")` with connection string injected via Aspire
+- ✅ UploadDbContext properly configured with `files` (FileMetadata) and `document_pages` (DocumentPage) tables
+- ✅ Build succeeds for all core projects (Web, ApiService, AppHost) — test project locked by another process but irrelevant
+- ✅ Database initialization runs at startup: "Database connection test successful" logged
+- ✅ FileMetadata already includes `tenant_id` column (empty string default) ready for BRAIN Phase 1-2
+
+**Key Paths for Postgres:**
+- `src/AspireApp.AppHost/AppHost.cs` lines 60-64 — Postgres resource with bind mount and pgWeb
+- `src/AspireApp.Web/Program.cs` line 36 — `AddNpgsqlDbContext<UploadDbContext>("appdb")`
+- `src/AspireApp.Web/Shared/UploadDbContext.cs` — EF Core configuration with Postgres-compatible schema
+- `src/AspireApp.Web/Data/DocumentEntities.cs` — FileMetadata with snake_case column attributes (`[Column("file_name")]`)
+
+**BRAIN Roadmap Context:**
+- Tasks.md shows Phase 0 (Reframe Product) and Phase 1 (Core Contracts) as next objectives
+- Plan.md confirms tenant_id must be in all BRAIN contracts from Phase 1 onward
+- Current UI is chat + upload with no auth/tenant isolation
+
+**First Auth/Tenant UI Slice Decision:**
+- Identified minimal viable tenant context UI: TenantSelector component + TenantContextService (scoped DI)
+- No full authentication infrastructure yet (deferred to Phase 6: Scale Deliberately per Plan.md)
+- Files to touch: TenantSelector.razor (new), TenantContextService.cs (new), NavMenu.razor (add selector), FileUploadController.cs (read X-Tenant-Id header), FileStorageService.cs (populate tenant_id)
+- Zero blockers: Postgres schema already supports tenant_id, no Python changes needed yet
+- Decision documented in `.squad/decisions/inbox/jeff-auth-ui-slice.md`
+
+**Pattern Learned:**
+- When planning UI for a pivot, verify database migration first, then map existing UI structure (nav, pages, components) before proposing concrete file changes. The tenant_id column already existing in FileMetadata (from earlier BRAIN prep) saved significant rework.
+
 ### 2026-04-05 — Browser smoke tests must close Playwright pages explicitly
 
 - `src\AspireApp.WebTest\Tests\BasicAspireAppHostTests.cs` should close every `IPage` it opens before fixture teardown; leaving pages alive can trigger an xUnit v3 `TestPipelineException` during shutdown even after assertions pass.

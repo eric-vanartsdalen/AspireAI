@@ -9,6 +9,26 @@
 
 <!-- Append new learnings below. Each entry is something lasting about the project. -->
 
+### 2026-04-05 — Tenant Schema Alignment: Both Sides Must Include All Contract Columns
+
+**Completed:**
+- Fixed HTTP 500 upload errors caused by Python schema missing the `tenant_id` column that C# FileMetadata was trying to persist.
+- Added `tenant_id TEXT NOT NULL DEFAULT 'default'` to Python's CREATE TABLE and `_files_column_definitions` in `database_service.py`.
+- Added tenant indexes (`idx_files_tenant`, `idx_files_tenant_status`) to match C# UploadDbContext.
+- Verified with Python contract tests (8 pass) and C# integration test (`OperationalUploadStoreTests.UploadApiPersistsMetadataToPostgres` pass).
+
+**Key pattern:**
+- **Cross-service schema parity:** When one side (C# or Python) adds a column to the shared `files` table, the other side MUST include it in schema initialization, even if that side doesn't actively query/filter on it yet. Schema drift causes runtime insert/update failures.
+- **Index alignment:** Both sides should maintain the same index set for query performance parity and to avoid confusion during debugging.
+- **Default values:** Use sensible defaults (`'default'` for tenant_id) so existing rows remain valid after schema evolution.
+- **Migration path:** Python's `_ensure_required_columns()` auto-adds missing columns on startup; indexes are idempotent with `IF NOT EXISTS`.
+
+**Key file paths:**
+- Python schema: `src/AspireApp.PythonServices/app/services/database_service.py` (lines 76-94 column defs, 213-269 CREATE TABLE + indexes)
+- C# entity: `src/AspireApp.Web/Data/DocumentEntities.cs` (line 87 tenant_id)
+- C# context: `src/AspireApp.Web/Shared/UploadDbContext.cs` (lines 60-61 tenant indexes)
+- Decision: `.squad/decisions/inbox/jarvis-tenant-schema-fix.md`
+
 ## Core Context
 
 **Key architectural learnings from active development (Feb-Apr 2026):**
@@ -28,6 +48,35 @@
 
 **Next phase (BRAIN pivot):**
 - Service decomposition: Extract Ingestion/Knowledge/Validation as internal Python packages initially
+
+### 2026-04-05 — Tenant Schema Fix Validated & Approved
+
+**Status:** ✅ COMPLETE — Schema aligned, tests pass, ready for UI phase
+
+**What Happened:**
+1. After Bob's UI revision, runtime uploads to Python failed (HTTP 500)
+2. Root cause: Python `DatabaseService._ensure_database_schema()` did not include `tenant_id` column
+3. C# `FileMetadata` was trying to persist tenant_id, but INSERT was missing the column
+
+**Jarvis's Fix:**
+- Added `tenant_id TEXT NOT NULL DEFAULT 'default'` to CREATE TABLE statement (line 235)
+- Added `tenant_id` to `_files_column_definitions` for migration/repair (line 88)
+- Added two indexes: `idx_files_tenant`, `idx_files_tenant_status` (lines 263-264)
+- Schema now matches C# UploadDbContext contract exactly
+
+**Validation:**
+- ✅ 8/8 Python contract audit tests pass (schema exists, round-trip works)
+- ✅ 1/1 C# operational test passes (upload persists tenant_id correctly)
+
+**Key Pattern Reaffirmed:** Cross-service schema parity is non-negotiable. When one side adds a column to the shared `files` table, the other side MUST include it in schema initialization, even if not actively querying on it. Schema drift = runtime failures.
+
+**Files Modified:**
+- `src/AspireApp.PythonServices/app/services/database_service.py` — tenant_id column, indexes, column defs
+- Tests: Python contract audit validates round-trip; C# operational test validates persistence
+
+**Next:** Data layer now ready for Kujan's contract audit closure and Buster's final approval.
+
+**Next phase (BRAIN pivot):**
 - Validation Service: New capability; LLM-based claim extraction + confidence scoring  
 - Knowledge Service: Separate Neo4j + vector store integration from Ingestion
 - Vector retrieval: Add (Qdrant recommended) behind `IKnowledgeRetriever` abstraction

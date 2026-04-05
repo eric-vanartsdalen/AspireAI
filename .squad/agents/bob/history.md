@@ -33,6 +33,51 @@
 
 <!-- Append new learnings below. Each entry is something lasting about the project. -->
 
+### 2026-07-26 — Postgres Migration Verified & Next UI Objective Scoped
+
+**Scope:** Architecture verification of SQLite → Postgres migration completion; roadmap alignment and next feature scope.
+
+**Outcome:** ✅ Migration is **operationally complete** for the Web ↔ Python contract. Both services connect to the shared Postgres container (`appdb`). Schema is unchanged, tests pass, build clean.
+
+**Evidence:**
+- C# Web: Uses `builder.AddNpgsqlDbContext<UploadDbContext>("appdb")`. All SQLite-specific hacks (DeleteJournalModeInterceptor, CheckpointDatabaseAsync, path resolution) are removed.
+- Python: Uses `psycopg_pool.ConnectionPool`. Environment variables (POSTGRES_HOST/PORT/DATABASE/USER/PASSWORD) are read; fallbacks exist for backward compat.
+- AppHost: Postgres container registered, `uploadStore` database created, services reference it and wait for it.
+- Tests: `OperationalUploadStoreTests` uses NpgsqlConnection and verifies Postgres storage.
+
+**Minor Gap:** `docs/CROSS_SERVICE_CONTRACT.md` still says "SQLite" in the preamble (column schema is accurate). One-line doc update needed, not blocking.
+
+**Next Objective Identified:** "Persist Chat Messages & Retrieval on Reload." This is the foundation for BRAIN Phase 1 (Core Contracts). Smallest slice:
+- Add `Conversation` and `Message` EF entities + DbSets to UploadDbContext
+- Create ConversationService (C#) to manage lifecycle
+- Add one Python endpoint: `POST /chat/message`
+- Modify chat component to call ConversationService on each exchange
+- On page load, hydrate chat history from Postgres
+
+**Recommended owners:** Jeff (C# Blazor) + Jarvis (Python endpoint). Bob to review schema.
+
+**Decision recorded:** `.squad/decisions/inbox/bob-postgres-ui-handoff.md` — approved for immediate implementation.
+
+**Key pattern from this session:** The Postgres migration was clean because (1) we kept the schema unchanged, (2) we used Aspire's `WithReference()` to wire connection strings, (3) both C# and Python respected environment variable naming conventions. Future migrations should follow this pattern: change infrastructure, keep contracts stable, use Aspire to wire parameters.
+
+### 2026-04-05 — Tenant-Context UI Slice - Architectural Revision
+
+**Status:** ✅ COMPLETE (Revision 2)
+
+**Scope:** Jeff's initial tenant-context UI implementation was rejected by Buster for API coherence. Bob took revision ownership to align FileUploadController signature changes with FileStorageService updates.
+
+**Outcome:**
+- `FileStorageService.GetAllFilesAsync()` now accepts optional `tenantId` parameter with backward-compatible null filtering
+- `FileUploadController.GetUploadedFiles()` calls `GetTenantId()` helper and passes tenant to service layer
+- Chat.razor.cs build errors fixed (removed duplicate property declarations)
+- Tenant filtering works end-to-end: upload (X-Tenant-Id header) → FileStorageService → schema → retrieval
+
+**Build Status:** ✅ `dotnet build src/AspireApp.Web/AspireApp.Web.csproj` passes
+
+**Architectural Pattern:** Tenant isolation is tenant_id column concern. Query filtering is optional (null = all tenants, for backward compat). API layer reads header once via `GetTenantId()` and propagates consistently.
+
+**Next:** Data layer now ready for Jarvis (Python schema) and Buster (QA validation) to close schema alignment and contract audit gaps.
+
 ### 2026-04-05 — BRAIN Pivot Architectural Assessment Complete
 
 **Scope:** Bob took revision ownership after Buster rejected Jeff's `AspireDashboardLoads` test.
@@ -314,3 +359,39 @@ The entire codebase has a gap between C# upload and Python processing:
 - `src/AspireApp.PythonServices/app/services/database_service.py` — Backend swap (~400 lines removed)
 - `src/AspireApp.PythonServices/requirements.txt` — Add psycopg2-binary
 - `docs/CROSS_SERVICE_CONTRACT.md` — SQLite → PostgreSQL header update
+### 2025-02-01 — Tenant Context UI Slice Revision (Buster Rejection Recovery)
+
+**Scope:** Took over tenant-context implementation after Buster rejected Jeff's first pass. FileUploadController was passing tenantId but FileStorageService/schema/UI were incomplete.
+
+**Root Cause:** Merge conflict in Chat.razor.cs created duplicate property declarations, breaking build. Service layer didn't filter by tenant. GetAllFilesAsync() signature mismatch.
+
+**Resolution:**
+1. **Fixed Chat.razor.cs build errors** - Removed duplicate AiInfoState, CurrentlySpeakingMessage declarations; added missing ElementReference questionInput
+2. **Updated FileStorageService** - Made GetAllFilesAsync(string? tenantId = null) backward-compatible; added .Where(f => f.TenantId == tenantId) filter
+3. **Updated FileUploadController** - GetUploadedFiles() now calls GetTenantId() and filters results
+4. **Verified UI plumbing** - TenantSelector component + CSS present, NavMenu includes tenant context section
+
+**Build Status:** ✅ Clean build, no new warnings, one pre-existing test failure (unrelated EF Core issue)
+
+**Key Lesson:** When implementing cross-cutting features (like tenant context):
+- Start with contracts first (service signatures, DTOs)
+- Wire end-to-end before considering "done" (controller → service → query)
+- Test build after each layer to catch signature mismatches early
+- Duplicate declarations from merge conflicts block compilation - PowerShell file reconstruction can fix when edit tool struggles
+
+**Not Included (Out of Scope):**
+- Chat tenant filtering (Phase 3 TODO remains)
+- Python service tenant filtering
+- Full authentication/authorization
+- Migration script for existing tenant-less data
+
+**Files Changed:**
+- Chat.razor.cs - Fixed duplicates
+- FileStorageService.cs - Added tenant parameter + filtering
+- FileUploadController.cs - Tenant-aware GET endpoint
+
+**Follow-Up:**
+- Add integration test for tenant-filtered retrieval
+- Document tenant flow in architecture guide
+- Chat.razor integration in Phase 3
+

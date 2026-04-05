@@ -300,6 +300,115 @@ The AspireAI codebase is a well-orchestrated document processing pipeline masque
 
 ---
 
+## Tenant Context UI Slice — Data Layer and API Contract — Bob, Jarvis, Kujan, Buster — 2026-04-05
+
+**Authors:** Bob (Lead/Architect), Jarvis (Python/Data Dev), Kujan (Adversarial Architect), Buster (QA/Tester)  
+**Status:** APPROVED — Data layer complete, ready for UI phase  
+**Scope:** Multi-tenant foundation for BRAIN Phase 1; establish tenant_id in schema, API, and service layer
+
+### Context
+
+The BRAIN roadmap (Plan.md line 97) requires all contracts to include `tenant_id` for multi-tenant isolation. Jeff's initial tenant-context implementation was rejected because FileUploadController signatures changed without matching FileStorageService updates, creating a coherence gap that broke the build. Subsequent revisions addressed schema synchronization, contract validation, and operational testing. Final approval by Buster closes the data layer and API contract for the next UI phase.
+
+### Decision
+
+#### 1. Tenant Schema Pattern (Bob, Jarvis)
+
+**Column definition (both C# and Python):**
+```sql
+tenant_id TEXT NOT NULL DEFAULT 'default'
+```
+
+**Indexes:**
+- `idx_files_tenant` (single column) for tenant-scoped full queries
+- `idx_files_tenant_status` (composite on tenant_id, status) for filtered queries
+
+**Rationale:** Allows multi-tenant file isolation without schema redesign. DEFAULT 'default' provides backward compatibility for existing clients. Composite index optimizes common query pattern (files by tenant and processing status).
+
+#### 2. API Contract (Bob)
+
+**Header-based tenant selection:**
+```
+X-Tenant-Id: <tenant_id>
+```
+
+**Extraction logic (FileUploadController.GetTenantId()):**
+- Read `X-Tenant-Id` header from request
+- Default to `"default"` if not provided
+- Pass to FileStorageService methods
+
+**Service signatures:**
+- `AddFileAsync(string filename, Stream content, string tenantId)`
+- `AddUrlAsync(string url, string tenantId)`
+- `GetAllFilesAsync(string? tenantId)` — returns all if tenant is null (backward compatible)
+
+**Rationale:** Header-based selection keeps Web/Python separation clean. Both services read the same header and persist/query by tenant_id. Optional parameter allows backward-compatible null filtering.
+
+#### 3. Python Schema Alignment (Jarvis, Kujan)
+
+**Changes to DatabaseService:**
+- Added `tenant_id` to `_files_column_definitions` (line 88)
+- Added `tenant_id` to CREATE TABLE statement (line 235)
+- Added `tenant_id` to INSERT placeholders in `create_file_record()`
+- Added `tenant_id` to all SELECT projections (`_fetch_file_row`, `_fetch_all_file_rows`, `_fetch_unprocessed_file_rows`)
+- Added two indexes in `_ensure_database_schema()` (lines 263-264)
+- Updated `_row_to_file_dict()` tuple mapping to include tenant_id at correct ordinal
+
+**Rationale:** Explicit round-trip testing (write tenant_id, read it back) closes the contract audit gap where the column existed but was not actually persisted/retrieved.
+
+#### 4. Contract Audit Validation (Kujan, Buster)
+
+**Python test coverage:**
+- `test_database_service_initializes_canonical_schema_and_indexes` — verifies tenant_id column and indexes exist
+- `test_web_file_metadata_columns_match_python_projection` — asserts tenant_id alignment across Web/Python boundary
+- Explicit round-trip: `create_file_record(tenant_id="test-tenant")` → `get_file_by_id()` → assertion on tenant_id value
+
+**C# test coverage:**
+- `OperationalUploadStoreTests.UploadApiPersistsMetadataToPostgres` — SELECT includes tenant_id column, assertion validates default tenant_id value
+
+**Verification:** 8/8 Python contract tests pass. 1/1 C# operational test passes.
+
+### Intentional Deferrals (Next UI Phase)
+
+The following are explicitly **not** implemented in this slice (test scaffolding provided):
+
+1. **Tenant selector UI** — NavMenu component for user tenant selection
+2. **Session state** — Store selected tenant_id in browser session/cookie
+3. **Frontend header propagation** — UploadData and Chat components must attach X-Tenant-Id header to API calls
+4. **Multi-tenant duplicate detection** — Current file hash uniqueness is global; should scope to (tenant_id, file_hash)
+5. **Tenant-aware delete** — Verify delete operations respect tenant boundary
+6. **Python query filtering** — `get_unprocessed_files()` reads all files; should accept optional tenant_id parameter
+
+**Scaffolding location:** `src/AspireApp.WebTest/Tests/OperationalUploadStoreTests.cs` lines 157-258 contain commented test templates showing expected coverage when UI components are implemented.
+
+### Verdict
+
+✅ **APPROVED** — Data layer and API contract are coherent and protected by validation. All tests pass. The missing UI selector is the expected next phase, not a blocking defect in this slice.
+
+**What this slice accomplishes:**
+- Schema stability: tenant_id column with NOT NULL + default constraint
+- Index support: Query optimization for tenant-scoped and composite queries
+- API contract: Header extraction with "default" fallback
+- Service layer: Both C# and Python accept and persist tenant_id
+- Query filtering: GetAllFilesAsync(tenantId) scopes results
+- Cross-service validation: Contract audit confirms C#/Python alignment
+
+**What remains for UI phase:**
+- Tenant selection UI component
+- Session state management
+- Frontend header attachment
+- Multi-tenant duplicate detection
+- Tenant-aware delete operations
+- Python processing pipeline tenant awareness
+
+### Trade-Offs
+
+**Chosen:** Minimal scope — only add tenant_id to schema and service layer without enforcing global filtering or tenant isolation in processing pipelines.
+
+**Alternative (rejected):** Full tenant filtering across all queries. Rejected because broader scope (requires deciding on filtering strategy, row-level security policies) and can be layered incrementally.
+
+---
+
 ## BRAIN Pivot — Key Decisions — Eric — 2026-07-15
 
 **Status:** APPROVED
