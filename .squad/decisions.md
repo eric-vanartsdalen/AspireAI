@@ -2,7 +2,7 @@
 
 > Shared decision log. All agents read this before starting work.
 > Scribe merges new decisions from `.squad/decisions/inbox/` after each session.
-> **Note (2026-04-05):** Merged 8 inbox decisions from Postgres cutover (Jeff, Jarvis, Buster) and BRAIN pivot (Kujan, Verbal, Eric). Archived 9 decisions from 2025-11-02 and 2026-03-27/28 (~7 KB) to `decisions-archive.md` to maintain ~20 KB target. Inbox cleared.
+> **Note (2026-04-05T21:33:20Z):** Merged 18 inbox decisions from auth documentation and QA validation (Jeff, Warden, Bob, Buster). Consolidated Bob's UX revision + Buster's multi-gate approval into a single "Mock Pluggable Auth Slice" decision. No duplicates found. Inbox cleared.
 
 <!-- Decisions are appended below. Each entry starts with ### -->
 ## Mock Pluggable Auth Slice — Unauthenticated Landing + Provider Abstraction — Bob, Jeff, Buster — 2026-04-05
@@ -140,3 +140,382 @@ This work is **orthogonal to BRAIN phases** — it's UX infrastructure that any 
 
 
 
+---
+
+## Mock Auth Route Foundation — Bob — 2026-04-05
+
+**Author:** Bob (Lead / Architect)
+**Status:** IMPLEMENTED
+**Scope:** Auth routing and foundation for Blazor implementation
+
+### Decision
+
+Build the mock auth UX using Blazor's built-in route authorization flow:
+
+1. Keep / public as the unauthenticated landing page
+2. Redirect anonymous access to [Authorize] routes through AuthorizeRouteView into /signin?returnUrl=...
+3. Keep the mock provider picker in a reusable shared component so both landing page and /signin use the same auth seam
+
+### Why
+
+- Landing page and protected-route experience serve different jobs; collapsing them muddies both
+- QA needs deterministic redirect behavior after sign-out and direct navigation to protected routes
+- Framework primitives (AuthenticationStateProvider, AuthorizeRouteView, AuthorizeView) keep auth within standard patterns
+
+### Consequences
+
+- Stable test hooks live on reusable sign-in surface and authenticated shell
+- Real OAuth later swaps auth service/provider registration, not route structure
+- Post-logout UX becomes predictable: / for explicit sign-out, /signin for protected-route interception
+
+---
+
+## Auth UI Test Hooks — Buster — 2026-04-05
+
+**Author:** Buster (QA / Tester)
+**Status:** IMPLEMENTED
+**Scope:** Playwright acceptance gates for mock auth UX
+
+### Decision
+
+The mock auth UX slice exposes stable Playwright hooks on the Blazor shell instead of forcing brittle text-only selectors.
+
+### Required Hooks
+
+- data-testid="auth-landing" — Unauthenticated landing container
+- data-testid="auth-sign-in-cta" — Landing sign-in call-to-action
+- data-testid="auth-provider-*" — Provider choices (e.g., uth-provider-mock-microsoft)
+- data-testid="auth-user-select" — Account picker before sign-in completes (if needed)
+- data-testid="auth-submit-sign-in" — Second-step sign-in submit (if needed)
+- data-testid="auth-user-display" — Signed-in identity surface
+- data-testid="auth-sign-out" — Sign-out control
+- data-testid="auth-current-tenant" or data-auth-tenant="{tenantId}" — Signed-in tenant display
+
+### Why
+
+src\AspireApp.WebTest\Fixtures\TestFixture.cs is the correct Aspire/AppHost test bed. These hooks let QA bind Playwright to stable UX seams while Jeff adjusts wording, layout, and route polish without breaking acceptance tests.
+
+---
+
+## Auth QA Rejection: Incomplete Closure — Buster — 2026-04-05
+
+**Author:** Buster (QA / Tester)
+**Status:** REJECTED for approval (Warden revision owner)
+**Scope:** Mock auth UX revision review after Bob's independent pass
+
+### Decision
+
+Reject this revision for approval. The auth shell now exists in Blazor UI, but implementation misses required closure on agreed acceptance gates.
+
+### Why (Incomplete Gates)
+
+1. **AUTH-F incomplete** — Program.cs only resolves MockAuthService and throws for non-mock modes. Not the config-swappable provider abstraction agreed by team.
+2. **AUTH-G incomplete** — Only Playwright-style auth flow exists. Promised service/factory/contract tiers not present.
+3. **Automation not clean** — Focused WebTest execution during review did not produce clean auth run. Broader browser suite regresses in BasicAspireAppHostTests.FlowEndToEnd.
+
+### Enforcement
+
+- Next revision owner must not be Bob (independent follow-up pass already attempted)
+- Route to different owner with explicit focus on AUTH-F/AUTH-G completion and clean automation
+
+---
+
+## Auth UX Revision: Post-Logout Route Protection — Buster — 2026-04-05
+
+**Author:** Buster (QA / Tester)
+**Status:** REJECTED for approval
+**Scope:** Warden auth UX revision
+
+### Decision
+
+Do not approve Warden's auth UX slice. Next revision owner must be someone other than Warden.
+
+### Why
+
+1. **Focused gate not closed:** AuthUxFoundationTests.SignOutReturnsToLandingAndReprotectsAppAreas fails. Direct navigation to /chat remains reachable after sign-out instead of redirecting to sign-in.
+2. **Critical regression dirty:** BasicAspireAppHostTests.FlowEndToEnd fails. UI upload path never surfaces processing-smoke.pdf in API-backed upload state after sign-in.
+
+### Required for Next Owner
+
+- Fix post-logout route protection for direct visits to [Authorize] pages
+- Re-run focused auth set (AuthServiceFactoryTests, MockAuthServiceTests, AuthUxFoundationTests) clean
+- Re-run BasicAspireAppHostTests.FlowEndToEnd clean before requesting approval
+
+---
+
+## Auto-Select Live Microsoft When Configured — Jeff — 2026-04-05
+
+**Author:** Jeff (.NET Dev)
+**Status:** IMPLEMENTED
+**Scope:** Web auth seam default behavior
+
+### Decision
+
+Web auth seam defaults to Authentication:Service = auto and resolves to live Microsoft-only mode whenever Microsoft client settings are present. combined remains available as explicit mixed-mode choice for local testing.
+
+### Why
+
+Previous shape allowed valid Microsoft OIDC configuration to exist while UI still rendered only mock providers (because auth service pinned to mock). Made real login journey feel broken even though OIDC handler and challenge endpoint were wired correctly.
+
+### Outcome
+
+- Landing/sign-in expose real Microsoft path automatically when configured
+- Clicking Microsoft card starts hosted Microsoft login immediately with no demo-user picker
+- Demo/mock providers remain available only when live config absent or Authentication:Service explicitly set to mock/combined
+
+---
+
+## Authentication Setup Guide — Jeff — 2026-04-05
+
+**Author:** Jeff (.NET Dev)
+**Status:** COMPLETE
+**Scope:** Developer documentation for local auth testing
+
+### Summary
+
+Created docs/AUTHENTICATION_SETUP.md — comprehensive guide for:
+1. Microsoft Entra ID consumer authentication (implemented, working)
+2. Google OAuth setup (credentials prep for future implementation)
+3. Local user-secrets configuration and troubleshooting
+
+### Key Design Decisions
+
+- **Explicit current state:** ✅ Microsoft ready, ❌ Google future work (prevents confusion)
+- **User secrets as primary config** — Matches .NET conventions, prevents secret commits
+- **Dynamic port guidance** — Check Aspire dashboard for actual webfrontend port
+- **Smoke test checklist** — Actionable manual steps covering success and error scenarios
+- **Troubleshooting section** — Common issues with concrete fixes
+
+### Files Updated
+
+- **Created:** docs/AUTHENTICATION_SETUP.md (20 KB, ~650 lines)
+
+---
+
+## Microsoft Entra Auth Uses Existing IAuthService Seam — Jeff — 2026-04-05
+
+**Author:** Jeff (.NET Dev)
+**Status:** IMPLEMENTED
+**Scope:** Blazor Web auth integration
+
+### Decision
+
+Keep existing IAuthService abstraction as only UI-facing auth seam. Plug real Microsoft Entra ID in behind it with provider-specific implementation plus optional combined provider service.
+
+### Why
+
+- Preserves working mock/demo regression surface
+- Lets Eric manually test live Microsoft sign-in without deleting local demo flows
+- Keeps cookie/OIDC responsibilities in ASP.NET Core middleware instead of bespoke token code
+
+### Implementation Notes
+
+- MicrosoftEntraAuthService issues challenge through /auth/microsoft/signin
+- CompositeAuthService exposes live Microsoft + mock providers in one picker when Authentication:Service=combined
+- Program.cs owns provider-aware sign-out so both mock and OIDC sessions leave shell coherently
+
+---
+
+## Microsoft Sign-In as Hosted Redirect — Jeff — 2026-04-05
+
+**Author:** Jeff (.NET Dev)
+**Status:** IMPLEMENTED
+**Scope:** Sign-in UX and Microsoft auth activation
+
+### Decision
+
+Treat live Microsoft sign-in as direct hosted redirect from sign-in page. Reserve dropdown chooser exclusively for explicitly labeled demo providers.
+
+### Why
+
+- Users landed on Microsoft-looking demo picker instead of exercising real OIDC challenge
+- Personal Microsoft accounts (@hotmail.com) don't always have tenant-specific values, so requiring TenantId was unnecessarily blocking
+- Plain link to /auth/microsoft/signin is more reliable than interactive Blazor button before external auth
+
+### Implementation Notes
+
+- Live Microsoft activates when ClientId and ClientSecret present; blank TenantId uses existing common authority fallback
+- SignInPanel.razor renders hosted providers as direct links; keeps demo providers on in-app chooser
+- Demo provider labels renamed to Microsoft demo / Google demo to avoid mixed-mode ambiguity
+
+---
+
+## Mock Auth Shell Uses Blazor Auth Primitives — Jeff — 2026-04-05
+
+**Author:** Jeff (.NET Dev)
+**Status:** PROPOSED
+**Scope:** Auth foundation for Web app
+
+### Decision
+
+Use scoped AuthenticationContext plus AppAuthenticationStateProvider as Web app's auth foundation. Keep provider behavior behind IAuthService.
+
+### Why
+
+- Blazor already gives us AuthorizeRouteView, AuthorizeView, CascadingAuthenticationState; using them keeps shell aligned with real ASP.NET Core auth later
+- DI seam (IAuthService) lets current mock Microsoft/Google/demo experience be replaced without rewriting page/layout code
+- Tenant remains separate from identity, but sign-in can initialize TenantContextService from selected user's default tenant
+
+### Consequences
+
+- Protected pages use framework auth attributes instead of custom route logic
+- Auth UX components preserve stable data-testid hooks (existing WebTest suite depends on them)
+- Real OAuth later swaps service implementation and reuses same shell/layout surfaces
+
+---
+
+## Configurable Auth Provider Factory — Warden — 2026-04-05
+
+**Author:** Warden (Security Specialist)
+**Status:** IMPLEMENTED
+**Scope:** Mock auth UX foundation
+
+### Decision
+
+Use config-driven AuthServiceFactory behind AddAspireAppAuthentication(...) so active auth implementation selected by configuration, while implementations explicitly registered in DI.
+
+### Why
+
+- Removes hardwired mock branch from Program.cs
+- Keeps provider selection on allowlisted registration path
+- Gives later Microsoft/Google work registration-plus-config swap instead of UI rewrite
+
+---
+
+## Microsoft Entra ID OIDC Security Defaults — Warden — 2026-04-05
+
+**Author:** Warden (Security Specialist)
+**Status:** IMPLEMENTED
+**Scope:** Secure defaults for Microsoft Entra ID integration
+
+### Decisions
+
+1. **OIDC scheme registered conditionally** — Only when Authentication:Microsoft:TenantId, ClientId, ClientSecret all present. In mock-only mode: no OIDC handler, no callback paths exposed, no metadata retrieval.
+
+2. **PKCE enabled** — UsePkce = true on OIDC handler as defense-in-depth for auth code interception.
+
+3. **Cookie hardened** — SecurePolicy = SameAsRequest, ExpireTimeSpan = 8 hours, SlidingExpiration = true.
+
+4. **Proper error handling** — context.Fail() over 	hrow in OnTokenValidated so OIDC handler returns proper error.
+
+5. **Endpoint guards** — /auth/microsoft/signin only mapped when OIDC scheme registered. /auth/signout clears cookie first, then attempts federated sign-out only if scheme exists.
+
+6. **No secrets in committed config** — ClientSecret removed from ppsettings.json. Secrets live in dotnet user-secrets only.
+
+7. **Sign-out via \<a href>\** — MainLayout sign-out uses link (not \<button @onclick>\) so sign-out works when Blazor SignalR circuit degraded.
+
+8. **Tenant trust boundary** — Entra 	id claim is Azure AD tenant, NOT app tenant. External identities mapped to app tenants via UserTenantSeeds/DomainTenantSeeds config, defaulting to "default". This mapping must be explicit — never auto-trust external tenant claims.
+
+### Rationale
+
+These defaults reduce attack surface in mock-only deployments, harden cookie for live deployments, prevent information leakage from misconfigured OIDC endpoints. Existing mock regression suite (5 unit tests) passes unchanged.
+
+---
+
+## Mock Auth Endpoint Trust-Boundary Gate — Warden — 2026-04-05
+
+**Author:** Warden (Security Specialist)
+**Status:** IMPLEMENTED
+**Scope:** Authentication endpoint security
+
+### Context
+
+/auth/mock/signin, /auth/mock/session (POST/DELETE), and /auth/mock/signout HTTP endpoints were unconditionally registered in Program.cs. When Authentication:Service = "microsoft", these endpoints remained reachable, allowing anyone to mint valid session cookie as any mock user — completely bypassing Microsoft Entra ID.
+
+### Decision
+
+Mock auth HTTP endpoints now conditionally registered. They are blocked when Authentication:Service = "microsoft" and available in all other modes (mock, combined, uto). Gate reads config value at startup and skips pp.Map* registration when Microsoft-only mode active.
+
+### Impact
+
+- **Program.cs** — Mock endpoint block wrapped in if (mockEndpointsEnabled)
+- **All modes except microsoft** — No behavior change; mock endpoints work as before
+- **microsoft mode** — Mock endpoints not registered; direct HTTP requests to /auth/mock/* return 404
+- **Tests** — Existing mock auth tests only run in mock/combined modes, unaffected
+
+---
+
+## Authentication Setup Guide — Security-Sensitive Corrections — Warden — 2026-04-05
+
+**Author:** Warden (Security Specialist)
+**Status:** COMPLETED
+**Scope:** docs/AUTHENTICATION_SETUP.md accuracy corrections
+
+### Corrections Made
+
+1. **Dynamic ports, not hardcoded** — Guide used fabricated port numbers (7123/5123) that don't match configuration. Aspire assigns webfrontend ports dynamically. Updated to instruct users to check Aspire dashboard for actual ports.
+
+2. **Google+ API removed** — Guide instructed enabling Google+ API (shut down 2019). Caused confusion during setup. Replaced with current OAuth consent screen workflow.
+
+3. **JavaScript origins removed** — Removed "Authorized JavaScript origins" from Google setup (only needed for client-side flows, not server-side OIDC).
+
+### Why This Matters
+
+Incorrect redirect URIs are the #1 cause of "it doesn't work" OAuth setup failures. Telling users to register wrong ports would waste hours of debugging and might lead to insecure workarounds.
+
+---
+
+## User Directive: No Live Microsoft Test Automation — Eric — 2026-04-05T19:49:26Z
+
+**Author:** Eric VanArtsdalen (via Copilot)
+**Status:** ACKNOWLEDGED
+**Scope:** Testing strategy
+
+### What
+
+Do not spend effort automating live Microsoft-user authentication with real accounts. User will manually validate real login flow. Automated coverage should stay focused on non-live regression behavior.
+
+### Why
+
+User request — captured for team memory.
+
+---
+
+## Authentication Auto Mode Security Audit: APPROVED — Warden — 2026-07-22
+
+**Author:** Warden (Security Specialist)
+**Status:** APPROVED
+**Severity:** N/A (Approved)
+
+### Executive Summary
+
+No security vulnerabilities detected. The authentication system is functioning exactly as designed.
+
+### Context
+
+User reported: "UI only allows 2 users to login, so it seems like it's still using the Mock — please allow the UI to do a real authentication flow."
+
+Verified: dotnet user-secrets list is empty; ppsettings.json Microsoft section has empty strings. This is **correct behavior** because no Microsoft credentials are configured.
+
+### Root Cause (Correct)
+
+1. Configuration state: Authentication:Service = "auto", Microsoft section has empty values
+2. Factory resolution: AuthServiceFactory.ResolveServiceKey() correctly returns MockService when MicrosoftEntraAuthenticationOptions.IsConfigured = false
+3. Result: UI shows only mock providers (2 demo users) — this is safe defensive programming
+
+### Security Assessment: APPROVED
+
+✅ OIDC conditional registration — Only registered when credentials exist (prevents runtime errors)
+✅ Factory resolution — uto mode safely falls back to mock when Microsoft not configured
+✅ Mock endpoint gating — Mock routes disabled when service mode is explicitly microsoft
+✅ Composite service delegation — Routes to appropriate provider based on providerId
+✅ No session bypass — Mock endpoints disabled when real auth is only configured option
+
+**No code changes required.** System is working as designed.
+
+### Required User Action
+
+To enable real Microsoft authentication:
+
+1. Create Azure App Registration with redirect URI: https://localhost:{port}/signin-oidc-microsoft
+2. Create client secret
+3. Configure via dotnet user-secrets:
+   ```powershell
+   dotnet user-secrets set "Authentication:Microsoft:TenantId" "<your-tenant-id>"
+   dotnet user-secrets set "Authentication:Microsoft:ClientId" "<your-client-id>"
+   dotnet user-secrets set "Authentication:Microsoft:ClientSecret" "<your-client-secret>"
+   ```
+4. Restart application
+5. Verify Microsoft button appears on /signin
+
+---

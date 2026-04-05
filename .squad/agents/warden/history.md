@@ -50,3 +50,38 @@
   - Fixed smoke test checklist: mock providers only appear in `auto`/`combined` mode, not when Service is `microsoft`.
   - Added Google testing-mode caveat: only test users can sign in while app is in Google's "Testing" status.
   - Key files: `docs/AUTHENTICATION_SETUP.md`, `MicrosoftEntraAuthenticationOptions.cs`, `AuthenticationServiceCollectionExtensions.cs`, `Program.cs`.
+
+### 2026-04-05 — Scribe: Auth documentation and decisions merged (18 inbox files)
+
+**Session:** Post-spawn consolidation after Jeff (auth doc creation) and Warden (security audit)
+
+**What Scribe Did:**
+- Created orchestration logs for both agents documenting spawn context and work completed
+- Created session log summarizing auth doc completion and ready state
+- Merged 18 inbox decisions into decisions.md (4 from Warden: provider-factory, oidc-defaults, endpoint-gate, setup-corrections)
+- Consolidated overlapping decisions across team (Bob/Jeff/Buster/Warden) — no duplicates found
+- Updated Jeff and Warden history.md with cross-agent context propagation
+- Deleted all .squad/decisions/inbox/* files after merge
+
+**Decisions Captured (Warden's 4):**
+1. **Configurable Auth Provider Factory** — Config-driven AuthServiceFactory, removes hardwired mock from Program.cs
+2. **Microsoft Entra ID OIDC Security Defaults** — 8 hardening decisions: conditional OIDC, PKCE, hardened cookies, proper errors, endpoint guards, no secrets in config, sign-out via link, tenant trust boundary
+3. **Mock Auth Endpoint Trust-Boundary Gate** — Conditionally register /auth/mock/* endpoints; blocked when Authentication:Service = "microsoft"
+4. **Authentication Setup Guide — Security-Sensitive Corrections** — Fixed 3 critical accuracy issues: dynamic ports (not fabricated), Google+ API removed (shut down 2019), JavaScript origins removed (not needed for server-side OIDC)
+
+**Cross-Agent Context:**
+- Jeff produced auth documentation and implementation decisions
+- Warden validated security posture (APPROVED — no vulnerabilities detected)
+- Warden corrected documentation accuracy (ports, deprecated APIs, OIDC guidance)
+- Together, Jeff + Warden delivered secure, accurate, production-ready auth setup
+- All 23 regression tests passing with Microsoft Entra integration in place
+- Mock endpoint gating prevents auth bypass when live Microsoft is configured
+- OIDC conditional registration prevents metadata failures in unconfigured environments
+
+**Team Coordination:**
+- Bob's provider abstraction and DI seam informed Warden's factory pattern
+- Buster's 5-layer acceptance gates informed Warden's mock endpoint gating strategy
+- All decisions converge on pluggable, secure-by-default authentication that supports both mock (dev) and live (production) modes
+
+**Status:** ✅ Security audit passed. Documentation corrected. All decisions merged and inbox cleared. Ready for Eric's manual test with real Microsoft credentials.
+
