@@ -1,0 +1,32 @@
+# Warden History
+
+## Project Context
+
+- **Owner:** Eric Van Artsdalen
+- **Project:** AspireAI
+- **Stack:** C# (.NET 9/10), Blazor, Minimal API, Python FastAPI, Neo4j, Ollama, Docker, Aspire
+- **Description:** AI-powered document processing and RAG platform with multi-tenant foundations, PostgreSQL operational storage, and an evolving authenticated UX
+- **Added:** 2026-04-05T16:47:47Z
+
+## Learnings
+
+- Joined to own security-sensitive work across auth, tenant isolation, and secure application behavior.
+- Current active concern: mock auth UX foundation was rejected twice and needs a secure, pluggable revision with clean automated proof before real Microsoft/Google auth is attempted.
+- Mock auth now resolves through a config-driven `AuthServiceFactory` and `AddAspireAppAuthentication(...)`, so `Program.cs` no longer hardcodes the mock path.
+- The Blazor auth shell depends on interactive routing (`Components\Routes.razor` and `Components\Pages\SignIn.razor`) plus `AppAuthenticationStateProvider` notifications to keep protected UX and sign-in state aligned.
+- Service-level auth coverage lives in `src\AspireApp.WebTest\Tests\AuthServiceFactoryTests.cs` and `src\AspireApp.WebTest\Tests\MockAuthServiceTests.cs`; end-to-end auth proof remains in `src\AspireApp.WebTest\Tests\AuthUxFoundationTests.cs`.
+- **2026-07-22 — Microsoft Entra ID integration hardened.** Key security decisions:
+  - OIDC scheme is registered **conditionally** — only when `Authentication:Microsoft:TenantId`, `ClientId`, and `ClientSecret` are all present. In mock-only mode, no OIDC handler exists; no callback paths are exposed.
+  - PKCE enabled (`UsePkce = true`) as defense-in-depth on the authorization code flow.
+  - Cookie hardened: `SecurePolicy=SameAsRequest`, 8-hour sliding expiration, `SlidingExpiration=true`.
+  - `OnTokenValidated` uses `context.Fail()` (not `throw`) so the OIDC handler returns a proper error response.
+  - The `/auth/microsoft/signin` endpoint is only mapped when the OIDC scheme is registered. The universal `/auth/signout` clears the cookie first, then attempts federated sign-out only if the scheme exists.
+  - `ClientSecret` removed from committed `appsettings.json` — secrets live in `dotnet user-secrets` only.
+  - MainLayout sign-out uses `<a href>` (not `<button @onclick>`) so sign-out works even when the Blazor SignalR circuit is degraded.
+  - Trust boundary: Entra `tid` claim is the Azure AD tenant, NOT the application tenant. `ResolveTenantSeed` maps external identity → app tenant via `UserTenantSeeds`/`DomainTenantSeeds` config, defaulting to `"default"`.
+  - Three `Authentication:Service` modes: `mock` (demo only), `microsoft` (live Entra only), `combined` (both, via `CompositeAuthService`).
+  - Key files: `MicrosoftEntraAuthService.cs`, `MicrosoftEntraAuthenticationOptions.cs`, `CompositeAuthService.cs`, `AuthenticatedUserClaims.cs`.
+- **2026-07-22 — Mock endpoint trust-boundary hardened.**
+  - `/auth/mock/*` HTTP endpoints now gated behind service mode check in `Program.cs`. When `Authentication:Service` = `microsoft`, mock endpoints are not registered — prevents session-cookie bypass.
+  - Jeff's `auto` mode (resolves to `combined` or `mock` at runtime via `AuthServiceFactory.ResolveServiceKey`) is correctly wired and the factory already handles it. The `SignInPanel` direct-sign-in for external providers (no two-click) was already fixed in Jeff's rescue pass.
+  - README updated with Azure app registration steps, explicit service mode table, and corrected documentation.

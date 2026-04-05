@@ -79,20 +79,45 @@ The Aspire dashboard opens automatically. All services � Web UI, Python proces
 | Neo4j / Python errors | Check dashboard logs; ensure ports 7474, 7687, 8000 are free |
 | SDK mismatch | `dotnet --info` must show .NET 10.0; install matching SDK from `global.json` |
 
-## Local Microsoft Entra ID Sign-In
+## Local Microsoft Sign-In
 
-The checked-in default stays on the mock auth service so the existing demo regression flow keeps working. To manually test the live Microsoft provider, add local secrets to `src\AspireApp.Web` and switch the auth seam to the combined provider set:
+The web app auto-detects live Microsoft auth when the default `auto` service mode is active. If Microsoft client settings (TenantId, ClientId, ClientSecret) are all present, the landing and sign-in pages show a real Microsoft Entra ID button alongside the demo providers. If those settings are absent, only the demo providers appear.
+
+### Azure App Registration
+
+Before adding secrets, create an app registration in the [Azure portal](https://portal.azure.com/#view/Microsoft_AAD_RegisteredApps/ApplicationsListBlade):
+
+1. **New registration** — give it a name (e.g. `AspireAI Local`), set *Supported account types* to your preference.
+2. **Redirect URI** — add a *Web* platform URI: `https://localhost:{port}/signin-oidc-microsoft`. Use the HTTPS port from your `webfrontend` launch profile (or the Aspire dashboard URL when running under Aspire).
+3. **Client secret** — under *Certificates & secrets*, create a new client secret and copy the value immediately.
+
+### Adding Secrets
+
+Add the registration values to `src\AspireApp.Web` user-secrets:
 
 ```powershell
-dotnet user-secrets set "Authentication:Service" "combined" --project src\AspireApp.Web
 dotnet user-secrets set "Authentication:Microsoft:TenantId" "<entra-tenant-id-or-domain>" --project src\AspireApp.Web
 dotnet user-secrets set "Authentication:Microsoft:ClientId" "<app-registration-client-id>" --project src\AspireApp.Web
-dotnet user-secrets set "Authentication:Microsoft:ClientSecret" "<app-registration-client-secret>" --project src\AspireApp.Web
+dotnet user-secrets set "Authentication:Microsoft:ClientSecret" "<client-secret-value>" --project src\AspireApp.Web
+```
+
+Optional tenant-mapping seeds:
+
+```powershell
 dotnet user-secrets set "Authentication:Microsoft:DefaultAppTenantId" "default" --project src\AspireApp.Web
 dotnet user-secrets set "Authentication:Microsoft:UserTenantSeeds:your.name@yourdomain.com" "tenant-a" --project src\AspireApp.Web
 ```
 
-Register the redirect URI for your local web frontend using the Microsoft callback path `/signin-oidc-microsoft`. If you run the web project directly, the default HTTPS URI is `https://localhost:7133/signin-oidc-microsoft`; when running under Aspire, use the current `webfrontend` HTTPS URL plus that same callback path.
+### Service Modes
+
+| Mode | Behavior |
+|------|----------|
+| `auto` (default) | Shows real Microsoft when configured, demo providers otherwise. Resolves to `combined` or `mock` at runtime. |
+| `combined` | Always shows both real Microsoft and demo providers (Microsoft hidden if not configured). |
+| `mock` | Demo providers only — real Microsoft button never appears, even if configured. Mock auth endpoints are blocked when set to `microsoft`. |
+| `microsoft` | Real Microsoft only. Mock endpoints are disabled at the HTTP level to prevent session-cookie bypass. |
+
+To force demo-only mode even when Microsoft settings exist, set `Authentication:Service` to `mock`.
 
 ## Contributing
 

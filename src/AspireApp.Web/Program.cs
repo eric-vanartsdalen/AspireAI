@@ -123,57 +123,68 @@ app.MapRazorComponents<App>()
 // Map API controllers
 app.MapControllers();
 
-app.MapPost("/auth/mock/session", async (MockAuthSessionRequest request, HttpContext httpContext) =>
+// Mock auth endpoints are only safe when the active service mode explicitly includes them.
+// Without this gate, /auth/mock/signin would let anyone mint a session cookie and bypass
+// real Microsoft Entra authentication when that is the only configured provider.
+// Block only when explicitly set to "microsoft" — all other modes (mock, combined, auto) need mock routes.
+var authServiceMode = builder.Configuration.GetSection("Authentication").GetValue<string>("Service")
+    ?? AspireApp.Web.Services.AuthenticationOptions.DefaultService;
+var mockEndpointsEnabled = !string.Equals(authServiceMode, AspireApp.Web.Services.AuthenticationOptions.MicrosoftService, StringComparison.OrdinalIgnoreCase);
+
+if (mockEndpointsEnabled)
 {
-    var selectedUser = MockAuthCatalog.FindUser(request.ProviderId, request.UserId);
-    if (selectedUser is null)
+    app.MapPost("/auth/mock/session", async (MockAuthSessionRequest request, HttpContext httpContext) =>
     {
-        return Results.BadRequest(new { error = "Unknown mock user." });
-    }
-
-    await httpContext.SignInAsync(
-        CookieAuthenticationDefaults.AuthenticationScheme,
-        CreatePrincipal(selectedUser),
-        new AuthenticationProperties
+        var selectedUser = MockAuthCatalog.FindUser(request.ProviderId, request.UserId);
+        if (selectedUser is null)
         {
-            AllowRefresh = true,
-            IsPersistent = false
-        });
+            return Results.BadRequest(new { error = "Unknown mock user." });
+        }
 
-    return Results.Ok();
-});
+        await httpContext.SignInAsync(
+            CookieAuthenticationDefaults.AuthenticationScheme,
+            CreatePrincipal(selectedUser),
+            new AuthenticationProperties
+            {
+                AllowRefresh = true,
+                IsPersistent = false
+            });
 
-app.MapGet("/auth/mock/signin", async (string providerId, string userId, string? returnUrl, HttpContext httpContext) =>
-{
-    var selectedUser = MockAuthCatalog.FindUser(providerId, userId);
-    if (selectedUser is null)
+        return Results.Ok();
+    });
+
+    app.MapGet("/auth/mock/signin", async (string providerId, string userId, string? returnUrl, HttpContext httpContext) =>
     {
-        return Results.BadRequest(new { error = "Unknown mock user." });
-    }
-
-    await httpContext.SignInAsync(
-        CookieAuthenticationDefaults.AuthenticationScheme,
-        CreatePrincipal(selectedUser),
-        new AuthenticationProperties
+        var selectedUser = MockAuthCatalog.FindUser(providerId, userId);
+        if (selectedUser is null)
         {
-            AllowRefresh = true,
-            IsPersistent = false
-        });
+            return Results.BadRequest(new { error = "Unknown mock user." });
+        }
 
-    return Results.LocalRedirect(NormalizeLocalPath(returnUrl));
-});
+        await httpContext.SignInAsync(
+            CookieAuthenticationDefaults.AuthenticationScheme,
+            CreatePrincipal(selectedUser),
+            new AuthenticationProperties
+            {
+                AllowRefresh = true,
+                IsPersistent = false
+            });
 
-app.MapDelete("/auth/mock/session", async (HttpContext httpContext) =>
-{
-    await httpContext.SignOutAsync(CookieAuthenticationDefaults.AuthenticationScheme);
-    return Results.Ok();
-});
+        return Results.LocalRedirect(NormalizeLocalPath(returnUrl));
+    });
 
-app.MapGet("/auth/mock/signout", async (string? returnUrl, HttpContext httpContext) =>
-{
-    await httpContext.SignOutAsync(CookieAuthenticationDefaults.AuthenticationScheme);
-    return Results.LocalRedirect(NormalizeLocalPath(returnUrl));
-});
+    app.MapDelete("/auth/mock/session", async (HttpContext httpContext) =>
+    {
+        await httpContext.SignOutAsync(CookieAuthenticationDefaults.AuthenticationScheme);
+        return Results.Ok();
+    });
+
+    app.MapGet("/auth/mock/signout", async (string? returnUrl, HttpContext httpContext) =>
+    {
+        await httpContext.SignOutAsync(CookieAuthenticationDefaults.AuthenticationScheme);
+        return Results.LocalRedirect(NormalizeLocalPath(returnUrl));
+    });
+}
 
 // Only expose the OIDC challenge endpoint when the Microsoft scheme is actually registered.
 // Without this guard, an unregistered scheme would produce a 500 with internal details.
