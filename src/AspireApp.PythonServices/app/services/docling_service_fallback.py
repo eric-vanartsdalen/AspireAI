@@ -32,6 +32,11 @@ except ImportError:
     DOCX_AVAILABLE = False
 
 from ..models.models import Document, ProcessedDocument, PageContent
+from .docling_export_service import (
+    build_markdown_from_pages,
+    sanitize_file_stem,
+    write_markdown_output,
+)
 
 
 class DoclingService:
@@ -151,6 +156,13 @@ class DoclingService:
         document_json_path = doc_dir / "document.json"
         with open(document_json_path, 'w', encoding='utf-8') as f:
             json.dump(document_data, f, indent=2, ensure_ascii=False)
+
+        exports_dir = doc_dir / "outputs"
+        markdown_path = write_markdown_output(
+            exports_dir,
+            sanitize_file_stem(document.original_filename or document.filename),
+            build_markdown_from_pages(document.original_filename or document.filename, pages),
+        )
         
         # Create metadata
         metadata = {
@@ -161,6 +173,8 @@ class DoclingService:
             "mime_type": document.mime_type,
             "total_pages": len(pages),
             "note": "Processed with fallback processor due to missing dependencies",
+            "exports": {"markdown": markdown_path},
+            "markdown_path": markdown_path,
             "available_processors": {
                 "pypdf2": PYPDF2_AVAILABLE,
                 "python_docx": DOCX_AVAILABLE,

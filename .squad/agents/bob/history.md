@@ -263,3 +263,26 @@
 **Impact:** Roadmap is now a living document with embedded discipline. Challenges surface early for cross-team visibility. Foundation for next iteration planning.
 
 **Related:** Decision merged to .squad/decisions.md. Orchestration log at .squad/orchestration-log/2026-03-25T14-09-00Z-bob.md. Session log at .squad/log/2026-03-25T14-09-00Z-roadmap-maintenance.md.
+
+### 2026-07-26 — Deep Ingestion Flow Architecture Review
+
+**Scope:** Eric updated the `FlowEndToEnd` test to upload a document, verify it in the files table, and confirm the file on disk. He asked: what triggers Docling parsing and LightRAG handoff?
+
+**Critical Finding — No Automatic Processing Trigger Exists:**
+
+The entire codebase has a gap between C# upload and Python processing:
+
+1. **Upload (C#):** `FileUploadController.UploadFile()` saves file to `data/`, writes `files` row with `status = "uploaded"`, returns 200. No further action.
+2. **The Gap:** Nothing calls Python processing. No file watcher, no background poller, no startup scan, no C#→Python HTTP call.
+3. **Processing (Python, manual only):** `POST /processing/process-document/{id}` and `POST /processing/process-all` exist but are never called automatically.
+4. **Inside Processing:** `process_document_task()` → resolve path → Docling → LightRAG handoff → Neo4j → `document_pages` → status `processed`.
+5. **LightRAG Handoff:** Embedded inside processing — copies markdown to INPUT_DIR, POSTs to `lightrag:9621/documents/scan`.
+
+**Where Code/Docs Agree:** Status lifecycle, path resolution, shared schema, API surface all consistent.
+**Where Code/Docs Disagree:** Neither contract doc documents the trigger mechanism. Roadmap marked P1 processing done but trigger was never wired.
+
+**Architecture Recommendation:** Option A — `FileUploadController` calls `POST /processing/process-document/{id}` on Python service after upload. `PYTHON_SERVICE_URL` env var already passed to webfrontend. Simplest path, no new infrastructure.
+
+**Roadmap Updated:** Added "Ingestion Trigger" P1 section with three options. Updated test tasks. Added CRITICAL challenge.
+
+**Key Files:** FileUploadController.cs, processing.py, database_service.py, docling_service.py, lightrag_handoff_service.py, fastapi.py, AppHost.cs, BasicAspireAppHostTests.cs

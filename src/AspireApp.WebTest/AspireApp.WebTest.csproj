@@ -22,6 +22,7 @@
     <PackageReference Include="xunit.v3.assert" Version="3.2.2" />
     <PackageReference Include="xunit.v3.common" Version="3.2.2" />
     <PackageReference Include="xunit.v3.extensibility.core" Version="3.2.2" />
+    <PackageReference Include="Xunit.v3.Priority" Version="1.1.18" />
   </ItemGroup>
 
   <ItemGroup>
@@ -33,8 +34,12 @@
   </ItemGroup>
 
 	<ItemGroup>
-		<PackageReference Include="Aspire.Hosting.Testing" Version="13.1.3" />
+		<PackageReference Include="Aspire.Hosting.Testing" Version="13.2.1" />
 		<PackageReference Include="Microsoft.Playwright" Version="1.58.0" />
+	</ItemGroup>
+
+	<ItemGroup>
+	  <Folder Include="DataExample\" />
 	</ItemGroup>
 
 </Project>

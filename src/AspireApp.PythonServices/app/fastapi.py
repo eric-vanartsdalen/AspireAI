@@ -1,5 +1,5 @@
 from fastapi import FastAPI, HTTPException, Request
-from fastapi.responses import StreamingResponse
+from fastapi.responses import JSONResponse, StreamingResponse
 import logging
 import os
 
@@ -32,7 +32,8 @@ def read_root():
             "/documents - Upload inventory and per-document status",
             "/documents/health/database - SQLite health",
             "/processing - Document processing",
-            "/rag - Retrieval endpoints"
+            "/rag - Retrieval endpoints",
+            "/rag/lightrag-query - LightRAG retrieval via Python API"
         ]
     }
 
@@ -82,7 +83,7 @@ def health_check():
 @app.exception_handler(Exception)
 async def global_exception_handler(request: Request, exc: Exception):
     logger.error(f"Global exception: {exc}")
-    return {"error": str(exc)}
+    return JSONResponse(status_code=500, content={"error": str(exc)})
 
 @app.on_event("startup")
 async def startup_event():

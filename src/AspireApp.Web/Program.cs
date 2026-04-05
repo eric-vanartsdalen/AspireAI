@@ -3,7 +3,10 @@ using AspireApp.Web.Components;
 using AspireApp.Web.Components.Pages;
 using AspireApp.Web.Components.Shared;
 using AspireApp.Web.Shared;
+using Microsoft.Data.Sqlite;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Diagnostics;
+using System.Data.Common;
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -31,17 +34,18 @@ builder.Services.AddHttpClient();
 
 // ADDING CONFIGURATIONS FOR STORAGE OF FILES
 // Configure SQLite database (and location)
-var connectionString = builder.Configuration.GetConnectionString("DefaultConnection") ?? "Data Source=../../database/data-resources.db";
-builder.Services.AddDbContext<UploadDbContext>(options =>
-    options.UseSqlite(connectionString));
+var rawConnectionString = builder.Configuration.GetConnectionString("DefaultConnection") ?? "Data Source=../../database/data-resources.db";
+var connectionString = ResolveSqliteConnectionString(rawConnectionString, builder.Environment.ContentRootPath);
+builder.Services.AddSingleton<DeleteJournalModeInterceptor>();
+builder.Services.AddDbContext<UploadDbContext>((sp, options) =>
+    options.UseSqlite(connectionString)
+           .AddInterceptors(sp.GetRequiredService<DeleteJournalModeInterceptor>()));
 
 // Register the FileStorageService with data directory (simplified - no bridge service needed)
-var fileUploadDataDir = builder.Configuration.GetValue<string>("FileUpload:DataDirectory");
-var dataDirectory = !string.IsNullOrEmpty(fileUploadDataDir)
-    ? Path.IsPathRooted(fileUploadDataDir)
-        ? fileUploadDataDir
-        : Path.Combine(builder.Environment.ContentRootPath, fileUploadDataDir ?? string.Empty)
-    : Path.Combine(builder.Environment.ContentRootPath, "data");
+var dataDirectory = ResolveContentRootPath(
+    builder.Configuration.GetValue<string>("FileUpload:DataDirectory"),
+    builder.Environment.ContentRootPath,
+    "data");
 
 builder.Services.AddScoped<FileStorageService>(sp =>
     new FileStorageService(
@@ -107,13 +111,7 @@ static async Task InitializeDatabaseAsync(IServiceProvider services, string conn
     try
     {
         // Create database directory if it doesn't exist
-        var dbPath = connectionString.Replace("Data Source=", "").Trim();
-        
-        // Make database path absolute if it's relative
-        if (!Path.IsPathRooted(dbPath))
-        {
-            dbPath = Path.GetFullPath(dbPath);
-        }
+        var dbPath = GetSqliteDataSource(connectionString);
         
         var dbDirectory = Path.GetDirectoryName(dbPath);
         if (!string.IsNullOrEmpty(dbDirectory) && !Directory.Exists(dbDirectory))
@@ -161,5 +159,68 @@ static async Task InitializeDatabaseAsync(IServiceProvider services, string conn
         Console.WriteLine($"Error initializing database: {ex.Message}");
         Console.WriteLine($"Stack trace: {ex.StackTrace}");
         throw; // Re-throw to prevent application startup if database initialization fails
+    }
+}
+
+static string ResolveSqliteConnectionString(string connectionString, string contentRootPath)
+{
+    var sqliteBuilder = new SqliteConnectionStringBuilder(connectionString);
+
+    sqliteBuilder.Pooling = false;
+
+    if (ShouldResolveAgainstContentRoot(sqliteBuilder.DataSource))
+    {
+        sqliteBuilder.DataSource = Path.GetFullPath(
+            Path.Combine(contentRootPath, sqliteBuilder.DataSource));
+    }
+
+    return sqliteBuilder.ToString();
+}
+
+static string ResolveContentRootPath(string? configuredPath, string contentRootPath, string defaultRelativePath)
+{
+    var path = string.IsNullOrWhiteSpace(configuredPath)
+        ? defaultRelativePath
+        : configuredPath;
+
+    return Path.IsPathRooted(path)
+        ? path
+        : Path.GetFullPath(Path.Combine(contentRootPath, path));
+}
+
+static string GetSqliteDataSource(string connectionString)
+{
+    var sqliteBuilder = new SqliteConnectionStringBuilder(connectionString);
+    return sqliteBuilder.DataSource;
+}
+
+static bool ShouldResolveAgainstContentRoot(string? dataSource)
+{
+    return !string.IsNullOrWhiteSpace(dataSource)
+        && !Path.IsPathRooted(dataSource)
+        && !dataSource.Equals(":memory:", StringComparison.OrdinalIgnoreCase)
+        && !dataSource.StartsWith("file:", StringComparison.OrdinalIgnoreCase);
+}
+
+// Runs PRAGMA journal_mode=DELETE on every connection open so the Web app
+// uses the same journal mode as the Python service (which forces DELETE mode
+// because WAL's shared-memory file doesn't work reliably across the
+// Windows host / Linux container boundary via Docker bind mounts).
+public class DeleteJournalModeInterceptor : DbConnectionInterceptor
+{
+    public override void ConnectionOpened(DbConnection connection, ConnectionEndEventData eventData)
+        => ApplyDeleteJournalMode(connection);
+
+    public override Task ConnectionOpenedAsync(DbConnection connection, ConnectionEndEventData eventData, CancellationToken cancellationToken = default)
+    {
+        ApplyDeleteJournalMode(connection);
+        return Task.CompletedTask;
+    }
+
+    private static void ApplyDeleteJournalMode(DbConnection connection)
+    {
+        using var cmd = connection.CreateCommand();
+        cmd.CommandText = "PRAGMA journal_mode=DELETE;";
+        cmd.ExecuteNonQuery();
     }
 }

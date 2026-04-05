@@ -13,6 +13,8 @@ public class AppHostMappingModel
     public string LightRagUri { get; set; } = string.Empty;
     public string PythonServiceUri { get; set; } = string.Empty;
     public string ApiServiceUri { get; set; } = string.Empty;
+    public string SharedDataPath { get; set; } = string.Empty;
+    public string SharedDatabasePath { get; set; } = string.Empty;
 
     public PageGotoOptions Options { get; } = new()
 	{

@@ -38,6 +38,7 @@
     <Compile Include="app\services\__init__.py" />
     <Compile Include="demo_processing.py" />
     <Compile Include="diagnose_database.py" />
+    <Compile Include="example-parse-document.py" />
     <Compile Include="fix_database.py" />
     <Compile Include="scripts\check_db_status.py" />
     <Compile Include="scripts\fix_schema.py" />

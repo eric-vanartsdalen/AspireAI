@@ -14,7 +14,10 @@ Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "roadmap", "roadmap", "{02EA
 	ProjectSection(SolutionItems) = preProject
 		roadmap\Architecture.md = roadmap\Architecture.md
 		roadmap\AspireAI_Architecture_Diagram.md = roadmap\AspireAI_Architecture_Diagram.md
+		Atlas-deeper-api-implementation-suggestions.md = Atlas-deeper-api-implementation-suggestions.md
+		Atlas-for-Data-Smart-Brain.md = Atlas-for-Data-Smart-Brain.md
 		roadmap\GraphSchema.md = roadmap\GraphSchema.md
+		Review-AspireAI-Multi-Tenant-RAG-Pipeline-Plan.md = Review-AspireAI-Multi-Tenant-RAG-Pipeline-Plan.md
 		roadmap\Roadmap.md = roadmap\Roadmap.md
 		roadmap\Tasks.md = roadmap\Tasks.md
 	EndProjectSection

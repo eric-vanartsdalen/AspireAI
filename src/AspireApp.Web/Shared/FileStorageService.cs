@@ -1,4 +1,5 @@
-﻿using Microsoft.EntityFrameworkCore;
+﻿using Microsoft.Data.Sqlite;
+using Microsoft.EntityFrameworkCore;
 using System.Security.Cryptography;
 using System.Text;
 using AspireApp.Web.Data;
@@ -135,6 +136,7 @@ public class FileStorageService(
 
             _context.Datasources.Add(fileMetadata);
             await _context.SaveChangesAsync();
+            await CheckpointDatabaseAsync();
 
             if (_logger.IsEnabled(LogLevel.Information))
             {
@@ -190,6 +192,7 @@ public class FileStorageService(
             }
 
             await _context.SaveChangesAsync();
+            await CheckpointDatabaseAsync();
 
             if (_logger.IsEnabled(LogLevel.Information))
             {
@@ -224,6 +227,7 @@ public class FileStorageService(
 
             file.FileHash = fileHash;
             await _context.SaveChangesAsync();
+            await CheckpointDatabaseAsync();
 
             if (_logger.IsEnabled(LogLevel.Information))
             {
@@ -288,6 +292,7 @@ public class FileStorageService(
             // EF Core will cascade delete related datasource_pages records
             _context.Datasources.Remove(file);
             await _context.SaveChangesAsync();
+            await CheckpointDatabaseAsync();
 
             if (_logger.IsEnabled(LogLevel.Information))
             {
@@ -380,6 +385,7 @@ public class FileStorageService(
 
             _context.Datasources.Add(fileMetadata);
             await _context.SaveChangesAsync();
+            await CheckpointDatabaseAsync();
 
             if (_logger.IsEnabled(LogLevel.Information))
             {
@@ -396,6 +402,36 @@ public class FileStorageService(
                 _logger.LogError(ex, "Error adding URL metadata to database");
             }
             throw;
+        }
+    }
+
+    private async Task CheckpointDatabaseAsync()
+    {
+        try
+        {
+            var connectionString = _context.Database.GetDbConnection().ConnectionString;
+            await using var checkpointConnection = new SqliteConnection(connectionString);
+            await checkpointConnection.OpenAsync();
+
+            await using var journalModeCommand = checkpointConnection.CreateCommand();
+            journalModeCommand.CommandText = "PRAGMA journal_mode;";
+            var journalMode = (await journalModeCommand.ExecuteScalarAsync())?.ToString();
+            if (!string.Equals(journalMode, "wal", StringComparison.OrdinalIgnoreCase))
+            {
+                return;
+            }
+
+            await using var checkpointCommand = checkpointConnection.CreateCommand();
+            checkpointCommand.CommandText = "PRAGMA wal_checkpoint(PASSIVE);";
+            await checkpointCommand.ExecuteNonQueryAsync();
+        }
+        catch (Exception ex) when (ex is SqliteException or InvalidOperationException)
+        {
+            if (_logger.IsEnabled(LogLevel.Warning))
+            {
+                _logger.LogWarning(ex,
+                    "Skipped SQLite WAL checkpoint after updating file metadata because the shared database is in use.");
+            }
         }
     }
 }

@@ -14,6 +14,8 @@ How to decide who handles what.
 | Ollama / AI integration | Jarvis + Jeff | Python-side AI calls + C# SemanticKernel |
 | Testing, quality, edge cases | Buster | Test coverage, test strategy, quality analysis |
 | Code review | Bob | Review PRs, check quality, architecture alignment |
+| Architecture review, adversarial critique | Kujan | Challenge architectural decisions, gap analysis, extensibility audit |
+| Strategic review, roadmap critique | Verbal | Challenge product direction, scope risk, prioritization, risk register |
 | Scope & priorities | Bob | What to build next, trade-offs, roadmap decisions |
 | Cross-service contracts | Bob + Jeff + Jarvis | C#↔Python DTOs, API shapes, serialization |
 | Async issue work | @copilot 🤖 | Well-defined tasks matching capability profile |

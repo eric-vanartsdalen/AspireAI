@@ -45,6 +45,10 @@ If a contract helper accepts either a Pydantic model or a plain dictionary, use 
 
 If an operational script only imports `DatabaseService` through lightweight Pydantic models, add a temporary directory to `PYTHONPATH` with a tiny `pydantic.py` that exposes `BaseModel`. That is enough to smoke-test helpers such as `fix_schema.py`, `diagnose_database.py`, or `test_concurrent_access.py` without globally installing packages or mutating the shared machine state.
 
+### Smoke Optional Dependencies Through the Runtime Factory
+
+When production code already routes optional dependencies through a factory, point smoke tests at the factory instead of the heavyweight package module. In AspireAI, `app.services.service_factory` is the contract: it returns the full `DoclingService` when `docling` is installed and `docling_service_fallback` otherwise, so the smoke test can prove the active processor boots in both environments.
+
 ## Examples
 
 ```python
