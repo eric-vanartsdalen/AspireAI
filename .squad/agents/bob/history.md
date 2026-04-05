@@ -286,3 +286,31 @@ The entire codebase has a gap between C# upload and Python processing:
 **Roadmap Updated:** Added "Ingestion Trigger" P1 section with three options. Updated test tasks. Added CRITICAL challenge.
 
 **Key Files:** FileUploadController.cs, processing.py, database_service.py, docling_service.py, lightrag_handoff_service.py, fastapi.py, AppHost.cs, BasicAspireAppHostTests.cs
+
+### 2026-07-26 — SQLite-to-Postgres Migration Architecture Decision
+
+**Scope:** Replace shared SQLite file with Postgres for operational data (`files` + `document_pages`).
+
+**Key Findings:**
+- Postgres already provisioned in AppHost (`AddPostgres("postgres")`, `appdb` database, pgWeb, bind mount)
+- Both services already `WaitFor(postgres)` and receive `POSTGRES_USER`/`POSTGRES_PASSWORD` env vars
+- Neither service actually connects to Postgres yet — all operational data still flows through SQLite bind-mounted file
+- ~400+ lines of SQLite workarounds exist across both services (WAL/DELETE journal mode, fresh connection fallbacks, multi-candidate path resolution, checkpoint calls)
+
+**Decision Summary:**
+1. Keep same `files` + `document_pages` schema — stable and well-documented
+2. Jeff: NuGet swap (`Sqlite` → `Npgsql`), `AddNpgsqlDbContext<UploadDbContext>("appdb")`, remove `DeleteJournalModeInterceptor`, remove `CheckpointDatabaseAsync`
+3. Jarvis: `psycopg2-binary`, replace `ConnectionPool` + SQLite pragmas with psycopg2 pool, remove path resolution
+4. AppHost: Wire Postgres host/port/db to Python, `.WithReference(postgres)` to Web, remove SQLite file setup block
+5. Deferred: Legacy entity removal, EF Migrations, diagnostic scripts, test updates (Buster's scope)
+
+**Decision Written:** `.squad/decisions/inbox/bob-postgres-cutover.md`
+
+**Key Files Affected:**
+- `src/AspireApp.AppHost/AppHost.cs` — Remove SQLite plumbing, wire Postgres refs
+- `src/AspireApp.Web/Program.cs` — Provider swap, remove SQLite helpers
+- `src/AspireApp.Web/AspireApp.Web.csproj` — NuGet swap
+- `src/AspireApp.Web/Shared/FileStorageService.cs` — Remove CheckpointDatabaseAsync
+- `src/AspireApp.PythonServices/app/services/database_service.py` — Backend swap (~400 lines removed)
+- `src/AspireApp.PythonServices/requirements.txt` — Add psycopg2-binary
+- `docs/CROSS_SERVICE_CONTRACT.md` — SQLite → PostgreSQL header update
