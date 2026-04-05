@@ -6,7 +6,17 @@ namespace AspireApp.Web.Services;
 /// </summary>
 public class TenantContextService
 {
-    private string _currentTenantId = "default";
+    public const string DefaultTenantId = "default";
+    private static readonly string[] AvailableTenantIds =
+    [
+        DefaultTenantId,
+        "tenant-a",
+        "tenant-b",
+        "demo"
+    ];
+    private static readonly HashSet<string> AvailableTenantLookup = new(AvailableTenantIds, StringComparer.OrdinalIgnoreCase);
+
+    private string _currentTenantId = DefaultTenantId;
 
     /// <summary>
     /// Gets or sets the current tenant ID for this session.
@@ -14,15 +24,7 @@ public class TenantContextService
     public string CurrentTenantId
     {
         get => _currentTenantId;
-        set
-        {
-            if (string.IsNullOrWhiteSpace(value))
-            {
-                throw new ArgumentException("Tenant ID cannot be empty.", nameof(value));
-            }
-            _currentTenantId = value;
-            OnTenantChanged?.Invoke();
-        }
+        set => SetCurrentTenant(value);
     }
 
     /// <summary>
@@ -30,18 +32,43 @@ public class TenantContextService
     /// </summary>
     public event Action? OnTenantChanged;
 
+    public void InitializeForUser(string tenantId)
+    {
+        SetCurrentTenant(tenantId);
+    }
+
+    public void Reset()
+    {
+        SetCurrentTenant(DefaultTenantId);
+    }
+
     /// <summary>
     /// Gets a list of available tenant IDs (hardcoded for Phase 1).
     /// TODO: Replace with database lookup in Phase 6.
     /// </summary>
     public static List<string> GetAvailableTenants()
     {
-        return new List<string>
+        return [.. AvailableTenantIds];
+    }
+
+    private void SetCurrentTenant(string value)
+    {
+        if (string.IsNullOrWhiteSpace(value))
         {
-            "default",
-            "tenant-a",
-            "tenant-b",
-            "demo"
-        };
+            throw new ArgumentException("Tenant ID cannot be empty.", nameof(value));
+        }
+
+        if (!AvailableTenantLookup.Contains(value))
+        {
+            throw new ArgumentOutOfRangeException(nameof(value), $"Tenant ID '{value}' is not recognized by the current workspace configuration.");
+        }
+
+        if (string.Equals(_currentTenantId, value, StringComparison.OrdinalIgnoreCase))
+        {
+            return;
+        }
+
+        _currentTenantId = value;
+        OnTenantChanged?.Invoke();
     }
 }

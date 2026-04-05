@@ -9,6 +9,30 @@
 
 <!-- Append new learnings below. Each entry is something lasting about the project. -->
 
+### 2026-04-05 — Mock auth UX foundation landed in Blazor shell
+
+**Status:** Implemented and validated.
+
+**Implementation Results:**
+- ✅ `AppAuthenticationStateProvider` now bridges a scoped `AuthenticationContext` into Blazor auth primitives
+- ✅ `IAuthService` is the UI seam; `MockAuthService` owns hardcoded Microsoft, Google, and demo users
+- ✅ `/` is now the unauthenticated landing experience with provider selection and mock account sign-in
+- ✅ `Chat`, `UploadData`, and `Weather` use `[Authorize]` and route through `AuthorizeRouteView`
+- ✅ `TenantContextService` stays separate from identity and initializes from the signed-in user's default tenant
+- ✅ Shell affordances now expose signed-in user, sign-out, and current tenant meaningfully
+
+**Key Paths:**
+- `src/AspireApp.Web/Services/AppAuthenticationStateProvider.cs` — Blazor auth bridge
+- `src/AspireApp.Web/Services/IAuthService.cs` — pluggable auth service seam
+- `src/AspireApp.Web/Services/MockAuthService.cs` — hardcoded provider/user implementation
+- `src/AspireApp.Web/Components/Shared/SignInPanel.razor` — reusable provider + mock user sign-in surface
+- `src/AspireApp.Web/Components/Routes.razor` — `AuthorizeRouteView` + protected-route prompt
+- `src/AspireApp.Web/Components/Layout/MainLayout.razor` / `NavMenu.razor` — signed-in shell affordances
+
+**Testing Notes:**
+- `BasicAspireAppHostTests` now signs in through the mock auth surface before protected upload flows
+- Existing hidden auth UX acceptance tests look for stable `data-testid` hooks, so auth surfaces should keep explicit selectors when refactored
+
 ### 2025-11-02 — Auth & Unauthenticated UX Assessment & Blueprint
 
 **Status:** Assessment complete; blueprint documented.

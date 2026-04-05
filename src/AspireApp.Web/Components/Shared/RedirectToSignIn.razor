@@ -1,0 +1,57 @@
+@inject NavigationManager NavigationManager
+
+@{
+    var signInUri = BuildSignInUri();
+}
+
+<HeadContent>
+    <meta http-equiv="refresh" content="0;url=@signInUri" />
+</HeadContent>
+
+<div class="py-4">
+    <p class="text-muted">Redirecting to sign in…</p>
+    <p><a href="@signInUri">Continue to sign in</a></p>
+</div>
+
+@code {
+    private bool _redirectIssued;
+
+    protected override void OnParametersSet()
+    {
+        TryRedirect();
+    }
+
+    protected override void OnAfterRender(bool firstRender)
+    {
+        if (!firstRender)
+        {
+            return;
+        }
+
+        TryRedirect();
+    }
+
+    private string BuildSignInUri()
+    {
+        var relativePath = NavigationManager.ToBaseRelativePath(NavigationManager.Uri);
+
+        if (string.IsNullOrWhiteSpace(relativePath))
+        {
+            return "/signin";
+        }
+
+        var normalizedPath = relativePath.StartsWith('?') ? $"/{relativePath}" : $"/{relativePath.TrimStart('/')}";
+        return $"/signin?returnUrl={Uri.EscapeDataString(normalizedPath)}";
+    }
+
+    private void TryRedirect()
+    {
+        if (_redirectIssued)
+        {
+            return;
+        }
+
+        _redirectIssued = true;
+        NavigationManager.NavigateTo(BuildSignInUri(), forceLoad: true);
+    }
+}

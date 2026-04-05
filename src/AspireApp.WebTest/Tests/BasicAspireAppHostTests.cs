@@ -159,6 +159,8 @@ public class BasicAspireAppHostTests : IClassFixture<TestFixture>
             await WaitForPageLoadCompletion(page);
             var title = await page.TitleAsync();
             Assert.Equivalent("Home", title);
+            await page.GetByRole(AriaRole.Heading, new() { Name = "Turn documents into a tenant-aware AI workspace" })
+                .WaitForAsync(new LocatorWaitForOptions { Timeout = 30_000 });
         });
     }
 
@@ -220,13 +222,14 @@ public class BasicAspireAppHostTests : IClassFixture<TestFixture>
     [Fact, Priority(1)]
     public async Task FlowEndToEnd()
     {
-        using var webClient = CreateWebFrontendHttpClient();
+        using var webClient = CreateWebFrontendHttpClient("demo");
         await DeleteExistingTestUploadsAsync(webClient);
 
         await WithPageAsync(async page =>
         {
             await page.GotoAsync(_data.WebfrontendUri, _data.Options);
             await WaitForPageLoadCompletion(page);
+            await SignInAsDemoUserAsync(page);
 
             await ClickByRole(AriaRole.Link, "Upload Documents", page);
             await SetUploadInput(TestFile, AriaRole.Button, "Choose File", page);
@@ -303,7 +306,7 @@ public class BasicAspireAppHostTests : IClassFixture<TestFixture>
     [Fact, Priority(3)]
     public async Task DeleteUploadedTestFile()
     {
-        using var webClient = CreateWebFrontendHttpClient();
+        using var webClient = CreateWebFrontendHttpClient("demo");
         await DeleteExistingTestUploadsAsync(webClient);
         var uploadedFile = await UploadTestFileViaApiAsync(webClient);
 
@@ -311,6 +314,7 @@ public class BasicAspireAppHostTests : IClassFixture<TestFixture>
         {
             await page.GotoAsync(_data.WebfrontendUri, _data.Options);
             await WaitForPageLoadCompletion(page);
+            await SignInAsDemoUserAsync(page);
             await ClickByRole(AriaRole.Link, "Upload Documents", page);
             await WaitForUploadedFileRowAsync(page, uploadedFile.FileName!);
 
@@ -353,18 +357,39 @@ public class BasicAspireAppHostTests : IClassFixture<TestFixture>
         }
     }
 
-    private HttpClient CreateWebFrontendHttpClient()
+    private static async Task SignInAsDemoUserAsync(IPage page)
+    {
+        var providerButton = page.Locator("[data-testid='auth-provider-demo']");
+        await providerButton.WaitForAsync(new LocatorWaitForOptions { Timeout = 30_000 });
+        await providerButton.ClickAsync(new LocatorClickOptions { Delay = 250 });
+        var signInButton = page.Locator("[data-testid='auth-submit-sign-in']");
+        await signInButton.WaitForAsync(new LocatorWaitForOptions { Timeout = 30_000 });
+        await signInButton.ClickAsync(new LocatorClickOptions { Delay = 250 });
+        await WaitForPageLoadCompletion(page);
+
+        var signedInSurface = page.Locator("[data-testid='auth-summary'], [data-testid='auth-user-display'], #tenant-select, h1");
+        await WaitForLocator(signedInSurface.First, 30_000);
+    }
+
+    private HttpClient CreateWebFrontendHttpClient(string? tenantId = null)
     {
         var handler = new HttpClientHandler
         {
             ServerCertificateCustomValidationCallback = HttpClientHandler.DangerousAcceptAnyServerCertificateValidator
         };
 
-        return new HttpClient(handler)
+        var client = new HttpClient(handler)
         {
             BaseAddress = new Uri($"{_data.WebfrontendUri.TrimEnd('/')}/"),
             Timeout = TimeSpan.FromSeconds(30)
         };
+
+        if (!string.IsNullOrWhiteSpace(tenantId))
+        {
+            client.DefaultRequestHeaders.Add("X-Tenant-Id", tenantId);
+        }
+
+        return client;
     }
 
     private HttpClient CreatePythonServiceHttpClient()
@@ -989,6 +1014,17 @@ public class BasicAspireAppHostTests : IClassFixture<TestFixture>
 
     private static async Task SetUploadInput(string testDocumentPath, AriaRole role, string nameText, IPage page)
     {
+        var fileInput = page.Locator("[data-testid='upload-file-input'], input[type='file']").First;
+        if (await fileInput.CountAsync() > 0)
+        {
+            await fileInput.SetInputFilesAsync(testDocumentPath);
+            var directInputValue = PullFilename(await fileInput.InputValueAsync());
+            if (directInputValue == PullFilename(testDocumentPath))
+            {
+                return;
+            }
+        }
+
         ILocator control = page.GetByRole(role, new() { Name = nameText });
         await WaitForLocator(control);
         var inputValue = PullFilename(await control.InputValueAsync());
@@ -1028,8 +1064,9 @@ public class BasicAspireAppHostTests : IClassFixture<TestFixture>
     {
         ILocator element = page.GetByRole(role, new() { Name = name });
         await WaitForLocator(element);
-        await element.HoverAsync();
-        await element.ClickAsync(new LocatorClickOptions() { Delay = 250 });
+        var target = element.First;
+        await target.HoverAsync();
+        await target.ClickAsync(new LocatorClickOptions() { Delay = 250 });
         await WaitForPageLoadCompletion(page);
     }
 

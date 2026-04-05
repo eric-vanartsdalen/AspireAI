@@ -1,7 +1,9 @@
-@page "/chat"
+﻿@page "/chat"
 @rendermode InteractiveServer
 @attribute [StreamRendering]
+@attribute [Authorize]
 @inject IConfiguration Configuration
+@inject AuthenticationContext AuthenticationContext
 
 @using AspireApp.Web.Components.Shared
 
@@ -267,161 +269,168 @@
 
 </style>
 
-<h1>AI Chatbot</h1>
-
-@* Speech support status *@
-@if (!string.IsNullOrEmpty(SpeechStatusMessage))
+@if (!AuthenticationContext.IsAuthenticated)
 {
-	<div class="alert alert-warning" role="alert">
-		@SpeechStatusMessage
-	</div>
-}
-
-@if (IsNotFirstTimeLoading && AiInfoState.EndPointAvailable)
-{
-	<div id="chat-messages-container" class="chat-container">
-		<table id="chathistory" class="table">
-			<thead>
-				<tr>
-					<th class="user-column">User</th>
-					<th class="message-column">Messages</th>
-				</tr>
-			</thead>
-			<tbody>
-				@foreach (var message in ChatHistoryService.GetFormattedMessages(_chatHistory))
-				{
-					<tr>
-						<td class="user-column"><span>@message.User</span></td>
-						<td class="message-column">
-							<span>@ConvertToMarkup(message.Message)</span>
-							@if (message.User == "Assistant" && SpeechSupport?.TextToSpeech == true)
-							{
-								<button class="btn btn-sm btn-outline-info ms-2 tts-message-button"
-									@onclick="() => SpeakMessage(message.Message)"
-									disabled="@IsTtsMessageButtonDisabled(message.Message)"
-									title="@(IsMessageBeingSpoken(message.Message) ? "Stop speaking" : "Read message aloud")">
-									<img src="/images/@(IsMessageBeingSpoken(message.Message) ? "stop.png" : "playback.png")"
-										 alt="@(IsMessageBeingSpoken(message.Message) ? "Stop" : "Play")" />
-								</button>
-							}
-						</td>
-					</tr>
-				}
-			</tbody>
-		</table>
-	</div>
-
-	@if (IsAIResponsing == true)
-	{
-		<table id="ai-request">
-			<tr>
-				<td class="user-column">AI in Action&nbsp;&nbsp;</td>
-				<td class="message-column">
-					@if (string.IsNullOrEmpty(AIResponse))
-					{
-						<div class="loading-container">
-							<div class="spinner-border spinner-border-sm text-primary" role="status">
-								<span class="visually-hidden">Loading...</span>
-							</div>
-							<p class="loading-text">&nbsp;Thinking...</p>
-						</div>
-					}
-					else
-					{
-						@ConvertToMarkup(AIResponse)
-					}
-				</td>
-			</tr>
-		</table>
-	}
-
-	@* Speech controls - properly positioned above input *@
-	@if (SpeechSupport != null && (SpeechSupport.SpeechRecognition || SpeechSupport.TextToSpeech))
-	{
-		<div class="speech-controls-container">
-			<div class="speech-controls">
-				@if (SpeechSupport.SpeechRecognition)
-				{
-					<button id="mic-button"
-						class="speech-button mic-button @(IsListening ? "listening" : "")"
-						@onclick="ToggleMicrophone"
-						disabled="@IsAIResponsing"
-						title="@(IsListening ? "Stop listening" : "Start voice input")">
-						<img src="/images/@(IsListening ? "stop.png" : "record.png")" alt="@(IsListening ? "Stop Recording" : "Start Recording")" />
-					</button>
-				}
-				&nbsp;
-				@if (SpeechSupport.TextToSpeech && !string.IsNullOrEmpty(AIResponse))
-				{
-					<button class="speech-button tts-button"
-						@onclick="ToggleTextToSpeech"
-						disabled="@IsTtsButtonDisabled()"
-						title="@(IsMessageBeingSpoken(AIResponse) ? "Stop speaking" : "Read AI response aloud")">
-						<img src="/images/@(IsMessageBeingSpoken(AIResponse) ? "stop.png" : "playback.png")" alt="@(IsMessageBeingSpoken(AIResponse) ? "Stop Speaking" : "Play Audio")" />
-					</button>
-				}
-
-				<div class="speech-status">
-					@if (IsListening)
-					{
-						<span class="text-danger"><img src="/images/record.png" style="width: 16px; height: 16px;" alt="Recording" /> Listening...</span>
-					}
-					else if (IsSpeaking)
-					{
-						<span class="text-info">Speaking...</span>
-					}
-					else if (!string.IsNullOrEmpty(SpeechStatusText))
-					{
-						<span>@SpeechStatusText</span>
-					}
-				</div>
-			</div>
-		</div>
-	}
-
-	@* Input area with speech transcript overlay *@
-	<div class="input-container">
-		<div class="input-group">
-			<input @bind="Question"
-			       @bind:event="oninput"
-			       @onkeydown="@(async (e) => { if (e.Key == "Enter" && !IsAIResponsing) { if (IsListening) await StopListening(); await QueryAIChat(); } })"
-			       type="text"
-			       class="form-control"
-			       placeholder="Enter your question or use voice input"
-			       disabled="@IsAIResponsing"
-			       @ref="questionInput" />
-		</div>
-	</div>
-	
-	<br />
-	<div class="d-flex">
-		<button class="btn btn-primary"
-				@onclick="QueryAIChat"
-				disabled="@IsAIResponsing">
-			@(IsAIResponsing ? "Processing..." : "Send Query")
-		</button>
-		@if (IsAIResponsing)
-		{
-			<button class="btn stop-button"
-					@onclick="StopAIResponse"
-					title="Stop response (Ctrl+C)">
-				Stop Response
-			</button>
-		}
-	</div>
-	<br />
-	<div><span>Elapsed time: @ElapsedTimeMessage</span></div>
-	<br />
-	<br />
+    <RedirectToSignIn />
 }
 else
 {
-	@if (IsNotFirstTimeLoading)
+    <h1>AI Chatbot</h1>
+
+    @* Speech support status *@
+    @if (!string.IsNullOrEmpty(SpeechStatusMessage))
 	{
-		<p><div><span style="background-color:darkred; color:antiquewhite; padding: 1em;"><strong>Chat Endpoint AI Service URI unavailable!</strong></span></div></p>
+		<div class="alert alert-warning" role="alert">
+			@SpeechStatusMessage
+		</div>
+	}
+
+    @if (IsNotFirstTimeLoading && AiInfoState.EndPointAvailable)
+	{
+		<div id="chat-messages-container" class="chat-container">
+			<table id="chathistory" class="table">
+				<thead>
+					<tr>
+						<th class="user-column">User</th>
+						<th class="message-column">Messages</th>
+					</tr>
+				</thead>
+				<tbody>
+					@foreach (var message in ChatHistoryService.GetFormattedMessages(_chatHistory))
+					{
+						<tr>
+							<td class="user-column"><span>@message.User</span></td>
+							<td class="message-column">
+								<span>@ConvertToMarkup(message.Message)</span>
+								@if (message.User == "Assistant" && SpeechSupport?.TextToSpeech == true)
+								{
+									<button class="btn btn-sm btn-outline-info ms-2 tts-message-button"
+										@onclick="() => SpeakMessage(message.Message)"
+										disabled="@IsTtsMessageButtonDisabled(message.Message)"
+										title="@(IsMessageBeingSpoken(message.Message) ? "Stop speaking" : "Read message aloud")">
+										<img src="/images/@(IsMessageBeingSpoken(message.Message) ? "stop.png" : "playback.png")"
+											 alt="@(IsMessageBeingSpoken(message.Message) ? "Stop" : "Play")" />
+									</button>
+								}
+							</td>
+						</tr>
+					}
+				</tbody>
+			</table>
+		</div>
+
+		@if (IsAIResponsing == true)
+		{
+			<table id="ai-request">
+				<tr>
+					<td class="user-column">AI in Action&nbsp;&nbsp;</td>
+					<td class="message-column">
+						@if (string.IsNullOrEmpty(AIResponse))
+						{
+							<div class="loading-container">
+								<div class="spinner-border spinner-border-sm text-primary" role="status">
+									<span class="visually-hidden">Loading...</span>
+								</div>
+								<p class="loading-text">&nbsp;Thinking...</p>
+							</div>
+						}
+						else
+						{
+							@ConvertToMarkup(AIResponse)
+						}
+					</td>
+				</tr>
+			</table>
+		}
+
+		@* Speech controls - properly positioned above input *@
+		@if (SpeechSupport != null && (SpeechSupport.SpeechRecognition || SpeechSupport.TextToSpeech))
+		{
+			<div class="speech-controls-container">
+				<div class="speech-controls">
+					@if (SpeechSupport.SpeechRecognition)
+					{
+						<button id="mic-button"
+							class="speech-button mic-button @(IsListening ? "listening" : "")"
+							@onclick="ToggleMicrophone"
+							disabled="@IsAIResponsing"
+							title="@(IsListening ? "Stop listening" : "Start voice input")">
+							<img src="/images/@(IsListening ? "stop.png" : "record.png")" alt="@(IsListening ? "Stop Recording" : "Start Recording")" />
+						</button>
+					}
+					&nbsp;
+					@if (SpeechSupport.TextToSpeech && !string.IsNullOrEmpty(AIResponse))
+					{
+						<button class="speech-button tts-button"
+							@onclick="ToggleTextToSpeech"
+							disabled="@IsTtsButtonDisabled()"
+							title="@(IsMessageBeingSpoken(AIResponse) ? "Stop speaking" : "Read AI response aloud")">
+							<img src="/images/@(IsMessageBeingSpoken(AIResponse) ? "stop.png" : "playback.png")" alt="@(IsMessageBeingSpoken(AIResponse) ? "Stop Speaking" : "Play Audio")" />
+						</button>
+					}
+
+					<div class="speech-status">
+						@if (IsListening)
+						{
+							<span class="text-danger"><img src="/images/record.png" style="width: 16px; height: 16px;" alt="Recording" /> Listening...</span>
+						}
+						else if (IsSpeaking)
+						{
+							<span class="text-info">Speaking...</span>
+						}
+						else if (!string.IsNullOrEmpty(SpeechStatusText))
+						{
+							<span>@SpeechStatusText</span>
+						}
+					</div>
+				</div>
+			</div>
+		}
+
+		@* Input area with speech transcript overlay *@
+		<div class="input-container">
+			<div class="input-group">
+				<input @bind="Question"
+				       @bind:event="oninput"
+				       @onkeydown="@(async (e) => { if (e.Key == "Enter" && !IsAIResponsing) { if (IsListening) await StopListening(); await QueryAIChat(); } })"
+				       type="text"
+				       class="form-control"
+				       placeholder="Enter your question or use voice input"
+				       disabled="@IsAIResponsing"
+				       @ref="questionInput" />
+			</div>
+		</div>
+
+		<br />
+		<div class="d-flex">
+			<button class="btn btn-primary"
+					@onclick="QueryAIChat"
+					disabled="@IsAIResponsing">
+				@(IsAIResponsing ? "Processing..." : "Send Query")
+			</button>
+			@if (IsAIResponsing)
+			{
+				<button class="btn stop-button"
+						@onclick="StopAIResponse"
+						title="Stop response (Ctrl+C)">
+					Stop Response
+				</button>
+			}
+		</div>
+		<br />
+		<div><span>Elapsed time: @ElapsedTimeMessage</span></div>
+		<br />
+		<br />
 	}
 	else
 	{
-		<p><div><span style="background-color: darkslateblue; color:yellowgreen; padding: 1em;"><strong>Chat AI Service loading...</strong></span></div></p>
+		@if (IsNotFirstTimeLoading)
+		{
+			<p><div><span style="background-color:darkred; color:antiquewhite; padding: 1em;"><strong>Chat Endpoint AI Service URI unavailable!</strong></span></div></p>
+		}
+		else
+		{
+			<p><div><span style="background-color: darkslateblue; color:yellowgreen; padding: 1em;"><strong>Chat AI Service loading...</strong></span></div></p>
+		}
 	}
 }

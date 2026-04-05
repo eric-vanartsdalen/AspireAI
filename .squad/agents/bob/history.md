@@ -33,6 +33,27 @@
 
 <!-- Append new learnings below. Each entry is something lasting about the project. -->
 
+### 2026-04-05 — Mock Auth UX Revision Uses Dedicated Sign-In Route + Framework Redirect
+
+**Scope:** Independent architectural revision of the Blazor mock auth shell after QA rejected the first UX pass.
+
+**Decision:** Keep `/` as the unauthenticated product landing, but redirect unauthorized access to protected routes through Blazor's built-in `AuthorizeRouteView` into a dedicated `/signin?returnUrl=...` page. This preserves the marketing-style landing while making route protection explicit and testable.
+
+**Stable hook contract implemented:**
+- Landing CTA: `auth-sign-in-cta`
+- Provider list/buttons: `auth-provider-list`, `auth-provider-mock-microsoft`, `auth-provider-mock-google`, `auth-provider-demo`
+- Authenticated shell: `auth-user-display`, `auth-sign-out`
+- Tenant visibility/binding: `auth-current-tenant`, `data-auth-tenant`, `#tenant-select`
+
+**Key file paths:**
+- Router redirect seam: `src/AspireApp.Web/Components/Routes.razor`
+- Sign-in page: `src/AspireApp.Web/Components/Pages/SignIn.razor`
+- Redirect component: `src/AspireApp.Web/Components/Shared/RedirectToSignIn.razor`
+- Shared auth surface: `src/AspireApp.Web/Components/Shared/SignInPanel.razor`
+- Shell hooks: `src/AspireApp.Web/Components/Layout/MainLayout.razor`
+
+**Validation note:** `dotnet build src/AspireApp.Web/AspireApp.Web.csproj /p:UseAppHost=false` passes. Focused `AspireApp.WebTest` auth runs still abort in the existing host fixture pipeline before yielding assertions, so infra follow-up remains separate from this UX revision.
+
 ### 2026-07-26 — Mock Pluggable Auth Slice Recommended as Next UX Leg
 
 **Scope:** Architecture assessment of next UX stage after tenant-context completion.

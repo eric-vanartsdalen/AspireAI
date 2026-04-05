@@ -71,6 +71,8 @@ public partial class UploadData : ComponentBase, IAsyncDisposable, IDisposable
 
     protected override async Task OnInitializedAsync()
     {
+        TenantContext.OnTenantChanged += HandleTenantChanged;
+
         if (Logger.IsEnabled(LogLevel.Information))
         {
             Logger.LogInformation("UploadData component initialized");
@@ -109,11 +111,11 @@ public partial class UploadData : ComponentBase, IAsyncDisposable, IDisposable
                 return;
             }
 
-            Files = await FileStorageService.GetAllFilesAsync();
+            Files = await FileStorageService.GetAllFilesAsync(TenantContext.CurrentTenantId);
             if (logger.IsEnabled(LogLevel.Information))
             {
                 var count = Files?.Count ?? 0;
-                logger.LogInformation("Loaded {Count} uploaded files", count);
+                logger.LogInformation("Loaded {Count} uploaded files for tenant {TenantId}", count, TenantContext.CurrentTenantId);
             }
 
             if (Files != null)
@@ -136,6 +138,15 @@ public partial class UploadData : ComponentBase, IAsyncDisposable, IDisposable
         {
             _isLoading = false;
         }
+    }
+
+    private void HandleTenantChanged()
+    {
+        _ = InvokeAsync(async () =>
+        {
+            await LoadUploadedFiles();
+            StateHasChanged();
+        });
     }
 
     protected override async Task OnAfterRenderAsync(bool firstRender)
@@ -556,6 +567,7 @@ public partial class UploadData : ComponentBase, IAsyncDisposable, IDisposable
     {
         try
         {
+            TenantContext.OnTenantChanged -= HandleTenantChanged;
             _objectReference?.Dispose();
             Logger.LogInformation("UploadData component disposing");
         }
@@ -571,6 +583,7 @@ public partial class UploadData : ComponentBase, IAsyncDisposable, IDisposable
     {
         try
         {
+            TenantContext.OnTenantChanged -= HandleTenantChanged;
             _objectReference?.Dispose();
             Logger.LogInformation("UploadData component disposing");
         }

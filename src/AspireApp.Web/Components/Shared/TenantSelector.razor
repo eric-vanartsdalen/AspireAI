@@ -1,23 +1,36 @@
 @using AspireApp.Web.Services
 @inject TenantContextService TenantContext
+@inject AuthenticationContext AuthenticationContext
+@implements IDisposable
 
-<div class="tenant-selector">
+<div class="tenant-selector" data-testid="tenant-selector">
     <label for="tenant-select" class="tenant-label">
         <span class="bi bi-building" aria-hidden="true"></span>
-        Tenant:
+        Workspace tenant:
     </label>
-    <select id="tenant-select" 
-            class="form-select tenant-select" 
-            value="@TenantContext.CurrentTenantId" 
+    <select id="tenant-select"
+            class="form-select tenant-select"
+            value="@TenantContext.CurrentTenantId"
             @onchange="OnTenantChanged">
         @foreach (var tenant in TenantContextService.GetAvailableTenants())
         {
             <option value="@tenant">@tenant</option>
         }
     </select>
+    @if (AuthenticationContext.CurrentUser is not null)
+    {
+        <div class="tenant-hint" data-testid="auth-current-tenant">
+            Signed in as @AuthenticationContext.CurrentUser.DisplayName · currently using @TenantContext.CurrentTenantId.
+        </div>
+    }
 </div>
 
 @code {
+    protected override void OnInitialized()
+    {
+        TenantContext.OnTenantChanged += HandleTenantChanged;
+    }
+
     private async Task OnTenantChanged(ChangeEventArgs e)
     {
         if (e.Value is string tenantId)
@@ -25,5 +38,15 @@
             TenantContext.CurrentTenantId = tenantId;
             await InvokeAsync(StateHasChanged);
         }
+    }
+
+    private void HandleTenantChanged()
+    {
+        _ = InvokeAsync(StateHasChanged);
+    }
+
+    public void Dispose()
+    {
+        TenantContext.OnTenantChanged -= HandleTenantChanged;
     }
 }

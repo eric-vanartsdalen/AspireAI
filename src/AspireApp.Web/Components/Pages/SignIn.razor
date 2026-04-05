@@ -1,0 +1,47 @@
+@page "/signin"
+@rendermode InteractiveServer
+@inject AuthenticationContext AuthenticationContext
+@inject NavigationManager NavigationManager
+
+<PageTitle>Sign in</PageTitle>
+
+<div class="py-4" data-testid="auth-sign-in">
+    <div class="mb-4">
+        <h1>Sign in to continue</h1>
+        <p class="lead">
+            Choose a mock provider to enter the tenant-aware shell. This stays intentionally fake so we can swap in real OAuth later without rewriting the UI.
+        </p>
+    </div>
+
+    <SignInPanel RedirectUri="@GetRedirectUri()" />
+</div>
+
+@code {
+    [SupplyParameterFromQuery(Name = "returnUrl")]
+    private string? ReturnUrl { get; set; }
+
+    protected override void OnParametersSet()
+    {
+        if (AuthenticationContext.IsAuthenticated)
+        {
+            NavigationManager.NavigateTo(GetRedirectUri());
+        }
+    }
+
+    private string GetRedirectUri()
+    {
+        return NormalizeLocalPath(ReturnUrl);
+    }
+
+    private static string NormalizeLocalPath(string? returnUrl)
+    {
+        if (string.IsNullOrWhiteSpace(returnUrl))
+        {
+            return "/";
+        }
+
+        return returnUrl.StartsWith("/", StringComparison.Ordinal) && !returnUrl.StartsWith("//", StringComparison.Ordinal)
+            ? returnUrl
+            : "/";
+    }
+}

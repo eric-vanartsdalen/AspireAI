@@ -1,0 +1,22 @@
+@inject NavigationManager NavigationManager
+
+<div class="py-4">
+    <div class="mb-4">
+        <h1>Sign in to continue</h1>
+        <p class="lead">
+            Chat, upload, and weather stay behind the signed-in shell. Choose a mock Microsoft, Google, or demo identity to keep going.
+        </p>
+    </div>
+
+    <SignInPanel RedirectUri="@GetReturnUri()" />
+</div>
+
+@code {
+    private string GetReturnUri()
+    {
+        var relativePath = NavigationManager.ToBaseRelativePath(NavigationManager.Uri);
+        return string.IsNullOrWhiteSpace(relativePath)
+            ? "/"
+            : $"/{relativePath}";
+    }
+}

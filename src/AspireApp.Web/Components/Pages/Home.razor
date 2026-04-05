@@ -1,21 +1,81 @@
-﻿@page "/"
+@page "/"
 @rendermode InteractiveServer
 @inject IConfiguration Configuration
+@inject AuthenticationContext AuthenticationContext
 
 <PageTitle>Home</PageTitle>
 
-<h1>Home</h1>
+@if (AuthenticationContext.IsAuthenticated)
+{
+        <div class="py-3">
+            <h1>Welcome back, @AuthenticationContext.CurrentUser?.DisplayName</h1>
+            <p class="lead">
+                You are signed in and ready to work with chat, uploads, and your current tenant workspace.
+            </p>
 
-Aspire AI app Home location.
+            <div class="row g-3 mb-4">
+                <div class="col-md-4">
+                    <a class="btn btn-primary w-100" href="chat">Open chat</a>
+                </div>
+                <div class="col-md-4">
+                    <a class="btn btn-outline-primary w-100" href="upload">Upload documents</a>
+                </div>
+                <div class="col-md-4">
+                    <a class="btn btn-outline-primary w-100" href="weather">View weather</a>
+                </div>
+            </div>
 
-<hr />
-<h3>Configuration Values</h3>
+            <hr />
+            <h3>Configuration Values</h3>
 
-<ul>
-    <li><b>Type:</b> @HomeConfigurations.ActiveModelController</li>
-    <li><b>Endpoint:</b> @HomeConfigurations.ActiveModelURL</li>
-    <li><b>Model:</b> @HomeConfigurations.ActiveModel</li>
-</ul>
+            <ul>
+                <li><b>Type:</b> @HomeConfigurations.ActiveModelController</li>
+                <li><b>Endpoint:</b> @HomeConfigurations.ActiveModelURL</li>
+                <li><b>Model:</b> @HomeConfigurations.ActiveModel</li>
+            </ul>
+        </div>
+}
+else
+{
+        <section class="py-4" data-testid="auth-landing">
+            <div class="mb-4">
+                <h1>Turn documents into a tenant-aware AI workspace</h1>
+                <p class="lead">
+                    Start with a mock Microsoft, Google, or demo identity. This keeps the UX honest now and gives us a clean seam for real OAuth later.
+                </p>
+                <a class="btn btn-primary mt-2" data-testid="auth-sign-in-cta" href="/signin">Get started</a>
+            </div>
+
+            <div class="row g-4 mb-4">
+                <div class="col-lg-4">
+                    <div class="card h-100 shadow-sm">
+                        <div class="card-body">
+                            <h2 class="h5">Unauthenticated by default</h2>
+                            <p class="mb-0">Visitors land here first and choose a provider before they touch chat, uploads, or weather.</p>
+                        </div>
+                    </div>
+                </div>
+                <div class="col-lg-4">
+                    <div class="card h-100 shadow-sm">
+                        <div class="card-body">
+                            <h2 class="h5">Tenant stays separate</h2>
+                            <p class="mb-0">Signing in seeds the tenant selector from the mock user, but workspace switching remains its own concern.</p>
+                        </div>
+                    </div>
+                </div>
+                <div class="col-lg-4">
+                    <div class="card h-100 shadow-sm">
+                        <div class="card-body">
+                            <h2 class="h5">Pluggable provider seam</h2>
+                            <p class="mb-0">The UI talks to an auth abstraction so real Microsoft or Google sign-in can replace mock auth without rewriting the shell.</p>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <SignInPanel RedirectUri="/" />
+        </section>
+}
 
 
 

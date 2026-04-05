@@ -27,6 +27,7 @@
   </ItemGroup>
 
   <ItemGroup>
+    <ProjectReference Include="..\AspireApp.Web\AspireApp.Web.csproj" Aliases="web" />
     <ProjectReference Include="..\AspireApp.AppHost\AspireApp.AppHost.csproj" />
   </ItemGroup>
 

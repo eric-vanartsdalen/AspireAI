@@ -1,9 +1,11 @@
 ﻿@page "/upload"
 @rendermode InteractiveServer
 @attribute [StreamRendering]
+@attribute [Authorize]
 @using AspireApp.Web.Data
 @using Microsoft.AspNetCore.Components.Forms
 @implements IDisposable
+@inject AuthenticationContext AuthenticationContext
 
 <PageTitle>Upload Data</PageTitle>
 
@@ -715,6 +717,12 @@
     }
 </style>
 
+@if (!AuthenticationContext.IsAuthenticated)
+{
+    <RedirectToSignIn />
+}
+else
+{
 <div class="upload-container">
 	<h1><i class="bi bi-cloud-upload-fill"></i> Document Upload & Data Source Management</h1>
     
@@ -751,7 +759,12 @@
         <p>Upload documents for processing and analysis. Max size: 10MB. Accepted formats: .pdf, .docx, .xlsx</p>
     </div>
 
-    <InputFile OnChange="HandleFileSelected" accept=".pdf,.docx,.xlsx" class="form-control" id="fileInput" />
+    <label class="form-label" for="fileInput">Choose File</label>
+    <InputFile OnChange="HandleFileSelected"
+               accept=".pdf,.docx,.xlsx"
+               class="form-control"
+               id="fileInput"
+               data-testid="upload-file-input" />
     <div class="upload-hint">
         <i class="bi bi-info-circle"></i> For best results, ensure your document is well-structured and contains identifiable data fields.
     </div>
@@ -981,3 +994,4 @@
         }
     </div>
 </div>
+}

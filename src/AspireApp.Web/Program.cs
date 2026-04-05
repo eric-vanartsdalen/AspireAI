@@ -1,9 +1,14 @@
-﻿using AspireApp.Web;
+using AspireApp.Web;
 using AspireApp.Web.Components;
 using AspireApp.Web.Components.Pages;
 using AspireApp.Web.Components.Shared;
+using AspireApp.Web.Services;
 using AspireApp.Web.Shared;
+using Microsoft.AspNetCore.Authentication;
+using Microsoft.AspNetCore.Authentication.Cookies;
+using Microsoft.AspNetCore.Components.Authorization;
 using Microsoft.EntityFrameworkCore;
+using System.Security.Claims;
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -28,6 +33,7 @@ builder.Services.AddHttpClient<WeatherApiClient>(client =>
 
 // Add HttpClient factory for general use
 builder.Services.AddHttpClient();
+builder.Services.AddHttpContextAccessor();
 
 // ADDING CONFIGURATIONS FOR STORAGE OF FILES
 var connectionString = builder.Configuration.GetConnectionString("appdb")
@@ -62,7 +68,10 @@ builder.Services.AddSingleton<AiInfoStateService>();
 builder.Services.AddScoped<SpeechService>();
 
 // Register Tenant Context service (scoped to Blazor circuit/session)
-builder.Services.AddScoped<AspireApp.Web.Services.TenantContextService>();
+builder.Services.AddScoped<TenantContextService>();
+
+// Register authentication services (scoped to Blazor circuit/session)
+builder.Services.AddAspireAppAuthentication(builder.Configuration);
 
 // Register Ollama warmup background service
 builder.Services.AddHostedService<AspireApp.Web.Services.OllamaWarmupService>();
@@ -83,6 +92,24 @@ if (!app.Environment.IsDevelopment())
 }
 
 app.UseHttpsRedirection();
+app.UseAuthentication();
+app.UseAuthorization();
+
+app.Use(async (context, next) =>
+{
+    if (HttpMethods.IsGet(context.Request.Method) &&
+        (context.Request.Path.Equals("/chat", StringComparison.OrdinalIgnoreCase) ||
+         context.Request.Path.Equals("/upload", StringComparison.OrdinalIgnoreCase) ||
+         context.Request.Path.Equals("/weather", StringComparison.OrdinalIgnoreCase)) &&
+        context.User.Identity?.IsAuthenticated != true)
+    {
+        var returnUrl = Uri.EscapeDataString($"{context.Request.Path}{context.Request.QueryString}");
+        context.Response.Redirect($"/signin?returnUrl={returnUrl}");
+        return;
+    }
+
+    await next();
+});
 
 app.UseAntiforgery();
 
@@ -95,6 +122,58 @@ app.MapRazorComponents<App>()
 
 // Map API controllers
 app.MapControllers();
+
+app.MapPost("/auth/mock/session", async (MockAuthSessionRequest request, HttpContext httpContext) =>
+{
+    var selectedUser = MockAuthCatalog.FindUser(request.ProviderId, request.UserId);
+    if (selectedUser is null)
+    {
+        return Results.BadRequest(new { error = "Unknown mock user." });
+    }
+
+    await httpContext.SignInAsync(
+        CookieAuthenticationDefaults.AuthenticationScheme,
+        CreatePrincipal(selectedUser),
+        new AuthenticationProperties
+        {
+            AllowRefresh = true,
+            IsPersistent = false
+        });
+
+    return Results.Ok();
+});
+
+app.MapGet("/auth/mock/signin", async (string providerId, string userId, string? returnUrl, HttpContext httpContext) =>
+{
+    var selectedUser = MockAuthCatalog.FindUser(providerId, userId);
+    if (selectedUser is null)
+    {
+        return Results.BadRequest(new { error = "Unknown mock user." });
+    }
+
+    await httpContext.SignInAsync(
+        CookieAuthenticationDefaults.AuthenticationScheme,
+        CreatePrincipal(selectedUser),
+        new AuthenticationProperties
+        {
+            AllowRefresh = true,
+            IsPersistent = false
+        });
+
+    return Results.LocalRedirect(NormalizeLocalPath(returnUrl));
+});
+
+app.MapDelete("/auth/mock/session", async (HttpContext httpContext) =>
+{
+    await httpContext.SignOutAsync(CookieAuthenticationDefaults.AuthenticationScheme);
+    return Results.Ok();
+});
+
+app.MapGet("/auth/mock/signout", async (string? returnUrl, HttpContext httpContext) =>
+{
+    await httpContext.SignOutAsync(CookieAuthenticationDefaults.AuthenticationScheme);
+    return Results.LocalRedirect(NormalizeLocalPath(returnUrl));
+});
 
 app.MapDefaultEndpoints();
 // Add this after the existing endpoint mappings
@@ -160,4 +239,33 @@ static string ResolveContentRootPath(string? configuredPath, string contentRootP
         ? path
         : Path.GetFullPath(Path.Combine(contentRootPath, path));
 }
+
+static string NormalizeLocalPath(string? path)
+{
+    if (string.IsNullOrWhiteSpace(path))
+    {
+        return "/";
+    }
+
+    return path.StartsWith("/", StringComparison.Ordinal) && !path.StartsWith("//", StringComparison.Ordinal)
+        ? path
+        : "/";
+}
+
+static ClaimsPrincipal CreatePrincipal(AuthenticatedUser user)
+{
+    var identity = new ClaimsIdentity(
+    [
+        new Claim(ClaimTypes.NameIdentifier, user.UserId),
+        new Claim(ClaimTypes.Name, user.DisplayName),
+        new Claim(ClaimTypes.Email, user.Email),
+        new Claim(ClaimTypes.AuthenticationMethod, user.ProviderId),
+        new Claim("provider_display_name", user.ProviderDisplayName),
+        new Claim("tenant_id", user.DefaultTenantId)
+    ], CookieAuthenticationDefaults.AuthenticationScheme);
+
+    return new ClaimsPrincipal(identity);
+}
+
+internal sealed record MockAuthSessionRequest(string ProviderId, string UserId);
 

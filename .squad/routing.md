@@ -13,6 +13,7 @@ How to decide who handles what.
 | Neo4j, graph database, Cypher | Jarvis | Schema design, queries, driver patterns |
 | Ollama / AI integration | Jarvis + Jeff | Python-side AI calls + C# SemanticKernel |
 | Testing, quality, edge cases | Buster | Test coverage, test strategy, quality analysis |
+| Security, auth, access control | Warden | Auth flows, secure defaults, threat review, security fixes |
 | Code review | Bob | Review PRs, check quality, architecture alignment |
 | Architecture review, adversarial critique | Kujan | Challenge architectural decisions, gap analysis, extensibility audit |
 | Strategic review, roadmap critique | Verbal | Challenge product direction, scope risk, prioritization, risk register |
@@ -30,6 +31,7 @@ How to decide who handles what.
 | `squad:jeff` | .NET, Blazor, Aspire, C# work | Jeff |
 | `squad:jarvis` | Python, Neo4j, data pipeline work | Jarvis |
 | `squad:buster` | Testing, QA, quality work | Buster |
+| `squad:warden` | Security, auth, access control review/fixes | Warden |
 | `squad:copilot` | Assign to @copilot for autonomous work (if enabled) | @copilot 🤖 |
 
 ## Rules

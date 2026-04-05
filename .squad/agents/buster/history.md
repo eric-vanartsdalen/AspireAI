@@ -9,6 +9,67 @@
 
 <!-- Append new learnings below. Each entry is something lasting about the project. -->
 
+### 2026-04-05 — Warden Auth QA Verdict: Reject on Route Re-Protection + Flow Regression
+
+**Completed:**
+- Re-audited the landed auth UX slice across `Program.cs`, `Routes.razor`, `MainLayout.razor`, `NavMenu.razor`, `Home.razor`, `SignIn.razor`, `SignInPanel.razor`, `AuthenticationContext`, and `MockAuthService`.
+- Re-ran the focused auth gate with `AuthServiceFactoryTests`, `MockAuthServiceTests`, and `AuthUxFoundationTests`.
+- Re-ran the critical browser regression `BasicAspireAppHostTests.FlowEndToEnd`.
+
+**Key pattern:**
+- Do **not** approve the auth leg unless sign-out actually re-protects direct navigation to `[Authorize]` routes. A landing page plus working sign-in is not enough if `/chat`, `/upload`, or other protected routes remain reachable after logout.
+- In this repo, auth approval also depends on the existing browser smoke staying honest: if `FlowEndToEnd` cannot observe the uploaded fixture in API-backed state, the auth slice is still leaving the app misleadingly green.
+
+**Blockers observed:**
+- `AuthUxFoundationTests.SignOutReturnsToLandingAndReprotectsAppAreas` failed because a signed-out browser could still stay on `/chat` instead of being redirected or shown the public landing/sign-in surface.
+- `BasicAspireAppHostTests.FlowEndToEnd` failed because `processing-smoke.pdf` never appeared in `GET /api/FileUpload` after the UI upload attempt (`{"success":true,"files":[]}`), so the auth-enabled browser path still regresses the core upload flow.
+
+**Key file paths:**
+- `src\AspireApp.Web\Components\Routes.razor`
+- `src\AspireApp.Web\Components\Pages\Chat.razor`
+- `src\AspireApp.Web\Components\Shared\RedirectToSignIn.razor`
+- `src\AspireApp.WebTest\Tests\AuthUxFoundationTests.cs`
+- `src\AspireApp.WebTest\Tests\BasicAspireAppHostTests.cs`
+
+### 2026-04-05 — Auth UX Revision Verdict: Shell Exists, Gate Set Still Incomplete
+
+**Completed:**
+- Audited Bob's independent auth UX revision across `Home.razor`, `MainLayout.razor`, `Routes.razor`, `ProtectedRoutePrompt.razor`, `SignInPanel.razor`, and the scoped auth services.
+- Confirmed the mock auth shell now physically exists: unauthenticated landing, interactive sign-in panel, protected Blazor routes, top-bar identity surface, sign-out action, and tenant seeding from `AuthenticatedUser.DefaultTenantId`.
+- Re-ran focused WebTest coverage and found the broader browser suite still regresses in `BasicAspireAppHostTests.FlowEndToEnd`, while the new auth acceptance path did not produce a clean completed run in automation during review.
+
+**Key pattern:**
+- Do **not** approve an auth slice just because the shell renders. Approval still requires the agreed gate set to be materially closed: provider pluggability must be configuration-driven, and the multi-layer QA story cannot stop at one Playwright class.
+- For this repo, mock auth is coherent only when these files stay aligned: `Program.cs` DI registration, `AuthenticationContext`, `AppAuthenticationStateProvider`, `MockAuthService`, `Routes.razor`, `MainLayout.razor`, and the tenant selector surface.
+
+**Key gaps observed:**
+- `Program.cs` resolves only `MockAuthService` and throws for any non-mock mode; that is not the approved config-swappable provider seam.
+- No `AuthProviderFactoryTests.cs` or equivalent service/contract tiers exist yet, so AUTH-F and AUTH-G remain open even though the UI shell landed.
+
+**Key file paths:**
+- `src\AspireApp.Web\Program.cs`
+- `src\AspireApp.Web\Services\MockAuthService.cs`
+- `src\AspireApp.Web\Services\AppAuthenticationStateProvider.cs`
+- `src\AspireApp.Web\Components\Pages\Home.razor`
+- `src\AspireApp.Web\Components\Shared\ProtectedRoutePrompt.razor`
+- `src\AspireApp.WebTest\Tests\AuthUxFoundationTests.cs`
+
+### 2026-04-05 — Auth UX QA Gate: Use Existing Aspire WebTest Fixture + Skip Until Shell Exists
+
+**Completed:**
+- Added `src\AspireApp.WebTest\Tests\AuthUxFoundationTests.cs` to stage Playwright acceptance coverage for mock auth UX without inventing a second harness.
+- Reused `TestFixture` browser/AppHost lifecycle rather than creating bespoke auth test infrastructure.
+- Encoded the minimum UX gates: unauthenticated landing visibility, mock sign-in, protected-route access, sign-out protection, and tenant binding visibility.
+
+**Key pattern:**
+- For UI slices that are approved but not yet landed, QA can add real acceptance tests that **reuse the live Aspire fixture** and **dynamically skip** until Jeff's shell exists. That keeps the contract executable without breaking the current suite.
+- Require stable auth hooks for resilient Playwright coverage: `data-testid='auth-sign-in-cta'`, provider hooks under `auth-provider-*`, `auth-sign-out`, `auth-user-display`, and either `auth-current-tenant` or `data-auth-tenant` on the identity surface.
+
+**Key file paths:**
+- `src\AspireApp.WebTest\Tests\AuthUxFoundationTests.cs`
+- `src\AspireApp.WebTest\Fixtures\TestFixture.cs`
+- `.squad\decisions\inbox\buster-auth-ui-test-hooks.md`
+
 ### 2026-04-05 — Mock Auth UX Test Strategy: UI/Integration/Contract Tiers Before Real Wiring
 
 **Completed:**

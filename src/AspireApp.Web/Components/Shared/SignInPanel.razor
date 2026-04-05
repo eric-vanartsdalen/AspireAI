@@ -1,0 +1,152 @@
+@inject IAuthService AuthService
+@inject NavigationManager NavigationManager
+
+@if (!string.IsNullOrWhiteSpace(_errorMessage))
+{
+    <div class="alert alert-danger" role="alert">
+        @_errorMessage
+    </div>
+}
+
+<div id="mock-auth" data-testid="auth-sign-in-surface">
+    <div class="row g-4 mb-4" data-testid="auth-provider-list">
+        @foreach (var provider in _providers)
+        {
+            <div class="col-xl-4 col-lg-6">
+                <section class="card h-100 shadow-sm border-0 @provider.AccentCssClass">
+                    <div class="card-body d-flex flex-column">
+                        <div class="d-flex justify-content-between align-items-start gap-3 mb-3">
+                            <div>
+                                <h2 class="h4 mb-2">@provider.DisplayName</h2>
+                                <p class="text-muted mb-0">@provider.Description</p>
+                            </div>
+                            <span class="badge text-bg-light">@provider.DisplayName</span>
+                        </div>
+
+                        <button class="btn btn-light mt-auto"
+                                data-testid="@GetProviderTestId(provider.Id)"
+                                @onclick="() => SelectProvider(provider.Id)">
+                            Continue with @provider.DisplayName
+                        </button>
+                    </div>
+                </section>
+            </div>
+        }
+    </div>
+
+    @if (SelectedProvider is not null)
+    {
+        <div class="card shadow-sm">
+            <div class="card-body">
+                @if (SelectedProvider.RequiresUserSelection)
+                {
+                    <h3 class="h5 mb-3">Choose a mock account for @SelectedProvider.DisplayName</h3>
+
+                    <div class="row g-3 align-items-end">
+                        <div class="col-lg-6">
+                            <label class="form-label" for="mock-user">Mock user</label>
+                            <select id="mock-user"
+                                    name="mock-user"
+                                    class="form-select"
+                                    data-testid="auth-user-select"
+                                    @bind="_selectedUserId">
+                                @foreach (var user in SelectedUsers)
+                                {
+                                    <option value="@user.UserId">@user.DisplayName (@user.Email)</option>
+                                }
+                            </select>
+                        </div>
+
+                        <div class="col-lg-6">
+                            <button class="btn btn-primary w-100"
+                                    data-testid="auth-submit-sign-in"
+                                    @onclick="SignInAsync">
+                                Sign in
+                            </button>
+                        </div>
+                    </div>
+                }
+                else
+                {
+                    <h3 class="h5 mb-3">Continue with @SelectedProvider.DisplayName</h3>
+                    <p class="text-muted">This provider manages its own sign-in flow.</p>
+
+                    <button class="btn btn-primary"
+                            data-testid="auth-submit-sign-in"
+                            @onclick="SignInAsync">
+                        Continue
+                    </button>
+                }
+
+                @if (SelectedUser is not null)
+                {
+                    <div class="mt-3 text-muted small">
+                        Default tenant after sign-in: <strong>@SelectedUser.DefaultTenantId</strong>
+                    </div>
+                }
+            </div>
+        </div>
+    }
+</div>
+
+@code {
+    [Parameter]
+    public string RedirectUri { get; set; } = "/";
+
+    private IReadOnlyList<AuthProviderOption> _providers = [];
+    private string? _selectedProviderId;
+    private string? _selectedUserId;
+    private string? _errorMessage;
+
+    private AuthProviderOption? SelectedProvider =>
+        _providers.FirstOrDefault(provider => string.Equals(provider.Id, _selectedProviderId, StringComparison.OrdinalIgnoreCase));
+
+    private IReadOnlyList<AuthenticatedUser> SelectedUsers =>
+        string.IsNullOrWhiteSpace(_selectedProviderId)
+            ? []
+            : AuthService.GetUsers(_selectedProviderId);
+
+    private AuthenticatedUser? SelectedUser =>
+        SelectedUsers.FirstOrDefault(user => string.Equals(user.UserId, _selectedUserId, StringComparison.OrdinalIgnoreCase));
+
+    protected override void OnInitialized()
+    {
+        _providers = AuthService.GetProviders();
+        SelectProvider(_providers.FirstOrDefault()?.Id);
+    }
+
+    private void SelectProvider(string? providerId)
+    {
+        _selectedProviderId = providerId;
+        _selectedUserId = SelectedUsers.FirstOrDefault()?.UserId;
+    }
+
+    private async Task SignInAsync()
+    {
+        _errorMessage = null;
+
+        if (string.IsNullOrWhiteSpace(_selectedProviderId))
+        {
+            _errorMessage = "Choose a provider before signing in.";
+            return;
+        }
+
+        try
+        {
+            await AuthService.SignInAsync(_selectedProviderId, _selectedUserId, RedirectUri);
+        }
+        catch (Exception ex) when (ex is not NavigationException)
+        {
+            _errorMessage = ex.Message;
+            return;
+        }
+    }
+
+    private static string GetProviderTestId(string providerId) => providerId switch
+    {
+        "microsoft" => "auth-provider-mock-microsoft",
+        "google" => "auth-provider-mock-google",
+        "demo" => "auth-provider-demo",
+        _ => $"auth-provider-{providerId}"
+    };
+}
