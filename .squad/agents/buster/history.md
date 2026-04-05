@@ -9,6 +9,50 @@
 
 <!-- Append new learnings below. Each entry is something lasting about the project. -->
 
+### 2026-04-05 — Mock Auth UX Test Strategy: UI/Integration/Contract Tiers Before Real Wiring
+
+**Completed:**
+- Audited current auth state: no authentication exists; tenant context provides data-layer isolation only
+- Designed multi-layer test strategy (UI → Component → Integration → Service → Contract)
+- Defined 6 acceptance gates blocking real Google/Microsoft auth wiring
+- Identified mock auth contract shape and provider pluggability pattern
+- Documented provable behaviors that must be stable before real provider implementation
+
+**Key Pattern:**
+- **Don't build real auth yet.** Stage mock auth gates in order: unauthenticated landing → mock login flow → cross-service contract → provider pluggability
+- **Layer model:** UI (Playwright E2E) → Component (optional Bunit) → Integration (API contract) → Service (provider factory) → Contract (Python tenant audit)
+- **Mock auth contract:** Email-based login, token response includes tenant ID, provider swappable via configuration
+- **Tenant isolation proof:** Authenticated requests must preserve tenant ID through API headers into Python database queries
+
+**Key Decisions (In Inbox):**
+- `IAuthProvider` interface shape (pluggable backends)
+- `AuthContextService` mirrors `TenantContextService` pattern (scoped, event-driven)
+- Token stored in-memory (no localStorage); auto-injected via DelegatingHandler
+- Provider switching configuration-only (no code recompile)
+
+**Key File Paths:**
+- `.squad/decisions/inbox/buster-auth-ux-test-strategy.md` — Full strategy doc (21 KB)
+- `src/AspireApp.Web/Services/TenantContextService.cs` — Service pattern to mirror
+- `src/AspireApp.WebTest/Tests/BasicAspireAppHostTests.cs` — Playwright baseline
+
+**Test Artifacts to Create (Priority):**
+1. `LandingPageTests.cs` — Unauthenticated access
+2. `MockAuthEndpointTests.cs` — Login contract (POST /auth/login)
+3. `test_p0_auth_contract_audit.py` — Tenant ID propagation
+4. `AuthFlowE2ETests.cs` — Sign-in flow (Playwright)
+5. `AuthProviderFactoryTests.cs` — Provider pluggability
+
+**What's Deferred:**
+- Real OAuth callback handling (Google/Microsoft)
+- Encrypted token storage
+- Session timeout / refresh token lifecycle
+- MFA flow
+- PKCE / SAML details
+
+**Rationale:** Mock auth proves the *shape* and *contract*. Real provider specifics are implementation details; pluggable factory ensures no rearchitecting when wiring Google/Microsoft.
+
+---
+
 ### 2026-04-05 — Python Test Discovery Alignment: pyproj + Dependency Bootstrap
 
 **Completed:**
@@ -589,3 +633,35 @@ The behavior being tested (legacy schema detection with detailed diagnostics) st
 **Orchestration Log:** Created for session context at 20260405T143735Z-buster.md
 
 ---
+
+
+### 2026-04-05 — Auth UX Test Gates Defined (Cross-Agent Consensus)
+
+**Agent Assessment:** Buster defined multi-layer acceptance gates for mock auth phase.  
+**Cross-Agent Inputs:** Bob (provider abstraction seams), Jeff (Blazor component/service contracts).  
+
+**Test Strategy: 5-Layer Model**
+1. **UI (Playwright E2E)** — Mock login flow visual/navigation
+2. **Component (Bunit, lightweight)** — Auth state component rendering  
+3. **Integration (API contract)** — POST /auth/login shape (email/provider → accessToken/user)
+4. **Service (xUnit)** — Provider factory isolation, state transitions
+5. **Contract (Audit)** — Tenant ID flows through API headers into Python DB queries
+
+**5 Acceptance Gates (Must All Pass):**
+1. **AUTH-A:** Unauthenticated landing page (HTTP 200, sign-in buttons visible)
+2. **AUTH-B:** Provider sign-in flow (click → sign in → redirect to dashboard)
+3. **AUTH-C:** User identity displayed (name/avatar in top bar)
+4. **AUTH-D:** Tenant auto-selection on login
+5. **AUTH-E:** Sign-out flow (returns to landing, nav inaccessible)
+6. **AUTH-F:** Provider pluggability (config-only swap, no code recompile)
+7. **AUTH-G:** All 7-layer tests pass + cross-service tenant propagation verified
+
+**Test Artifacts:**
+- Tier 1: LandingPageTests.cs, MockAuthEndpointTests.cs, 	est_p0_auth_contract_audit.py
+- Tier 2: AuthFlowE2ETests.cs (Playwright), AuthProviderFactoryTests.cs
+
+**Pass/Fail Checklist:** All 5 gates must pass + no console errors + Playwright stable + code review approved
+
+**Cross-Service Impact:** Tenant selector regression test required (Buster + Jeff coordination)
+
+**Next:** Implementation by Jeff; validation by Buster per gate pass/fail criteria

@@ -33,6 +33,30 @@
 
 <!-- Append new learnings below. Each entry is something lasting about the project. -->
 
+### 2026-07-26 — Mock Pluggable Auth Slice Recommended as Next UX Leg
+
+**Scope:** Architecture assessment of next UX stage after tenant-context completion.
+
+**Decision:** Recommended a Mock Pluggable Auth Slice using Blazor's built-in `AuthenticationStateProvider` + `<AuthorizeView>` pattern. This establishes the abstraction that real Microsoft/Google OAuth plugs into at Phase 6.
+
+**Key Architecture:**
+- `IAuthStateProvider` → `MockAuthProvider` (dev) → `OAuthAuthProvider` (Phase 6)
+- `AuthenticatedUser` model: `UserId`, `DisplayName`, `Email`, `AvatarUrl`, `Provider`, `TenantId`
+- Mock login page with provider picker (Microsoft/Google style buttons)
+- Unauthenticated landing page at `/` with sign-in CTA
+- `TenantContextService` auto-selects tenant from `AuthenticatedUser.TenantId`
+- Playwright UI tests for full auth flow
+
+**What this unlocks for Phase 6:** DI swap from MockAuthProvider to real OAuth — zero UI rewrites needed. `AuthenticatedUser.TenantId` becomes the `tenant_id` header on Gateway requests.
+
+**Explicit out-of-scope:** Real OAuth, JWT/tokens, API auth middleware, RBAC, persistent sessions, Python auth.
+
+**Decision recorded:** `.squad/decisions/inbox/bob-mock-auth-slice.md`
+
+**Current state of TenantContextService:** Scoped Blazor service with hardcoded tenant list ("default", "tenant-a", "tenant-b", "demo"). TenantSelector in NavMenu. Chat.razor.cs has TODO comment for Phase 3 injection. FileUploadController reads `X-Tenant-Id` header and propagates to FileStorageService.
+
+**Owner mapping:** Jeff (UI + auth provider), Buster (Playwright + unit tests), Bob (review).
+
 ### 2026-07-26 — Postgres Migration Verified & Next UI Objective Scoped
 
 **Scope:** Architecture verification of SQLite → Postgres migration completion; roadmap alignment and next feature scope.
@@ -395,3 +419,17 @@ The entire codebase has a gap between C# upload and Python processing:
 - Document tenant flow in architecture guide
 - Chat.razor integration in Phase 3
 
+
+
+### 2026-04-05 — Mock Pluggable Auth Slice Recommended (Cross-Agent Consensus)
+
+**Agent Assessment:** Bob recommended mock pluggable auth as next UX leg.  
+**Cross-Agent Inputs:** Jeff (concrete UX/service design), Buster (acceptance gates).  
+
+**Key Points:**
+- **Jeff alignment:** Blazor AuthenticationContext + MockAuthProvider mirrors existing TenantContextService pattern ✅
+- **Buster alignment:** 5-layer acceptance gates (UI → Contract) before implementation ✅
+- **Outcome:** Three agents converged on same direction; Eric approval pending
+- **Next:** Sprint assignment for Landing/SignIn/Dashboard + mock auth implementation
+
+**Decision Merged:** .squad/decisions.md — Mock Pluggable Auth Slice section

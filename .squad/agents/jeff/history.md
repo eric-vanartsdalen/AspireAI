@@ -9,6 +9,51 @@
 
 <!-- Append new learnings below. Each entry is something lasting about the project. -->
 
+### 2025-11-02 — Auth & Unauthenticated UX Assessment & Blueprint
+
+**Status:** Assessment complete; blueprint documented.
+
+**Current State Audit:**
+- ✅ TenantContextService works well; tenant selection is wired end-to-end (files tagged, UI responsive)
+- ✅ File upload & chat flow is functional without auth walls
+- ❌ No identity layer: can't distinguish users; all users on same tenant are anonymous
+- ❌ No unauthenticated landing page: app boots straight to chat
+- ❌ No mock auth providers: can't test "Sign in with Microsoft" or "Sign in with Google" flows
+- ❌ Tenant selector is UI-only; no user-tenant membership concept
+
+**Recommended Next Slice: Unauthenticated Landing + Mock Auth Providers**
+- User lands on public Landing page (`/`)
+- Sign-In page (`/signin`) offers three options: Mock demo sign-in, Microsoft stub, Google stub
+- After sign-in, user sees Dashboard (`/dashboard`) with Welcome message + tenant context
+- Logout clears auth state and returns to landing
+- Internal state: `AuthenticationContext` (scoped) holds CurrentUser + CurrentTenant
+
+**Pluggable Seams for Real Auth Later:**
+1. `IAuthProvider` interface: Mock provider today; future: MicrosoftAuthProvider, GoogleAuthProvider (registered in DI, swappable)
+2. `AuthenticationContext` scoped service: Separate from TenantContextService; future: compatible with ASP.NET Core Identity
+3. `<AuthorizeView>` on protected routes: Built-in Blazor; policy-based auth ready in Phase 6
+4. Session-scoped auth: No JWT persistence in Phase 1-5; sufficient for dev + testing
+
+**Services & Components to Add:**
+- AuthenticationContext.cs + MockAuthProvider.cs (new services)
+- Landing.razor, SignIn.razor, Dashboard.razor, UserMenu.razor (new components)
+- Program.cs: Register AuthenticationContext, IAuthProvider
+
+**Key File Paths:**
+- Decision documented: `.squad/decisions/inbox/jeff-auth-ux-blueprint.md`
+- Future services location: `src/AspireApp.Web/Services/`
+- Future components location: `src/AspireApp.Web/Components/Pages/` and `src/AspireApp.Web/Components/Shared/`
+
+**Strategic Insights:**
+- Separate identity (user) from multi-tenancy (tenant); they're orthogonal concerns
+- Unauthenticated landing is table-stakes UX; users shouldn't land in chat before choosing identity
+- DI-based provider swapping eliminates refactoring cost when moving from mock to real auth
+- Session is fine for Phase 1-5; persistence layer (JWT, cookies) is Phase 6 concern
+- Mock providers now reduce scope; real auth (Microsoft/Google) integrates without component rewrites
+
+**Pattern Learned:**
+- When designing pluggable subsystems (e.g., auth), separate interface from implementation (IAuthProvider) and inject via DI. Use scoped services for session state. Guard protected routes with built-in middleware/components. This keeps options open and reduces rework when swapping implementations.
+
 ### 2026-07-26 — Tenant Context UI Slice for BRAIN Multi-Tenancy
 
 **Status:** Complete and verified.
@@ -496,3 +541,28 @@
 **Orchestration Log:** Created for session context at 20260405T143735Z-jeff.md
 
 ---
+
+
+### 2026-04-05 — Auth UX Blueprint Designed (Cross-Agent Consensus)
+
+**Agent Assessment:** Jeff designed concrete Blazor UX + services for mock auth.  
+**Cross-Agent Inputs:** Bob (architecture/IAuthProvider seams), Buster (acceptance gates).  
+
+**Key Decisions:**
+- **AuthenticationContext (scoped)** mirrors TenantContextService pattern ✅
+- **IAuthProvider interface** enables pluggable backends (mock, Microsoft, Google) ✅
+- **Blazor components:** Landing, SignIn, Dashboard, UserMenu ✅
+- **Provider buttons** styled like real OAuth for UX fidelity ✅
+- **Buster alignment:** 5-layer test gates defined; E2E flow validations ✅
+
+**Deliverables:**
+1. AuthenticationContext.cs — scoped service, holds CurrentUser + OnAuthChanged event
+2. IAuthProvider + MockAuthProvider — pluggable backend, hardcoded mock users
+3. Landing.razor — public, hero + sign-in CTA
+4. SignIn.razor — public, three sign-in options (mock, Microsoft stub, Google stub)
+5. Dashboard.razor — protected via <AuthorizeView>
+6. UserMenu.razor — avatar + logout in NavMenu
+
+**Test Coverage:** Playwright E2E (login flow, tenant auto-select, logout), xUnit unit tests (provider state transitions), cross-service tenant audit (Python validation)
+
+**Next:** Eric approval + sprint estimation + implementation by Jeff
