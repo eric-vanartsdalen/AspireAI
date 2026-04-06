@@ -95,4 +95,24 @@
   - Anti-patterns called out: no custom hashing, no passwords in config files, no reuse of MockAuthCatalog, no bypassing the factory seam, no user-enumeration endpoints.
   - Decision logged: `.squad/decisions/inbox/warden-local-auth-floor.md`
   - Key files: `AuthServiceFactory.cs`, `AuthenticationOptions.cs`, `AuthenticationServiceCollectionExtensions.cs`, `Program.cs`, `UploadDbContext.cs`.
+- **2025-07-25 — Self-registration security gate: APPROVED with guardrails.**
+  - User explicitly requested: "if username doesn't exist, create the user with hashed password, then log them in."
+  - Approved on-the-fly self-provisioning with these mandatory constraints:
+  - Config gate: `AllowSelfRegistration` boolean on `LocalAuthenticationOptions` (default `false`). Self-create only active when explicitly enabled.
+  - Username-only auto-create: identifiers containing `@` are email lookups only — never auto-create from email-shaped input (prevents unverified email claims).
+  - Password floor: enforce 12-char minimum on the auto-create path. Reject early (before DB lookup) for ALL sign-in attempts when password < 12 chars to avoid leaking user existence.
+  - Username validation: alphanumeric + hyphens + underscores + periods only, 3–100 chars. Reject invalid shapes with generic error.
+  - Derived fields: Email = `{normalized_username}@local.aspireai` (synthetic), DisplayName = submitted identifier (trimmed), DefaultTenantId = `TenantContextService.DefaultTenantId` ("default").
+  - Generic errors: all failure paths (duplicate, invalid chars, short password) return the same `BuildInvalidLocalCredentialResult` redirect. No user enumeration.
+  - DB-level safety: existing unique index on `normalized_username` prevents race-condition duplicates.
+  - Anti-create on duplicate: if INSERT fails (unique constraint), return generic error — do NOT reveal the username is taken.
+  - Deferred: rate limiting, CAPTCHA, email verification, account lockout. Acceptable for current product stage with config gate.
+  - Decision logged: `.squad/decisions/inbox/warden-self-registration-guardrails.md`
+  - Key files: `LocalAccountAuthenticator.cs`, `LocalAuthenticationOptions.cs`, `LocalAuthBootstrapper.cs`, `Program.cs`, `SignInPanel.razor`.
 
+- **2025-07-25 — Password floor 12→10 review: APPROVED for current slice.**
+  - User requested relaxing minimum from 12 to 10 characters. NIST 800-63B floor is 8; 10 is above that. PBKDF2-HMAC-SHA512 @ 600k iterations remains the hashing floor. Acceptable for local-dev/single-operator stage.
+  - Username case-insensitive uniqueness already implemented: `LocalAuthValueNormalizer.Normalize()` uses `ToUpperInvariant()`, `ux_local_auth_users_normalized_username` unique index enforces it. No code changes needed for uniqueness.
+  - UI password hint missing: `SignInPanel.razor` credential form has no `minlength` or helper text. Jeff should add both.
+  - Password reset deferred: already explicitly deferred in prior security gate. Acceptable — user acknowledged "this can wait."
+  - Decision logged: `.squad/decisions/inbox/warden-password-floor-relaxation.md`

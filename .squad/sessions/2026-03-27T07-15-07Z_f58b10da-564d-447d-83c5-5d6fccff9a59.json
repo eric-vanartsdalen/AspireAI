@@ -1,0 +1,13 @@
+{
+  "id": "f58b10da-564d-447d-83c5-5d6fccff9a59",
+  "createdAt": "2026-03-27T07:14:08.582Z",
+  "lastActiveAt": "2026-03-27T07:15:18.315Z",
+  "messages": [
+    {
+      "role": "agent",
+      "agentName": "coordinator",
+      "content": "Here's your AspireAI squad:\n\n| Member | Role | Domain |\n|--------|------|--------|\n| **Bob** | Lead / Architect | Solution architecture, service boundaries, tech decisions, code review, roadmap/priorities |\n| **Jeff** | .NET Dev | C# (.NET 9), Blazor, Minimal API, Aspire AppHost, ServiceDefaults — owns the web frontend and orchestration wiring |\n| **Jarvis** | Python / Data Dev | Python FastAPI, Neo4j, document ingestion, Pydantic models, Cypher queries — owns the processing service and graph DB |\n| **Buster** | QA / Tester | Test strategy, pytest, xUnit, integration testing, quality analysis — guards the CI gate |\n| **Scribe** | Session Logger | Silent background logger — auto-runs after substantial work sessions |\n| **Ralph** | Work Monitor | Background monitor — tracks work in progress |\n\n**You (@copilot)** act as the **Coding Agent**, handling well-defined implementation tasks: bug fixes, test coverage, small-to-medium features, dependency updates, and scaffolding.\n\nWant me to spin up any of them on a task?",
+      "timestamp": "2026-03-27T07:15:07.059Z"
+    }
+  ]
+}

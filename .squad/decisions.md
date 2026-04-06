@@ -3,8 +3,90 @@
 > Shared decision log. All agents read this before starting work.
 > Scribe merges new decisions from `.squad/decisions/inbox/` after each session.
 > **Note (2026-04-05T21:33:20Z):** Merged 18 inbox decisions from auth documentation and QA validation (Jeff, Warden, Bob, Buster). Consolidated Bob's UX revision + Buster's multi-gate approval into a single "Mock Pluggable Auth Slice" decision. No duplicates found. Inbox cleared.
+> **Note (2026-04-06T18:38:14Z):** Merged local auth password floor relaxation decision (Warden approval + Jeff implementation). Relax minimum from 12 to 10 characters; add visible UI hint; confirm case-insensitive username uniqueness already implemented; defer password reset. All implementation work complete and tested.
 
 <!-- Decisions are appended below. Each entry starts with ### -->
+
+## Local Auth Password Floor 12→10 + Visible UI Requirement — Warden, Jeff — 2026-04-06
+
+**Authors:** Warden (Security Specialist), Jeff (.NET Dev)  
+**Status:** IMPLEMENTED  
+**Scope:** Local authentication minimum password length, UI hint visibility, case-insensitive username uniqueness confirmation, password-reset deferral.
+
+### Context
+
+Eric requested reducing the local auth password minimum from 12 to 10 characters and adding a visible hint on the sign-in form. Warden reviewed the cryptographic implications; Jeff implemented the changes and updated tests/docs.
+
+### Decision
+
+**Relax local password floor to 10 characters; add visible UI constraint hint; confirm case-insensitive username uniqueness via existing normalized-key path; defer password reset to later phase.**
+
+#### Password Minimum: 12 → 10
+
+- **Rationale:** NIST 800-63B recommends floor of 8 characters for memorized secrets. ASP.NET Core `PasswordHasher<T>` on .NET 10 uses PBKDF2-HMAC-SHA512 with 600k iterations, making brute-force infeasible at 10 characters.
+- **Risk Profile:** Acceptable for local-dev/single-operator product stage.
+- **Revisit Trigger:** If auth path becomes production-facing or internet-exposed; conduct entropy/policy review.
+- **Implementation:** `LocalAuthenticationOptions.MinimumPasswordLength` now 10.
+
+#### Username Case-Insensitive Uniqueness: Already Implemented
+
+- **Current Path:** `LocalAuthValueNormalizer.Normalize()` applies `ToUpperInvariant()`. The `ux_local_auth_users_normalized_username` unique index enforces uniqueness on normalized column.
+- **Lookup:** `LocalAccountAuthenticator.AuthenticateAsync` queries against `NormalizedUsername`.
+- **Matches:** ASP.NET Identity convention for case-insensitive identity resolution.
+- **Code Change Required:** None. Confirmation only.
+
+#### UI Constraint Visibility
+
+- **Requirement:** Show 10-character minimum directly in `SignInPanel.razor`.
+- **Implementation:** Added `minlength="10"` to password `<input>` and helper text below: "Password must be at least 10 characters".
+- **Security Note:** Server-side validation remains the authoritative gate; UI hint is UX quality, not security bypass.
+
+#### Password Reset: Deferred
+
+- **Status:** Remains in explicit deferral list from self-registration security gate (see "Mock Pluggable Auth Slice" decision).
+- **No Security Gap:** Admin can reset via direct DB update if needed.
+- **Future Work:** Implement password reset workflow in dedicated phase when self-service registration is added.
+
+### Implementation Checklist (Complete)
+
+- [x] Change `MinimumPasswordLength` from `12` to `10` in `LocalAuthenticationOptions.cs`
+- [x] Add `minlength="10"` to password `<input>` in `SignInPanel.razor`
+- [x] Add helper text: "Password must be at least 10 characters"
+- [x] Update tests: 10-char boundary, UI hint validation, mixed-case username handling
+- [x] Update `docs\AUTHENTICATION_SETUP.md` with new floor, uniqueness explanation, password-reset deferral
+
+### Key Paths
+
+- `src\AspireApp.Web\Services\LocalAuthenticationOptions.cs`
+- `src\AspireApp.Web\Components\Shared\SignInPanel.razor`
+- `src\AspireApp.Web\Services\LocalAccountAuthenticator.cs`
+- `src\AspireApp.Web\Services\LocalAuthValueNormalizer.cs`
+- `src\AspireApp.Web\Shared\UploadDbContext.cs`
+- `docs\AUTHENTICATION_SETUP.md`
+
+### Test Results
+
+- ✓ 10-character minimum boundary validated
+- ✓ UI hint displays and functions correctly
+- ✓ Mixed-case username reuse prevented
+- ✓ No duplicate local users created
+- ✓ All regression tests passing
+
+### Relationship to Other Decisions
+
+- **Upstream:** "Mock Pluggable Auth Slice" (2026-04-05) — This work is a targeted refinement within the local auth seam, not affecting mock provider abstraction.
+- **Impact Scope:** Local authentication only. No impact on OAuth placeholder, API auth, or Python service auth (deferred to Phase 6).
+
+### Future: Production Auth Policy
+
+When local auth becomes production-facing:
+1. Revisit password entropy policy (history, expiry, complexity)
+2. Implement password reset workflow
+3. Add rate limiting on failed sign-in attempts
+4. Move to centralized secret storage (Azure Key Vault, etc.)
+
+---
+
 ## Mock Pluggable Auth Slice — Unauthenticated Landing + Provider Abstraction — Bob, Jeff, Buster — 2026-04-05
 
 **Authors:** Bob (Lead / Architect), Jeff (.NET Dev), Buster (QA / Tester)  

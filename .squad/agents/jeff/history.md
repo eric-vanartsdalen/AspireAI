@@ -9,6 +9,46 @@
 
 <!-- Append new learnings below. Each entry is something lasting about the project. -->
 
+### 2026-04-06 — Local auth UX should surface the same password floor the server enforces
+
+**Status:** Implemented and validated.
+
+**Implementation Results:**
+- ✅ `LocalAuthenticationOptions.MinimumPasswordLength` is the shared source of truth for the local password floor (now 10), and the sign-in form consumes it directly for `minlength` + helper text instead of drifting from server validation.
+- ✅ Case-insensitive username uniqueness already belongs to the existing normalized identifier seam (`NormalizedUsername` / `NormalizedEmail` + unique indexes), so follow-up work should preserve that seam rather than rewriting storage casually.
+- ✅ Password reset remains explicitly deferred for the local auth slice; docs now say so to avoid implying a forgot-password flow exists.
+
+**Key Paths:**
+- `src\AspireApp.Web\Services\LocalAuthenticationOptions.cs` — shared password minimum constant
+- `src\AspireApp.Web\Components\Shared\SignInPanel.razor` — local credential form hint and client-side minimum length
+- `src\AspireApp.Web\Services\LocalAccountAuthenticator.cs` / `src\AspireApp.Web\Services\LocalAuthValueNormalizer.cs` / `src\AspireApp.Web\Shared\UploadDbContext.cs` — existing normalized-identifier uniqueness seam
+- `docs\AUTHENTICATION_SETUP.md` — operator guidance and explicit password-reset deferral
+- `src\AspireApp.WebTest\Tests\LocalAccountAuthenticatorTests.cs` / `LocalAccountSelfProvisioningTests.cs` / `LocalAuthEndpointContractTests.cs` / `SignInPanelTests.cs` — regression coverage for the floor, hint, and case-insensitive username behavior
+
+**Validation Notes:**
+- `dotnet test src\AspireApp.WebTest\AspireApp.WebTest.csproj --filter "FullyQualifiedName~LocalAccountAuthenticatorTests|FullyQualifiedName~LocalAccountSelfProvisioningTests|FullyQualifiedName~LocalAuthEndpointContractTests|FullyQualifiedName~SignInPanelTests"`
+
+### 2026-04-06 — Local auth self-registration stays inside the existing seam and is development-gated
+
+**Status:** Implemented and validated.
+
+**Implementation Results:**
+- ✅ `LocalAuthenticationOptions` now owns `AllowSelfRegistration` with a safe default of `false`; `appsettings.Development.json` enables it for local-only first-use testing without changing the production default.
+- ✅ `LocalAccountAuthenticator` remains the only place that decides local username/email lookup vs auto-create, so the `IAuthService` seam and cookie issuance path in `Program.cs` stay unchanged.
+- ✅ Self-registration is username-only: email-shaped identifiers remain lookup-only, usernames must match `[A-Za-z0-9._-]{3,100}`, and every local sign-in attempt now enforces the shared password floor before the database lookup (currently 10 characters).
+- ✅ Auto-created accounts derive synthetic local-only emails (`{NORMALIZED_USERNAME}@local.aspireai`), default tenant `"default"`, and generic invalid-credential behavior is preserved even on duplicate-save races.
+
+**Key Paths:**
+- `src/AspireApp.Web\Services\LocalAccountAuthenticator.cs` — password floor, username validation, username-only self-registration, duplicate-save catch
+- `src/AspireApp.Web\Services\LocalAuthenticationOptions.cs` — `AllowSelfRegistration` + password minimum constant
+- `src/AspireApp.Web\Program.cs` / `src\AspireApp.Web\Services\LocalAuthService.cs` — shared invalid-credentials contract and local provider copy
+- `src\AspireApp.Web\appsettings.Development.json` — local-dev enablement
+- `src\AspireApp.WebTest\Tests\LocalAccountAuthenticatorTests.cs` / `LocalAccountSelfProvisioningTests.cs` / `LocalAuthEndpointContractTests.cs` — guardrail regression coverage
+
+**Validation Notes:**
+- `dotnet build AspireApp.sln --nologo --no-restore`
+- `dotnet test src\AspireApp.WebTest\AspireApp.WebTest.csproj --nologo --no-restore --filter "FullyQualifiedName~LocalAccountAuthenticatorTests|FullyQualifiedName~LocalAccountSelfProvisioningTests|FullyQualifiedName~LocalAuthEndpointContractTests|FullyQualifiedName~SignInPanelTests|FullyQualifiedName~LocalAuthBootstrapperTests"`
+
 ### 2025-11-02 — Feasibility: Local managed username/password auth can be added cleanly within existing IAuthService abstraction
 
 **Status:** Feasibility pass complete. No blocking issues identified.

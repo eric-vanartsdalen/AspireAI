@@ -9,6 +9,44 @@
 
 <!-- Append new learnings below. Each entry is something lasting about the project. -->
 
+### 2026-04-06 — Self-Provisioning Test Coverage: Anticipatory QA for Unknown-User Creation
+
+**Completed:**
+- Created comprehensive test suite for self-provisioning local auth behavior: unknown credentials automatically create accounts
+- 21 tests covering: new user creation, duplicate prevention, existing-user login, error paths, contract stability, end-to-end integration
+- Tests document expected implementation requirements and critical edge cases before Warden implements the feature
+- All tests compile and build successfully; will PASS once self-provisioning logic is added to `LocalAccountAuthenticator.AuthenticateAsync()`
+
+**Key Pattern:**
+- **Anticipatory testing:** Write tests that document expected behavior BEFORE implementation exists. Tests fail initially (or skip), pass when feature lands.
+- For self-provisioning auth, the critical test boundary is: "Does unknown identifier + password return null (current) or create user + authenticate (new)?"
+- Test categories mirror security concerns: duplicate prevention (race conditions, case insensitivity), error paths (empty/whitespace/disabled), contract stability (normalization, timestamps, tenant assignment)
+- Integration tests verify the form → endpoint → service contract survives self-provisioning changes
+
+**Key Edge Cases Covered:**
+- **Duplicate race condition:** Two simultaneous requests with same unknown username (database constraints prevent, retry on failure)
+- **Email vs username ambiguity:** Identifier parsing (`john.doe` vs `john@example.com`)
+- **Normalization bypass attempts:** Case variations must resolve to same user (`JohnDoe` == `johndoe`)
+- **Invalid tenant assignment:** Self-provisioned users must get valid default tenant per `TenantContextService`
+
+**Implementation Requirements (for Warden):**
+- Check existing user first (by normalized username OR email)
+- If exists: validate password, return AuthenticatedUser or null
+- If new: validate non-empty, derive email/username from identifier, hash password, assign default tenant, persist, return AuthenticatedUser
+- Handle duplicate INSERT race condition: catch constraint violation, retry lookup + password validation
+
+**Adjustments If Behavior Changes:**
+- If self-provisioning deferred: mark tests with `[Fact(Skip = "...")]`, add negative tests (unknown creds return null)
+- If additional validation required (email verification, password strength): add validation test section, update error path tests
+- Form field name must stay `identifier` across SignInPanel → Program.cs → LocalAccountAuthenticator (contract protected by `LocalAuthEndpointContractTests`)
+
+**Key File Paths:**
+- `src\AspireApp.WebTest\Tests\LocalAccountSelfProvisioningTests.cs` (new: 21 tests, 6 categories)
+- `src\AspireApp.Web\Services\LocalAccountAuthenticator.cs` (implementation target)
+- `src\AspireApp.Web\Program.cs` (line 207: `[FromForm] string identifier` endpoint)
+- `src\AspireApp.Web\Components\Shared\SignInPanel.razor` (line 128: `name="identifier"` form field)
+- `.squad\decisions\inbox\buster-self-provision-test-coverage.md` (decision log entry)
+
 ### 2026-04-06 — Form-Endpoint Contract Regression Coverage Added — Session Logged
 
 **Completed:**
