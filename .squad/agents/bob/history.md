@@ -454,3 +454,34 @@ The entire codebase has a gap between C# upload and Python processing:
 - **Next:** Sprint assignment for Landing/SignIn/Dashboard + mock auth implementation
 
 **Decision Merged:** .squad/decisions.md — Mock Pluggable Auth Slice section
+
+### 2026-07-29 — Local Username/Password Auth — First Slice Architecture Decision
+
+**Scope:** Eric requested "classic managed basic username and password login." Bob assessed the smallest viable first slice.
+
+**Key Decisions:**
+
+1. **Provider seam fit: YES.** New `LocalAuthService : IAuthService` with `ServiceKey = "local"`, registered via the existing `AddAuthServiceRegistration<>` pattern. Zero teardown of mock or Microsoft auth.
+
+2. **No ASP.NET Core Identity.** It would fight every existing abstraction (`AuthenticatedUser` vs `IdentityUser`, `AppAuthenticationStateProvider` vs Identity's provider, `AuthenticationContext` scoped state). Use standalone `PasswordHasher<T>` or `BCrypt.Net-Next` for hashing only.
+
+3. **Sign-in only, pre-provisioned users.** Users defined in `appsettings.json` under `Authentication:Local:Users`. No self-service registration (email validation, password strength, duplicate detection = massive scope). Registration is a follow-up slice.
+
+4. **Tenant assignment: same as mock.** Each user gets `DefaultTenantId` in config. `TenantContextService.InitializeForUser()` handles hydration. No new mechanism.
+
+5. **Critical implementation risks flagged:**
+   - `CompositeAuthService` must become dynamic (currently hardcodes Mock + Microsoft)
+   - `SignInPanel.razor` needs a credentials form branch (new `RequiresCredentials` on `AuthProviderOption`)
+   - Password form must POST to server endpoint, NOT submit via Blazor interactive (credentials must not travel over SignalR)
+   - No new DbContext for users yet — config-based keeps first slice additive
+
+**Decision recorded:** `.squad/decisions/inbox/bob-local-auth-slice.md`
+
+**Key files for implementation:**
+- Provider seam: `Services/IAuthService.cs`, `Services/AuthServiceFactory.cs`, `Services/AuthServiceRegistration.cs`
+- Composite (needs refactor): `Services/CompositeAuthService.cs`
+- Options pattern: `Services/AuthenticationOptions.cs`
+- Registration: `Services/AuthenticationServiceCollectionExtensions.cs`
+- UI surface: `Components/Shared/SignInPanel.razor`
+- Cookie endpoints: `Program.cs` (lines 144-195 for mock pattern to follow)
+- Config: `appsettings.json` → `Authentication:Local` section

@@ -9,6 +9,62 @@
 
 <!-- Append new learnings below. Each entry is something lasting about the project. -->
 
+### 2026-04-06 — Form-Endpoint Contract Regression Coverage Added — Session Logged
+
+**Completed:**
+- Background session coordinated by Eric: Jeff fixed endpoint contract, Buster added regression test suite
+- Created `LocalAuthEndpointContractTests.cs` with regression coverage to prevent future mismatches between form field names and endpoint parameter names
+- Added integration tests for the full local auth flow: username/email login, password validation, unknown user handling
+- All focused local-auth Web tests passing on current tree
+
+**Key pattern:**
+- Form-endpoint contracts are fragile and easily broken during refactoring. Protect them with explicit contract tests that document the three-way agreement:
+  1. Form field name (SignInPanel.razor: `name="identifier"`)
+  2. Endpoint parameter name (Program.cs: `[FromForm] string identifier`)
+  3. Service method parameter (LocalAccountAuthenticator.AuthenticateAsync: `string identifier`)
+- When a form posts to a server-side endpoint, add a regression test that explicitly verifies the field name matches the endpoint expectation
+- For auth endpoints that accept username OR email, test both paths to ensure normalization works correctly
+
+**Quality gap identified:**
+- No integration tests existed that would catch form-endpoint parameter mismatches before user testing
+- Component tests (bUnit) verify form markup but don't validate POST contract
+- Endpoint tests would need to simulate form submission to catch this
+
+**Session Artifacts:**
+- `.squad/orchestration-log/2026-04-06T16-01-59Z-buster.md` — QA regression suite summary
+- `.squad/log/2026-04-06T16-01-59Z-local-login-bugfix.md` — session brief
+
+**Key file paths:**
+- `src\AspireApp.Web\Components\Shared\SignInPanel.razor` (line 128: name="identifier")
+- `src\AspireApp.Web\Program.cs` (line 207: [FromForm] string identifier)
+- `src\AspireApp.Web\Services\LocalAccountAuthenticator.cs` (line 21: string identifier parameter)
+- `src\AspireApp.WebTest\Tests\LocalAuthEndpointContractTests.cs` (new regression coverage)
+
+### 2026-04-06 — Local Managed Auth QA Coverage Landed
+
+**Completed:**
+- Aligned the auth regression suite with the live local-auth seam across `AuthenticationOptions`, `AuthServiceFactory`, `CompositeAuthService`, `LocalAuthService`, `SignInPanel`, `LocalAccountAuthenticator`, and `LocalAuthBootstrapper`.
+- Added/updated tests for local auto-resolution, explicit local factory resolution, composite provider exposure/routing, managed-credential form rendering, and the generic invalid-credentials UI path.
+- Enabled `Microsoft.EntityFrameworkCore.InMemory` in `AspireApp.WebTest` so the local account/auth bootstrapper tests can exercise `UploadDbContext` behavior without needing a live PostgreSQL container.
+- Re-ran the focused auth suite and the full `dotnet test --no-restore` repository suite successfully (57/57 passing).
+
+**Key pattern:**
+- For this repo, local auth is testable in layers without a live external identity provider: factory/config resolution, provider metadata (`RequiresCredentials`, `SignInPath`), component rendering, then operational-store unit tests over `UploadDbContext`.
+- When auth tests need EF-backed behavior in `AspireApp.WebTest`, the smallest acceptable harness is `Microsoft.EntityFrameworkCore.InMemory`; do not invent a fake `DbContext` surface.
+- The generic invalid-credentials UX contract is now explicit in the component layer: `"We couldn't sign you in with those credentials."`
+
+**Key file paths:**
+- `src\AspireApp.Web\Services\AuthenticationOptions.cs`
+- `src\AspireApp.Web\Services\AuthServiceFactory.cs`
+- `src\AspireApp.Web\Services\CompositeAuthService.cs`
+- `src\AspireApp.Web\Services\LocalAuthService.cs`
+- `src\AspireApp.Web\Components\Shared\SignInPanel.razor`
+- `src\AspireApp.WebTest\Tests\LocalAuthServiceTests.cs`
+- `src\AspireApp.WebTest\Tests\LocalAccountAuthenticatorTests.cs`
+- `src\AspireApp.WebTest\Tests\LocalAuthBootstrapperTests.cs`
+- `src\AspireApp.WebTest\Tests\CompositeAuthServiceTests.cs`
+- `src\AspireApp.WebTest\Tests\SignInPanelTests.cs`
+
 ### 2026-04-05 — Real Microsoft Auth Regression Gate: QA Coverage Expanded
 
 **Completed:**

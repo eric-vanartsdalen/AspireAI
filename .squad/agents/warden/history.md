@@ -84,4 +84,15 @@
 - All decisions converge on pluggable, secure-by-default authentication that supports both mock (dev) and live (production) modes
 
 **Status:** ✅ Security audit passed. Documentation corrected. All decisions merged and inbox cleared. Ready for Eric's manual test with real Microsoft credentials.
+- **2025-07-25 — Local username/password auth security floor defined.**
+  - Approved managed local auth as a new `IAuthService` provider (`ServiceKey = "local"`) slotting into the existing `AuthServiceFactory` pattern.
+  - Password storage: ASP.NET Core `PasswordHasher<T>` (PBKDF2-HMAC-SHA512, 600k iterations in .NET 10). No custom hashing, no third-party bcrypt. Framework-native only.
+  - New `local_users` table in existing PostgreSQL database via `UploadDbContext`. Columns: id, username, email, display_name, password_hash, default_tenant_id, failed_login_count, last_failed_at, created_at, updated_at.
+  - Minimum protections required: 12-char password minimum, generic login failure messages (no user enumeration), no passwords in logs, constant-time comparison (built into PasswordHasher), failed-attempt tracking columns for future lockout.
+  - Endpoint gating: `/auth/local/*` conditionally registered, same gate pattern as `/auth/mock/*`. Blocked when `Authentication:Service` = `microsoft`.
+  - Tenant isolation: `default_tenant_id` column on local_users, flows through `TenantContextService.InitializeForUser()` identically to mock/Microsoft paths.
+  - Explicitly deferred: self-registration, password reset, email verification, account lockout enforcement, MFA, password complexity UI, RBAC.
+  - Anti-patterns called out: no custom hashing, no passwords in config files, no reuse of MockAuthCatalog, no bypassing the factory seam, no user-enumeration endpoints.
+  - Decision logged: `.squad/decisions/inbox/warden-local-auth-floor.md`
+  - Key files: `AuthServiceFactory.cs`, `AuthenticationOptions.cs`, `AuthenticationServiceCollectionExtensions.cs`, `Program.cs`, `UploadDbContext.cs`.
 

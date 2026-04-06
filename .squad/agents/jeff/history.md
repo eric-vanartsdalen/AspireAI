@@ -9,6 +9,39 @@
 
 <!-- Append new learnings below. Each entry is something lasting about the project. -->
 
+### 2025-11-02 — Feasibility: Local managed username/password auth can be added cleanly within existing IAuthService abstraction
+
+**Status:** Feasibility pass complete. No blocking issues identified.
+
+**Key Findings:**
+- ✅ **IAuthService abstraction is extensible:** MockAuthService, MicrosoftEntraAuthService, and CompositeAuthService show the pattern; LocalAuthService slots in naturally.
+- ✅ **UploadDbContext is appropriate for first slice:** Adding LocalAuthCredential table (username, password hash, email, tenant ID) is reasonable; can be refactored into separate DbContext later.
+- ✅ **Cookie-based flow already proven:** Auth endpoints in Program.cs (lines 144–195) show the sign-in pattern; local will reuse it.
+- ✅ **UI component requires minimal change:** SignInPanel already handles dynamic provider discovery; local provider just needs a form component.
+
+**Touchpoint List (8 files total):**
+- **New (3):** LocalAuthCredential.cs (model), LocalAuthService.cs (IAuthService impl), LocalAuthSeeder.cs (optional seed data)
+- **Modified (5):** UploadDbContext.cs (add table), AuthenticationServiceCollectionExtensions.cs (register service), AuthenticationOptions.cs (add "local" constant), CompositeAuthService.cs (wire local into combined mode), Program.cs (add /auth/local/signin endpoint)
+- **Unchanged:** SignInPanel, MockAuthCatalog, MockAuthService
+
+**Gotchas Identified (all manageable):**
+1. Tenant seeding: Local users must have valid tenant ID from hardcoded list; use default tenant or admin mapping.
+2. Composite sign-out: Current logic only delegates to Microsoft; needs fix to detect provider from claims.
+3. Password validation: Use bcrypt; never store plaintext.
+4. Cookie scheme: Must use CookieAuthenticationDefaults.AuthenticationScheme, not custom scheme.
+5. Form UI: SignInPanel supports form-driven providers; local provider can show form directly or via modal.
+
+**Recommended MVP Shape:**
+- LocalAuthService: minimal IAuthService impl, GetProviders returns ["local"], GetUsers returns [], SignInAsync redirects to form URI
+- LocalAuthCredential: Id, Username (unique), PasswordHash, Email, DisplayName, TenantId, CreatedAt
+- Endpoint: POST /auth/local/signin (validate credentials, create principal, issue cookie, redirect)
+- Seeder: 2–3 hardcoded test accounts with bcrypt hashes
+
+**Configuration Integration:**
+- "Authentication:Service": "auto" automatically picks "combined" (Microsoft + local + mock) if Microsoft configured, else local + mock.
+
+**No Breaking Changes:** All existing flows (mock, Microsoft) remain unchanged. New provider integrates via existing composition pattern.
+
 ### 2026-04-XX — Documentation: Authentication setup guide created for Microsoft and Google setup
 
 **Status:** Complete.
@@ -65,6 +98,47 @@
 - `dotnet build src\AspireApp.Web\AspireApp.Web.csproj --nologo -p:UseAppHost=false -p:BuildProjectReferences=false -p:GenerateEmbeddedValidatableTypeAttribute=false -p:IncludeEmbeddedValidationGlobalUsing=false`
 - `dotnet build src\AspireApp.AppHost\AspireApp.AppHost.csproj --nologo -p:BuildProjectReferences=false`
 - `dotnet build src\AspireApp.WebTest\AspireApp.WebTest.csproj --nologo -p:BuildProjectReferences=false`
+
+### 2026-04-06 — Local login endpoint-form contract bug fixed and regression protected
+
+**Status:** Fixed, regression-tested, session logged.
+
+**Trigger:** Eric reported form submission failure on local sign-in. Session manifest from background agents Jeff and Buster.
+
+**What Happened:**
+- Jeff fixed the endpoint contract: `LocalAuthenticateEndpoint` now accepts `[FromForm] string identifier` (previously expected `username`)
+- Buster added `LocalAuthEndpointContractTests.cs` with regression coverage for form field binding and endpoint contract validation
+- All focused local-auth Web tests passing on current tree
+
+**Key Fix:**
+- `src/AspireApp.ApiService/` — LocalAuthenticateEndpoint handler aligned to accept form-bound identifier
+
+**Key Learning:**
+- Form-endpoint contracts are fragile and must be protected by explicit integration tests that verify the three-way agreement: form field name, endpoint parameter, and service method parameter
+
+**Session Artifacts:**
+- `.squad/orchestration-log/2026-04-06T16-01-59Z-jeff.md` — endpoint fix summary
+- `.squad/log/2026-04-06T16-01-59Z-local-login-bugfix.md` — session brief
+
+### 2025-11-02 — Local login form field name mismatch fixed (identifier vs username)
+
+**Status:** Fixed and tested.
+
+**Problem:** The local sign-in form in `SignInPanel.razor` posted a field named `identifier`, but the `/auth/local/signin` endpoint in `Program.cs` expected `[FromForm] string username`. This caused a `BadHttpRequestException` when users attempted local login.
+
+**Root Cause:** Parameter name mismatch between the form field (line 128 in SignInPanel.razor) and the endpoint parameter (line 207 in Program.cs).
+
+**Solution:** Changed the endpoint parameter from `username` to `identifier` to match the form field name. The `LocalAccountAuthenticator.AuthenticateAsync` method already accepts `identifier` and supports both username OR email lookup (lines 21-36 in LocalAccountAuthenticator.cs).
+
+**Key Changes:**
+- `src/AspireApp.Web/Program.cs` (line 207): Changed `[FromForm] string username` to `[FromForm] string identifier`
+- No other changes required; the authenticator already supported this parameter name
+
+**Validation:**
+- Ran `dotnet test src/AspireApp.WebTest/AspireApp.WebTest.csproj --filter "FullyQualifiedName~LocalAuth"` — all 5 tests passed
+- The fix preserves the existing behavior: local auth accepts username OR email as the identifier
+
+**Key Insight:** Always verify form field names match endpoint parameter names when using `[FromForm]` binding. The form uses `name="identifier"` which must match the parameter name exactly.
 - `dotnet test src\AspireApp.WebTest\AspireApp.WebTest.csproj --nologo --no-build --filter "MicrosoftEntraAuthServiceTests|AuthServiceFactoryTests"`
 
 ### 2026-04-05 — `Authentication:Service=auto` now behaves like the live app path
@@ -105,6 +179,32 @@
 **Validation Notes:**
 - `dotnet build AspireApp.sln --nologo` succeeds
 - Focused auth safety tests pass: `dotnet test src\AspireApp.WebTest\AspireApp.WebTest.csproj --no-build --nologo --filter "MicrosoftEntraAuthServiceTests|MockAuthServiceTests|AuthServiceFactoryTests"`
+
+### 2026-04-06 — Managed local auth now rides the same Blazor auth seam and operational Postgres store
+
+**Status:** Implemented and validated.
+
+**Implementation Results:**
+- ✅ `AuthProviderOption` now carries `RequiresCredentials` + `SignInPath`, so `SignInPanel.razor` can render a server-posted username/email + password form without special-casing a separate page
+- ✅ `local_auth_users` now lives in `UploadDbContext`; `LocalAuthBootstrapper` repairs the table for persisted Postgres databases and inserts only missing `Authentication:Local:SeedUsers` rows so the database stays the source of truth
+- ✅ `LocalAccountAuthenticator` verifies username-or-email credentials with ASP.NET Core `PasswordHasher<LocalAuthUser>` hashes and keeps failures generic
+- ✅ `CompositeAuthService` now discovers providers from registered auth services instead of hardcoding mock + Microsoft pairs, so local/Microsoft/demo providers can coexist cleanly
+- ✅ `Program.cs` maps `POST /auth/local/signin`, issues the existing auth cookie claims, and tenant initialization still flows through `AppAuthenticationStateProvider` + `TenantContextService`
+- ✅ Focused auth tests and the full solution suite now pass after adding local provider, bootstrapper, and credential-verifier coverage
+
+**Key Paths:**
+- `src/AspireApp.Web\Data\LocalAuthUser.cs` — managed local account entity stored in Postgres
+- `src/AspireApp.Web\Services\LocalAuthBootstrapper.cs` — startup schema repair + create-missing seed path
+- `src/AspireApp.Web\Services\LocalAccountAuthenticator.cs` — password hash verification by username or email
+- `src/AspireApp.Web\Services\LocalAuthService.cs` — provider metadata and local sign-in surface integration
+- `src/AspireApp.Web\Components\Shared\SignInPanel.razor` — shared provider UI with managed credential form
+- `src/AspireApp.Web\Program.cs` — local credential POST endpoint and startup bootstrapper invocation
+- `src/AspireApp.WebTest\Tests\LocalAuthServiceTests.cs`, `LocalAccountAuthenticatorTests.cs`, `LocalAuthBootstrapperTests.cs` — regression coverage for the new slice
+
+**Validation Notes:**
+- `dotnet build AspireApp.sln -nologo`
+- `dotnet test src\AspireApp.WebTest\AspireApp.WebTest.csproj -nologo --no-build --filter "FullyQualifiedName~AuthenticationOptionsTests|FullyQualifiedName~AuthServiceFactoryTests|FullyQualifiedName~MockAuthServiceTests|FullyQualifiedName~MicrosoftEntraAuthServiceTests|FullyQualifiedName~CompositeAuthServiceTests|FullyQualifiedName~SignInPanelTests|FullyQualifiedName~LocalAccountAuthenticatorTests|FullyQualifiedName~LocalAuthBootstrapperTests"`
+- `dotnet test AspireApp.sln -nologo --no-build`
 
 ### 2026-04-05 — Microsoft Entra ID plugged into the existing Blazor auth seam
 
