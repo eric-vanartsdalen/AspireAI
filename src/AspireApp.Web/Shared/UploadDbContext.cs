@@ -1,11 +1,9 @@
-﻿using AspireApp.Web.Data;
+using AspireApp.Web.Data;
 using Microsoft.EntityFrameworkCore;
-using System.ComponentModel.DataAnnotations;
-using System.ComponentModel.DataAnnotations.Schema;
 
 namespace AspireApp.Web.Shared
 {
-	public class UploadDbContext(DbContextOptions<UploadDbContext> options) : DbContext(options)
+    public class UploadDbContext(DbContextOptions<UploadDbContext> options) : DbContext(options)
     {
         // ==================== Primary Schema ====================
 
@@ -13,24 +11,29 @@ namespace AspireApp.Web.Shared
         /// Unified datasources table - single source of truth for datasource lifecycle
         /// </summary>
         public DbSet<FileMetadata> Datasources => Set<FileMetadata>();
-        
+
         /// <summary>
         /// Datasource pages for RAG retrieval
         /// </summary>
         public DbSet<DocumentPage> DatasourcePages => Set<DocumentPage>();
+
+        /// <summary>
+        /// Managed local username/password accounts.
+        /// </summary>
+        public DbSet<LocalAuthUser> LocalAuthUsers => Set<LocalAuthUser>();
 
         // Backward compatibility alias
         [Obsolete("Use Datasources DbSet instead")]
         public DbSet<FileMetadata> Files => Set<FileMetadata>();
 
         // ==================== Legacy Schema (Backward Compatibility) ====================
-        
+
         /// <summary>
         /// Legacy documents table - marked obsolete, use Datasources instead
         /// </summary>
         [Obsolete("Use Datasources DbSet instead")]
         public DbSet<Document> Documents => Set<Document>();
-        
+
         /// <summary>
         /// Legacy processed documents table - marked obsolete
         /// </summary>
@@ -49,10 +52,10 @@ namespace AspireApp.Web.Shared
                 entity.ToTable("files");
                 entity.HasKey(e => e.Id);
                 entity.Property(e => e.Id).ValueGeneratedOnAdd();
-                
+
                 // Note: Column names are defined via [Column] attributes in FileMetadata class
                 // This matches the actual database schema with snake_case column names
-                
+
                 // Indexes for performance
                 entity.HasIndex(e => e.Status).HasDatabaseName("idx_files_status");
                 entity.HasIndex(e => e.FileHash).HasDatabaseName("idx_files_hash");
@@ -73,7 +76,7 @@ namespace AspireApp.Web.Shared
                 entity.ToTable("document_pages");
                 entity.HasKey(e => e.Id);
                 entity.Property(e => e.Id).ValueGeneratedOnAdd();
-                
+
                 // Note: Column names are defined via [Column] attributes in DocumentPage class
 
                 // Unique constraint on file_id + page_number
@@ -83,6 +86,34 @@ namespace AspireApp.Web.Shared
 
                 // Indexes for performance
                 entity.HasIndex(e => e.FileId).HasDatabaseName("idx_pages_file_id");
+            });
+
+            modelBuilder.Entity<LocalAuthUser>(entity =>
+            {
+                entity.ToTable("local_auth_users");
+                entity.HasKey(e => e.Id);
+                entity.Property(e => e.Id).ValueGeneratedOnAdd();
+                entity.Property(e => e.Username).IsRequired().HasMaxLength(100);
+                entity.Property(e => e.NormalizedUsername).IsRequired().HasMaxLength(100);
+                entity.Property(e => e.Email).IsRequired().HasMaxLength(256);
+                entity.Property(e => e.NormalizedEmail).IsRequired().HasMaxLength(256);
+                entity.Property(e => e.DisplayName).IsRequired().HasMaxLength(200);
+                entity.Property(e => e.PasswordHash).IsRequired();
+                entity.Property(e => e.DefaultTenantId).IsRequired().HasMaxLength(100);
+                entity.Property(e => e.IsActive).HasDefaultValue(true);
+                entity.Property(e => e.CreatedAt).HasDefaultValueSql("CURRENT_TIMESTAMP");
+                entity.Property(e => e.UpdatedAt).HasDefaultValueSql("CURRENT_TIMESTAMP");
+
+                entity.HasIndex(e => e.NormalizedUsername)
+                      .IsUnique()
+                      .HasDatabaseName("ux_local_auth_users_normalized_username");
+
+                entity.HasIndex(e => e.NormalizedEmail)
+                      .IsUnique()
+                      .HasDatabaseName("ux_local_auth_users_normalized_email");
+
+                entity.HasIndex(e => e.IsActive)
+                      .HasDatabaseName("idx_local_auth_users_is_active");
             });
 
             // ==================== Legacy Schema Configuration (Backward Compatibility) ====================

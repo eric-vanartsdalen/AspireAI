@@ -1,6 +1,8 @@
+using AspireApp.Web.Data;
 using Microsoft.AspNetCore.Authentication.Cookies;
 using Microsoft.AspNetCore.Authentication.OpenIdConnect;
 using Microsoft.AspNetCore.Components.Authorization;
+using Microsoft.AspNetCore.Identity;
 using Microsoft.IdentityModel.Protocols.OpenIdConnect;
 using System.Security.Claims;
 
@@ -10,6 +12,8 @@ public static class AuthenticationServiceCollectionExtensions
 {
     public static IServiceCollection AddAspireAppAuthentication(this IServiceCollection services, IConfiguration configuration)
     {
+        ValidateLocalSeedConfiguration(configuration);
+
         var microsoftOptions = configuration.GetSection(MicrosoftEntraAuthenticationOptions.SectionName)
             .Get<MicrosoftEntraAuthenticationOptions>() ?? new MicrosoftEntraAuthenticationOptions();
 
@@ -81,6 +85,8 @@ public static class AuthenticationServiceCollectionExtensions
 
         services.AddOptions<AuthenticationOptions>()
             .Bind(configuration.GetSection(AuthenticationOptions.SectionName));
+        services.AddOptions<LocalAuthenticationOptions>()
+            .Bind(configuration.GetSection(LocalAuthenticationOptions.SectionName));
         services.AddOptions<MicrosoftEntraAuthenticationOptions>()
             .Bind(configuration.GetSection(MicrosoftEntraAuthenticationOptions.SectionName));
 
@@ -88,9 +94,13 @@ public static class AuthenticationServiceCollectionExtensions
         services.AddScoped<AppAuthenticationStateProvider>();
         services.AddScoped<AuthenticationStateProvider>(sp => sp.GetRequiredService<AppAuthenticationStateProvider>());
         services.AddScoped<AuthServiceFactory>();
-        services.AddAuthServiceRegistration<MockAuthService>(AuthenticationOptions.MockService);
+        services.AddScoped<IPasswordHasher<LocalAuthUser>, PasswordHasher<LocalAuthUser>>();
+        services.AddAuthServiceRegistration<LocalAuthService>(AuthenticationOptions.LocalService);
         services.AddAuthServiceRegistration<MicrosoftEntraAuthService>(AuthenticationOptions.MicrosoftService);
+        services.AddAuthServiceRegistration<MockAuthService>(AuthenticationOptions.MockService);
         services.AddAuthServiceRegistration<CompositeAuthService>(AuthenticationOptions.CombinedService);
+        services.AddScoped<LocalAccountAuthenticator>();
+        services.AddScoped<LocalAuthBootstrapper>();
         services.AddScoped<IAuthService>(sp => sp.GetRequiredService<AuthServiceFactory>().Create());
 
         return services;
@@ -114,6 +124,20 @@ public static class AuthenticationServiceCollectionExtensions
     {
         var effectiveTenantId = string.IsNullOrWhiteSpace(tenantId) ? "common" : tenantId.Trim();
         return $"https://login.microsoftonline.com/{effectiveTenantId}/v2.0";
+    }
+
+    private static void ValidateLocalSeedConfiguration(IConfiguration configuration)
+    {
+        var seedUsers = configuration.GetSection(LocalAuthenticationOptions.SectionName).GetSection("SeedUsers").GetChildren();
+        foreach (var seedUser in seedUsers)
+        {
+            if (!string.IsNullOrWhiteSpace(seedUser["Password"]) ||
+                !string.IsNullOrWhiteSpace(seedUser["PlaintextPassword"]))
+            {
+                throw new InvalidOperationException(
+                    "Authentication:Local:SeedUsers only accepts precomputed PasswordHash values. Remove plaintext password settings.");
+            }
+        }
     }
 
     private static AuthenticatedUser? BuildMicrosoftUser(ClaimsPrincipal? principal, MicrosoftEntraAuthenticationOptions options)

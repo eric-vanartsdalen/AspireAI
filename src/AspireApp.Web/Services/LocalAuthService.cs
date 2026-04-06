@@ -4,28 +4,30 @@ using Microsoft.Extensions.Options;
 namespace AspireApp.Web.Services;
 
 /// <summary>
-/// Interactive Microsoft Entra ID auth flow that delegates challenge/sign-out to ASP.NET Core auth middleware.
+/// Managed local auth provider that renders a username/password form on the sign-in page.
 /// </summary>
-public sealed class MicrosoftEntraAuthService(
-    IOptions<MicrosoftEntraAuthenticationOptions> options,
+public sealed class LocalAuthService(
+    IOptions<LocalAuthenticationOptions> options,
     NavigationManager navigationManager) : IAuthService
 {
-    public const string ServiceKey = "microsoft";
-    public const string AuthenticationScheme = "MicrosoftEntraOidc";
-    public const string ProviderId = "microsoft-entra";
+    public const string ServiceKey = "local";
+    public const string ProviderId = "local";
+    public const string ProviderDisplayName = "Local account";
+    public const string InvalidCredentialErrorCode = "invalid-credentials";
 
     private static readonly AuthProviderOption Provider = new(
         ProviderId,
-        "Microsoft",
-        "Use the hosted Microsoft sign-in page for your work, school, or personal Microsoft account, then return to AspireAI already signed in.",
-        "provider-microsoft",
+        ProviderDisplayName,
+        "Use a managed AspireAI username or email with your password. Development can allow first-use username registration.",
+        "provider-local",
         RequiresUserSelection: false,
-        SignInPath: "/auth/microsoft/signin");
+        RequiresCredentials: true,
+        SignInPath: "/auth/local/signin");
 
-    private readonly MicrosoftEntraAuthenticationOptions _options = options.Value;
+    private readonly LocalAuthenticationOptions _options = options.Value;
     private readonly NavigationManager _navigationManager = navigationManager;
 
-    public IReadOnlyList<AuthProviderOption> GetProviders() => _options.IsConfigured ? [Provider] : [];
+    public IReadOnlyList<AuthProviderOption> GetProviders() => _options.Enabled ? [Provider] : [];
 
     public IReadOnlyList<AuthenticatedUser> GetUsers(string providerId) => [];
 
@@ -35,16 +37,10 @@ public sealed class MicrosoftEntraAuthService(
 
         if (!string.Equals(providerId, ProviderId, StringComparison.OrdinalIgnoreCase))
         {
-            throw new InvalidOperationException($"Unsupported Microsoft Entra ID provider '{providerId}'.");
+            throw new InvalidOperationException($"Unsupported local authentication provider '{providerId}'.");
         }
 
-        if (!_options.IsConfigured)
-        {
-            throw new InvalidOperationException(
-                "Microsoft Entra ID is not configured. Set Authentication:Microsoft:ClientId and ClientSecret before using the live provider. TenantId is optional; blank uses the Microsoft common endpoint.");
-        }
-
-        _navigationManager.NavigateTo(BuildSignInUri(redirectUri), forceLoad: true);
+        _navigationManager.NavigateTo(BuildSignInUri(redirectUri));
         return Task.CompletedTask;
     }
 
@@ -59,7 +55,7 @@ public sealed class MicrosoftEntraAuthService(
     private static string BuildSignInUri(string? redirectUri)
     {
         var returnUrl = NormalizeLocalPath(redirectUri);
-        return $"/auth/microsoft/signin?returnUrl={Uri.EscapeDataString(returnUrl)}";
+        return $"/signin?provider={Uri.EscapeDataString(ProviderId)}&returnUrl={Uri.EscapeDataString(returnUrl)}";
     }
 
     private static string BuildSignOutUri(string? redirectUri)

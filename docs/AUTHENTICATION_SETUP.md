@@ -1,9 +1,10 @@
 # Authentication Setup Guide
 
-This guide walks you through setting up live sign-in with **Microsoft consumer accounts** and preparing the app infrastructure for **Google account support** (not yet implemented in the app).
+This guide walks you through setting up live sign-in with **Microsoft consumer accounts**, using **managed local username/password accounts** (including optional development self-registration), and preparing the app infrastructure for **Google account support** (not yet implemented in the app).
 
 **Current State:**
 - ✅ **Microsoft Entra ID consumer authentication** is implemented and wired in.
+- ✅ **Managed local username/password authentication** is implemented and backed by the operational PostgreSQL store.
 - ❌ **Google OAuth** is not yet implemented in the app code. See [Google Setup](#google-setup-future-work) for external provider setup that you can prep now.
 
 ---
@@ -12,24 +13,29 @@ This guide walks you through setting up live sign-in with **Microsoft consumer a
 
 1. [Quick Start](#quick-start)
 2. [Microsoft Consumer Authentication](#microsoft-consumer-authentication)
-3. [Google Setup (Future Work)](#google-setup-future-work)
-4. [Local Development Configuration](#local-development-configuration)
-5. [Testing the Setup](#testing-the-setup)
-6. [Troubleshooting](#troubleshooting)
+3. [Managed Local Authentication](#managed-local-authentication)
+4. [Google Setup (Future Work)](#google-setup-future-work)
+5. [Local Development Configuration](#local-development-configuration)
+6. [Testing the Setup](#testing-the-setup)
+7. [Troubleshooting](#troubleshooting)
 
 ---
 
 ## Quick Start
 
-### For Local Testing (Mock Auth)
+### For Local Testing (Managed + Demo Auth)
 
-No setup required. The app defaults to **mock authentication** with demo accounts. Start the app:
+Start the app:
 
 ```bash
 dotnet run --project src/AspireApp.AppHost
 ```
 
-Open the **Aspire dashboard** (shown in the terminal output on startup) and click the webfrontend endpoint URL. Navigate to `/signin` and select a demo provider to test the UI flow.
+Open the **Aspire dashboard** (shown in the terminal output on startup) and click the webfrontend endpoint URL. Navigate to `/signin`:
+
+- **Local account** is enabled by default and posts credentials directly to the server.
+- **Development only:** `appsettings.Development.json` enables username self-registration for unknown usernames. Email-shaped identifiers stay lookup-only, usernames stay unique regardless of case, and all local sign-ins require passwords that are at least 10 characters long.
+- **Demo providers** are also available in `auto` mode for quick UX checks when you don't want to provision a managed local user yet.
 
 ### For Live Microsoft Sign-In
 
@@ -37,7 +43,16 @@ Open the **Aspire dashboard** (shown in the terminal output on startup) and clic
 2. Store Client ID and Client Secret in **user secrets** locally
 3. Ensure **Redirect URIs** are registered in Azure
 4. Verify the app routes are wired (they are by default)
-5. Restart the app — it will auto-detect Microsoft config and enable live sign-in
+5. Restart the app — it will auto-detect Microsoft config and add live Microsoft sign-in alongside the local and demo providers
+
+### For Managed Local Username/Password Sign-In
+
+1. Keep `Authentication:Service` set to `auto` or `combined`
+2. Optionally add one or more `Authentication:Local:SeedUsers` entries with a **precomputed** `PasswordHash`
+3. Restart the app — the bootstrapper creates the `local_auth_users` table (if needed) and seeds missing users
+4. Open `/signin`, choose **Local account**, and either:
+   - sign in with a seeded username or email plus password, or
+   - enter a new **username-shaped** identifier plus a 10+ character password to self-register when `Authentication:Local:AllowSelfRegistration` is enabled
 
 ---
 
@@ -150,14 +165,15 @@ You can edit `src/AspireApp.Web/appsettings.Development.json` directly, but **ne
 
 ---
 
-### How the App Detects and Routes Microsoft Auth
+### How the App Detects and Routes Providers
 
-The app uses an **"auto" service resolver** to detect whether Microsoft credentials are configured:
+The app uses an **`auto` service resolver** to light up whatever providers are available:
 
-1. **App startup** reads `Authentication:Microsoft:ClientId` and `ClientSecret` from configuration (user secrets, env vars, or appsettings).
-2. If **both values are present and non-empty**, the app registers the Microsoft OpenID Connect handler and enables the `/auth/microsoft/signin` endpoint.
-3. If **not configured**, the app falls back to mock authentication with demo accounts.
-4. On the **Sign In page** (`/signin`), the available providers are displayed dynamically based on what's wired.
+1. **App startup** reads `Authentication:Local:*` and `Authentication:Microsoft:*` from configuration (user secrets, env vars, or appsettings).
+2. If `Authentication:Local:Enabled` is `true`, the app exposes the **Local account** provider and maps `POST /auth/local/signin`.
+3. If **both** `Authentication:Microsoft:ClientId` and `ClientSecret` are present and non-empty, the app also registers Microsoft OpenID Connect and enables `/auth/microsoft/signin`.
+4. Demo providers remain available in `auto` and `combined` modes for local UX checks.
+5. On the **Sign In page** (`/signin`), the provider cards and local credential form are displayed dynamically from the active auth services.
 
 **Callback paths (no setup required):**
 - **Sign-in callback:** `/signin-oidc-microsoft` ← Must match Azure redirect URI
@@ -181,8 +197,9 @@ These are hardcoded in `MicrosoftEntraAuthenticationOptions` and already match t
 1. **Open the app:** Browse to the webfrontend URL shown in the Aspire dashboard.
 2. **Navigate to Sign In:** Click the sign-in link or go directly to `/signin`.
 3. **Check available providers:**
-   - If configured correctly, you should see a **"Microsoft"** provider card labeled **"Hosted"** (not "Demo").
-   - If you only see "Demo" providers, the Microsoft config was not picked up — check user secrets and restart the app.
+    - If configured correctly, you should see a **"Microsoft"** provider card labeled **"Hosted"** (not "Demo").
+    - You should also see a **"Local account"** provider card labeled **"Managed"** when `Authentication:Local:Enabled` is `true`.
+    - If you only see **Local** and **Demo** providers, the Microsoft config was not picked up — check user secrets and restart the app.
 4. **Click "Continue to hosted sign-in"** on the Microsoft card.
 5. **You will be redirected** to `login.microsoftonline.com` (Microsoft's hosted login).
 6. **Sign in** with a personal Microsoft account (e.g., `your-email@outlook.com` or a Microsoft account).
@@ -202,6 +219,99 @@ These are hardcoded in `MicrosoftEntraAuthenticationOptions` and already match t
 - **Localhost certificate:** Aspire automatically generates a self-signed certificate. Your browser will warn you; it's safe for local testing.
 - **"Insecure":** The certificate is not recognized by browsers — this is normal for local development. Click through the warning or add the certificate to your local trusted store (optional).
 - **HTTP redirect:** Azure AD allows `http://localhost` redirect URIs for development. However, always prefer HTTPS for testing because the production OAuth flow will require it.
+
+---
+
+## Managed Local Authentication
+
+### What It Does
+
+The local provider adds a **managed username/password** sign-in path that stays inside AspireAI. Accounts are stored in the operational PostgreSQL database in `local_auth_users`.
+
+**Security rules enforced by the app:**
+- Only **precomputed password hashes** are accepted in configuration
+- Plaintext `Password` / `PlaintextPassword` seed fields are rejected at startup
+- Every local sign-in attempt requires a password that is at least 10 characters long
+- Unknown identifiers auto-create accounts only when `Authentication:Local:AllowSelfRegistration` is `true`
+- Auto-create is **username only**. Identifiers containing `@` are email lookups and never self-register
+- Username self-registration only accepts 3-100 characters from `A-Z`, `a-z`, `0-9`, `.`, `_`, and `-`
+- Usernames are matched and kept unique case-insensitively through the normalized identifier fields
+- Failed sign-in returns a generic credential error
+- The provider authenticates by **username or email**
+- Password reset / forgot-password is not implemented yet in this slice
+
+### Seed a Local Account
+
+Seed users are inserted into Postgres on startup only when they don't already exist, so the database remains the source of truth. For local development, you can also enable username self-registration behind `Authentication:Local:AllowSelfRegistration`.
+
+**Example `appsettings.Development.json` shape:**
+
+```json
+{
+  "Authentication": {
+    "Service": "auto",
+    "Local": {
+      "Enabled": true,
+      "AllowSelfRegistration": false,
+      "SeedUsers": [
+        {
+          "Username": "local-admin",
+          "Email": "local-admin@aspire.test",
+          "DisplayName": "Local Admin",
+          "DefaultTenantId": "tenant-a",
+          "PasswordHash": "PASTE_PRECOMPUTED_HASH_HERE"
+        }
+      ]
+    }
+  }
+}
+```
+
+**Equivalent user-secrets commands:**
+
+```powershell
+cd src\AspireApp.Web
+dotnet user-secrets set "Authentication:Local:Enabled" "true"
+dotnet user-secrets set "Authentication:Local:AllowSelfRegistration" "false"
+dotnet user-secrets set "Authentication:Local:SeedUsers:0:Username" "local-admin"
+dotnet user-secrets set "Authentication:Local:SeedUsers:0:Email" "local-admin@aspire.test"
+dotnet user-secrets set "Authentication:Local:SeedUsers:0:DisplayName" "Local Admin"
+dotnet user-secrets set "Authentication:Local:SeedUsers:0:DefaultTenantId" "tenant-a"
+dotnet user-secrets set "Authentication:Local:SeedUsers:0:PasswordHash" "PASTE_PRECOMPUTED_HASH_HERE"
+```
+
+### Generate the Password Hash
+
+Use the same ASP.NET Core hasher the app uses in production. Generate the hash out-of-band and keep the plaintext password out of committed configuration:
+
+```csharp
+using AspireApp.Web.Data;
+using Microsoft.AspNetCore.Identity;
+
+var hasher = new PasswordHasher<LocalAuthUser>();
+var user = new LocalAuthUser
+{
+    Username = "local-admin",
+    NormalizedUsername = "LOCAL-ADMIN",
+    Email = "local-admin@aspire.test",
+    NormalizedEmail = "LOCAL-ADMIN@ASPIRE.TEST",
+    DisplayName = "Local Admin",
+    DefaultTenantId = "tenant-a",
+    IsActive = true
+};
+
+var passwordHash = hasher.HashPassword(user, "CorrectHorseBatteryStaple!23");
+Console.WriteLine(passwordHash);
+```
+
+### Manual Test
+
+1. Start the app: `dotnet run --project src/AspireApp.AppHost`
+2. Open the webfrontend URL from the Aspire dashboard
+3. Go to `/signin`
+4. Choose **Local account**
+5. Enter the seeded username **or** email and the original password, or enter a new username plus a 10+ character password if self-registration is enabled
+6. Confirm you land back on the requested page and your user menu appears
 
 ---
 
@@ -302,12 +412,16 @@ The app detects the active authentication mode based on what's configured:
 
 | Config State | Mode | Behavior |
 |---|---|---|
-| Microsoft ClientId & Secret present | `auto` (resolves to `combined`) | Both mock and Microsoft providers shown on sign-in page |
-| Microsoft config empty | `auto` (resolves to `mock`) | Only demo providers shown |
-| Explicit `Service: "mock"` | `mock` | Only demo providers, ignoring Microsoft config |
+| `Local:Enabled = true`, Microsoft config empty | `auto` (resolves to `combined`) | Local + demo providers shown |
+| `Local:Enabled = true`, Microsoft ClientId & Secret present | `auto` (resolves to `combined`) | Local + Microsoft + demo providers shown |
+| `Local:Enabled = false`, Microsoft config empty | `auto` (resolves to `mock`) | Only demo providers shown |
+| `Local:Enabled = false`, Microsoft ClientId & Secret present | `auto` (resolves to `combined`) | Microsoft + demo providers shown |
+| Explicit `Service: "mock"` | `mock` | Only demo providers |
+| Explicit `Service: "local"` | `local` | Only local managed credentials |
 | Explicit `Service: "microsoft"` | `microsoft` | Only Microsoft provider (fails if config missing) |
+| Explicit `Service: "combined"` | `combined` | All enabled providers for mixed-mode validation |
 
-**Current default** in `appsettings.json`: `"Service": "auto"` (recommended for development).
+**Current defaults:** `appsettings.json` keeps `"Authentication:Local:AllowSelfRegistration": false`; `appsettings.Development.json` enables it for local development.
 
 ### Configuration Sources (Priority Order)
 
@@ -347,15 +461,20 @@ Restart the app — mock auth will be active.
 
 ### Smoke Test Checklist
 
-Run through these steps after configuring Microsoft authentication:
+Run through these steps after configuring the provider(s) you want to use:
 
 - [ ] **Start the app:** `dotnet run --project src/AspireApp.AppHost`
 - [ ] **Aspire dashboard is healthy:** All services show green in dashboard
 - [ ] **Note the webfrontend URL** from the Aspire dashboard (e.g., `https://localhost:<port>`)
 - [ ] **App is accessible:** The webfrontend URL loads without errors
 - [ ] **Sign In page shows providers:** Navigate to `/signin`
-  - [ ] If Microsoft config is present and Service is `auto` or `combined`, a "Microsoft" provider card appears labeled "Hosted"
+  - [ ] If local auth is enabled, a **"Local account"** provider card appears labeled **"Managed"**
+  - [ ] If Microsoft config is present and Service is `auto` or `combined`, a **"Microsoft"** provider card appears labeled **"Hosted"**
   - [ ] Demo provider cards appear when Service is `auto` or `combined` (not when Service is `microsoft`)
+- [ ] **Local sign-in flow (if seeded):**
+  - [ ] Click **Use username and password** on the local card
+  - [ ] Enter the seeded username or email plus password
+  - [ ] Redirected to the original requested page (or `/` if none)
 - [ ] **Microsoft sign-in flow:**
   - [ ] Click "Continue to hosted sign-in" on Microsoft card
   - [ ] Redirected to `login.microsoftonline.com` 
@@ -378,7 +497,7 @@ Run through these steps after configuring Microsoft authentication:
 
 ### Manual Testing with Mock Providers
 
-Mock providers don't require any external credentials. They are available when the service mode is `auto` or `combined` (hidden when mode is `microsoft`):
+Mock providers don't require any external credentials. They are available when the service mode is `auto`, `combined`, or `mock`:
 
 1. Go to `/signin`
 2. Click "Choose a demo account"
@@ -386,6 +505,15 @@ Mock providers don't require any external credentials. They are available when t
 4. Verify you're logged in; user info appears in the top-right
 
 This confirms the sign-in flow works without needing Microsoft or Google credentials.
+
+### Manual Testing with Managed Local Accounts
+
+Managed local accounts are available when `Authentication:Local:Enabled` is `true`:
+
+1. Go to `/signin`
+2. Click **Use username and password** on **Local account**
+3. Enter the seeded username or email and password, or enter a new username and a 10+ character password when self-registration is enabled
+4. Verify you're logged in; user info appears in the top-right
 
 ---
 
@@ -397,7 +525,7 @@ This confirms the sign-in flow works without needing Microsoft or Google credent
 
 **Fix:**
 - Check that the app is running the latest code (rebuild: `dotnet build`).
-- Verify mock auth is not explicitly disabled.
+- Verify the active `Authentication:Service` mode still includes at least one provider.
 - If using Microsoft auth, check user secrets: `dotnet user-secrets list` (from `src/AspireApp.Web/`).
 - Restart the app.
 
@@ -417,6 +545,27 @@ Look for `Authentication:Microsoft:ClientId` and `Authentication:Microsoft:Clien
 - If missing, add them: `dotnet user-secrets set "Authentication:Microsoft:ClientId" "YOUR_ID"`
 - If present but empty, delete and re-add: `dotnet user-secrets remove "Authentication:Microsoft:ClientId"` then set a new value.
 - Restart the app.
+
+### Local provider card not appearing
+
+**Cause:** `Authentication:Local:Enabled` is `false`.
+
+**Fix:**
+- Set `Authentication:Local:Enabled` to `true`
+- Set `Authentication:Local:AllowSelfRegistration` to `true` if you want local first-use username registration
+- Restart the app
+
+### Local sign-in always fails
+
+**Cause:** The seeded account is missing, the `PasswordHash` does not match the password you typed, or the wrong tenant seed was configured.
+
+**Check:**
+- Confirm the seed entry exists under `Authentication:Local:SeedUsers`
+- If you are testing self-registration, use a username-shaped identifier (no `@`) and a password that is at least 10 characters long
+- Confirm `PasswordHash` was generated with `PasswordHasher<LocalAuthUser>`
+- Confirm you entered the original password, not the hash
+- Confirm `DefaultTenantId` is one of the supported local tenant values (`default`, `tenant-a`, `tenant-b`, `demo`)
+- Password reset is still deferred for local accounts; update the stored hash or recreate the local user if you need to recover access
 
 ### "Invalid Client ID" or "Invalid Secret" during Microsoft sign-in
 
@@ -498,6 +647,6 @@ If setup doesn't work as described:
 
 ---
 
-**Last Updated:** 2026-04-05  
+**Last Updated:** 2026-04-06  
 **Tested On:** .NET 10 SDK, Aspire Dashboard, localhost HTTPS  
-**Security Review:** Warden (2026-04-05) — verified callback paths, secret handling, dynamic port guidance, and Google setup accuracy
+**Security Review:** Warden (2026-04-06) — verified callback paths, secret handling, dynamic port guidance, hashed local seed requirements, and Google setup accuracy

@@ -7,6 +7,8 @@ using AspireApp.Web.Shared;
 using Microsoft.AspNetCore.Authentication;
 using Microsoft.AspNetCore.Authentication.Cookies;
 using Microsoft.AspNetCore.Components.Authorization;
+using Microsoft.AspNetCore.Mvc;
+using Microsoft.AspNetCore.WebUtilities;
 using Microsoft.EntityFrameworkCore;
 using System.Security.Claims;
 
@@ -127,9 +129,14 @@ var microsoftAuthenticationOptions = builder.Configuration
     .GetSection(MicrosoftEntraAuthenticationOptions.SectionName)
     .Get<MicrosoftEntraAuthenticationOptions>() ?? new MicrosoftEntraAuthenticationOptions();
 
+var localAuthenticationOptions = builder.Configuration
+    .GetSection(LocalAuthenticationOptions.SectionName)
+    .Get<LocalAuthenticationOptions>() ?? new LocalAuthenticationOptions();
+
 var effectiveAuthService = AspireApp.Web.Services.AuthenticationOptions.ResolveEffectiveService(
     builder.Configuration.GetSection("Authentication").GetValue<string>("Service"),
-    microsoftAuthenticationOptions.IsConfigured);
+    microsoftAuthenticationOptions.IsConfigured,
+    localAuthenticationOptions.Enabled);
 
 // Mock auth endpoints are only safe when the active service mode explicitly includes them.
 // Without this gate, /auth/mock/signin would let anyone mint a session cookie and bypass
@@ -191,6 +198,37 @@ if (mockEndpointsEnabled)
     {
         await httpContext.SignOutAsync(CookieAuthenticationDefaults.AuthenticationScheme);
         return Results.LocalRedirect(NormalizeLocalPath(returnUrl));
+    });
+}
+
+if (localAuthenticationOptions.Enabled)
+{
+    app.MapPost("/auth/local/signin", async (
+        [FromForm] string identifier,
+        [FromForm] string password,
+        [FromForm] string? returnUrl,
+        LocalAccountAuthenticator authenticator,
+        HttpContext httpContext,
+        CancellationToken cancellationToken) =>
+    {
+        var redirectUri = NormalizeLocalPath(returnUrl);
+        var authenticatedUser = await authenticator.AuthenticateAsync(identifier, password, cancellationToken);
+
+        if (authenticatedUser is null)
+        {
+            return BuildInvalidLocalCredentialResult(redirectUri);
+        }
+
+        await httpContext.SignInAsync(
+            CookieAuthenticationDefaults.AuthenticationScheme,
+            CreatePrincipal(authenticatedUser),
+            new AuthenticationProperties
+            {
+                AllowRefresh = true,
+                IsPersistent = false
+            });
+
+        return Results.LocalRedirect(redirectUri);
     });
 }
 
@@ -259,9 +297,11 @@ static async Task InitializeDatabaseAsync(IServiceProvider services, string data
         // Initialize database with EF Core
         using var scope = services.CreateScope();
         var context = scope.ServiceProvider.GetRequiredService<UploadDbContext>();
-        
+        var localAuthBootstrapper = scope.ServiceProvider.GetRequiredService<LocalAuthBootstrapper>();
+
         // Ensure database schema is created
         await context.Database.EnsureCreatedAsync();
+        await localAuthBootstrapper.InitializeAsync();
         Console.WriteLine("? Database schema initialized successfully");
 
         // Test database connection
@@ -269,14 +309,16 @@ static async Task InitializeDatabaseAsync(IServiceProvider services, string data
         if (canConnect)
         {
             Console.WriteLine("✓ Database connection test successful");
-            
+
             // Show current database stats
             var fileCount = await context.Datasources.CountAsync();
             var pageCount = await context.DatasourcePages.CountAsync();
-            
-            Console.WriteLine($"Database initialized with:");
+            var localAccountCount = await context.LocalAuthUsers.CountAsync();
+
+            Console.WriteLine("Database initialized with:");
             Console.WriteLine($"  - {fileCount} datasources in datasources table");
             Console.WriteLine($"  - {pageCount} datasource pages");
+            Console.WriteLine($"  - {localAccountCount} managed local auth users");
         }
         else
         {
@@ -314,6 +356,20 @@ static string NormalizeLocalPath(string? path)
         : "/";
 }
 
+static IResult BuildInvalidLocalCredentialResult(string returnUrl)
+{
+    var redirectPath = QueryHelpers.AddQueryString(
+        "/signin",
+        new Dictionary<string, string?>
+        {
+            ["returnUrl"] = NormalizeLocalPath(returnUrl),
+            ["provider"] = LocalAuthService.ProviderId,
+            ["error"] = LocalAuthService.InvalidCredentialErrorCode
+        });
+
+    return Results.LocalRedirect(redirectPath);
+}
+
 static ClaimsPrincipal CreatePrincipal(AuthenticatedUser user)
 {
     var identity = new ClaimsIdentity(authenticationType: CookieAuthenticationDefaults.AuthenticationScheme);
@@ -323,4 +379,3 @@ static ClaimsPrincipal CreatePrincipal(AuthenticatedUser user)
 }
 
 internal sealed record MockAuthSessionRequest(string ProviderId, string UserId);
-

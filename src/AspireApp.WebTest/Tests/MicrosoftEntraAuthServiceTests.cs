@@ -34,6 +34,7 @@ public class MicrosoftEntraAuthServiceTests
         var provider = Assert.Single(providers);
         Assert.Equal(MicrosoftEntraAuthService.ProviderId, provider.Id);
         Assert.False(provider.RequiresUserSelection);
+        Assert.False(provider.RequiresCredentials);
     }
 
     [Fact]

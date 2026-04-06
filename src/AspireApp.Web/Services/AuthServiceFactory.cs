@@ -9,11 +9,13 @@ public sealed class AuthServiceFactory(
     IEnumerable<AuthServiceRegistration> registrations,
     IServiceProvider services,
     IOptions<AuthenticationOptions> options,
-    IOptions<MicrosoftEntraAuthenticationOptions> microsoftOptions)
+    IOptions<MicrosoftEntraAuthenticationOptions> microsoftOptions,
+    IOptions<LocalAuthenticationOptions> localOptions)
 {
     private readonly IServiceProvider _services = services;
     private readonly AuthenticationOptions _options = options.Value;
     private readonly MicrosoftEntraAuthenticationOptions _microsoftOptions = microsoftOptions.Value;
+    private readonly LocalAuthenticationOptions _localOptions = localOptions.Value;
     private readonly Dictionary<string, Type> _registrations = registrations
         .GroupBy(registration => registration.ServiceKey, StringComparer.OrdinalIgnoreCase)
         .ToDictionary(
@@ -40,6 +42,9 @@ public sealed class AuthServiceFactory(
 
     private string ResolveServiceKey()
     {
-        return AuthenticationOptions.ResolveEffectiveService(_options.Service, _microsoftOptions.IsConfigured);
+        return AuthenticationOptions.ResolveEffectiveService(
+            _options.Service,
+            _microsoftOptions.IsConfigured,
+            _localOptions.Enabled);
     }
 }
