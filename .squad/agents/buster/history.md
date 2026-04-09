@@ -894,3 +894,47 @@ The behavior being tested (legacy schema detection with detailed diagnostics) st
 - Tenant Management Test Coverage Audit — 42-50 test cases + prerequisites + risk summary
 
 **Status:** Final approval; tenant slice ready for merge; 28/28 tests green
+
+### 2026-04-09 — Upload Authentication Regression: Test Gap Fixed
+
+**Context:**
+- After tenant hardening landed, manual testing found signed-in users hit authentication errors when uploading documents
+- `AuthenticatedUploadUxTests` existed but didn't catch the regression because it only verified UI state (row appeared in table)
+- The test didn't verify backend persistence via authenticated API call, so it couldn't detect auth failures in the controller path
+
+**Root Cause Analysis:**
+- Blazor Server upload flow has TWO distinct paths:
+  1. **UI path (current):** UploadData.razor.cs → FileStorageService directly (bypasses controller, uses scoped auth from circuit)
+  2. **API path (legacy/external):** JavaScript/HTTP → FileUploadController → FileStorageService (requires explicit auth headers/cookies)
+- Post tenant-hardening, `FileUploadController.ResolveTenantContextAsync()` enforces auth (line 345-355: returns 401 if user null)
+- `AuthenticatedUploadUxTests` simulated browser interaction which triggers the Blazor Server path (doesn't hit controller), so it never saw auth failures
+- `BasicAspireAppHostTests.FlowEndToEnd` DOES verify via authenticated HttpClient after UI upload, following the smoke-test pattern
+
+**The Fix:**
+- Updated `AuthenticatedUploadUxTests.SignedInTenantScopedUserCanUploadDocumentWithoutAuthenticationError` to:
+  - Create authenticated HttpClient (same pattern as `BasicAspireAppHostTests` and `OperationalUploadStoreTests`)
+  - Call mock sign-in endpoint to establish session cookies
+  - Query Postgres for user's default tenant ID
+  - Add `X-Tenant-Id` header to all API requests
+  - **CRITICAL:** After UI upload completes, query `GET /api/FileUpload` with authenticated client to verify backend persistence
+  - Assert uploaded file has valid ID, filename, status, and **tenant_id matches signed-in user's default tenant**
+  - Clean up via authenticated DELETE before and after test
+
+**Key Pattern — API-Backed Verification:**
+- Browser tests for authenticated upload flows MUST verify via the API after UI interaction completes
+- Relying on UI state alone (table row, alert message) is insufficient—need backend proof the file persisted with correct tenant scope
+- Pattern: `WithPageAsync` (UI interaction) + `WaitForUploadedFileByPrefixAsync` (authenticated API poll) ensures full contract validation
+- Aligns with .squad/skills/web-upload-smoke-tests/SKILL.md guidance: "Treat an API-backed empty upload list after the UI click as a hard regression"
+
+**Key File Paths:**
+- `src\AspireApp.WebTest\Tests\AuthenticatedUploadUxTests.cs` (updated: added API verification, auth client setup, tenant validation)
+- `src\AspireApp.Web\Controllers\FileUploadController.cs` (line 345-390: tenant resolution with auth enforcement)
+- `src\AspireApp.Web\Components\Pages\UploadData.razor.cs` (line 556-654: Blazor Server upload bypasses controller)
+- `.squad\skills\web-upload-smoke-tests\SKILL.md` (documents smoke test pattern)
+- `.squad\skills\playwright-auth-ux-contracts\SKILL.md` (documents auth test hooks)
+
+**Verification Strategy Going Forward:**
+- Run `AuthenticatedUploadUxTests` specifically to catch tenant-scoped upload regressions
+- Test now validates: UI flow works + backend persistence succeeds + tenant context propagates correctly + signed-in user can query their upload via API
+- If controller auth changes or tenant scoping evolves, this test will surface the regression immediately
+

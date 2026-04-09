@@ -9,6 +9,41 @@
 
 <!-- Append new learnings below. Each entry is something lasting about the project. -->
 
+### 2026-04-09 — Upload flow fixed: Direct service calls preserve authentication and tenant context in InteractiveServer
+
+**Status:** Implemented and validated.
+
+**Problem:** After tenant hardening, document uploads failed with authentication errors for signed-in users. The Blazor Server component `UploadData.razor.cs` was making server-side self-HTTP calls to `/api/FileUpload` and `/api/FileUpload/url` without reliably preserving browser auth state. This broke after tenant scoping was added because the HTTP calls lost the authenticated user context.
+
+**Root Cause:** In Blazor InteractiveServer render mode, making HTTP calls back to the same server from a component creates a new HTTP context without the user's authentication cookies. The component runs in the SignalR circuit, not in the HTTP request pipeline, so cookie forwarding via `IHttpContextAccessor` is brittle and unreliable.
+
+**Solution:** Changed `UploadData.razor.cs` to call `FileStorageService` directly instead of making HTTP calls. The scoped `FileStorageService` has access to `TenantContext.CurrentTenantId` and runs in the authenticated Blazor circuit, preserving both user identity and tenant context naturally.
+
+**Key Changes:**
+- `UploadFileAsync` (line 558): Now calls `FileStorageService.CalculateFileHash()`, `FileStorageService.FindDuplicateByHashAsync()`, and `FileStorageService.AddFileAsync()` directly
+- `UploadUrlAsync` (line 656): Now calls `FileStorageService.CalculateUrlHash()`, `FileStorageService.FindDuplicateByHashAsync()`, and `FileStorageService.AddUrlAsync()` directly
+- Both methods use `TenantContext.CurrentTenantId` for tenant scoping
+- Removed all HTTP client calls and cookie forwarding attempts
+- Browser-side `upload-file.js` remains unchanged (already uses browser fetch with automatic cookie inclusion)
+
+**Key Paths:**
+- `src\AspireApp.Web\Components\Pages\UploadData.razor.cs` — upload methods now call services directly
+- `src\AspireApp.Web\Shared\FileStorageService.cs` — tenant-scoped storage service
+- `src\AspireApp.Web\Controllers\FileUploadController.cs` — API endpoints remain for direct HTTP access
+- `src\AspireApp.Web\wwwroot\js\upload-file.js` — browser-side upload helper (unchanged)
+
+**Architectural Lesson:** Blazor InteractiveServer components should never make HTTP calls back to the same server. Instead:
+1. Call scoped services directly (they run in the same circuit with full auth context)
+2. Use cascading parameters or injected services to access user identity and tenant context
+3. Reserve HTTP client calls for external APIs only
+4. If an API endpoint is needed, call it from browser JavaScript (which automatically includes cookies)
+
+**Validation:**
+- Build succeeds: `dotnet build AspireApp.sln --no-restore`
+- Upload flow works for authenticated users with proper tenant scoping
+- Duplicate detection respects tenant boundaries
+- File list/delete operations remain tenant-scoped
+
 ### 2026-04-07 — Tenant access is now per-user with protected defaults and membership enforcement
 
 **Status:** Implemented and tested.

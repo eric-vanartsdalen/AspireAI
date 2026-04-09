@@ -5,6 +5,7 @@
 > **Note (2026-04-05T21:33:20Z):** Merged 18 inbox decisions from auth documentation and QA validation (Jeff, Warden, Bob, Buster). Consolidated Bob's UX revision + Buster's multi-gate approval into a single "Mock Pluggable Auth Slice" decision. No duplicates found. Inbox cleared.
 > **Note (2026-04-06T18:38:14Z):** Merged local auth password floor relaxation decision (Warden approval + Jeff implementation). Relax minimum from 12 to 10 characters; add visible UI hint; confirm case-insensitive username uniqueness already implemented; defer password reset. All implementation work complete and tested.
 > **Note (2026-04-09T15:39:08Z):** Merged 6 tenant slice decisions (Jeff, Warden, Buster, Bob). Tenant isolation via persisted tenants/memberships, default-tenant protection + backfill, upload authorization hardening, add-member edge-case revision, and local-auth-slice foundation recommendation. 28 targeted tests passing. No duplicates found. Inbox cleared.
+> **Note (2026-04-09T15:39:12Z):** Added Upload Authentication Regression decision (Jeff, Buster): FileStorageService scoped injection removes HTTP self-call pattern in UploadData; tenant context preserved in-circuit. Regression coverage tightened. Build success. No inbox files to merge.
 
 <!-- Decisions are appended below. Each entry starts with ### -->
 
@@ -789,3 +790,79 @@ To enable real Microsoft authentication:
 5. Verify Microsoft button appears on /signin
 
 ---
+## Upload Authentication Regression: FileStorageService Scoped Injection — Jeff, Buster — 2026-04-09
+
+**Authors:** Jeff (.NET Dev), Buster (QA / Tester)  
+**Status:** IMPLEMENTED  
+**Scope:** UploadData component circuit isolation, tenant context preservation, authenticated file storage, regression coverage hardening
+
+### Context
+
+After tenant hardening (tenant_id persisted, indexed, validated across Web↔Python boundary), the UploadData component was still making direct HTTP calls to `/api/FileUpload` via `HttpClient`, crossing the authenticated Blazor circuit boundary and losing tenant context. This created an authentication regression where uploads could not access the scoped tenant information needed for proper authorization.
+
+### Decision
+
+**Remove UploadData's HTTP self-call pattern; inject `FileStorageService` directly as a scoped dependency in the authenticated Blazor circuit. Tenant context is naturally preserved within the circuit without HTTP boundary crossing.**
+
+### Implementation
+
+#### UploadData.razor.cs Changes
+
+- **Removed:** Direct `HttpClient` dependency and self-HTTP POST to `/api/FileUpload`
+- **Added:** `FileStorageService` injected directly (scoped to Blazor circuit)
+- **Result:** Upload and URL add now execute in-circuit, preserving authenticated tenant context
+
+#### FileStorageService Wiring
+
+- **Scope:** Registered as scoped service in DI (tied to Blazor circuit lifetime)
+- **Tenant Access:** Accesses tenant context from authenticated circuit without explicit parameter passing
+- **Authorization:** Tenant context implicitly available to FileStorageService methods
+
+#### Test Hardening
+
+- **AuthenticatedUploadUxTests:** Updated to verify backend persistence via authenticated API client; tenant_id alignment confirmed
+- **OperationalUploadStoreTests:** Authenticates first and uses user's default tenant instead of hardcoded demo tenant
+- **Coverage:** Regression tests now enforce authenticated upload path with proper tenant scoping
+
+### Key Paths
+
+- `src\AspireApp.Web\Components\Pages\UploadData.razor.cs` — Removed HTTP self-call; scoped FileStorageService injection
+- `src\AspireApp.Web\Components\Pages\UploadData.razor` — Updated markup (no change to event handlers)
+- `src\AspireApp.Web\Shared\FileStorageService.cs` — Scoped service, tenant context access
+- `src\AspireApp.Web\Controllers\FileUploadController.cs` — No changes (remains as REST endpoint for direct API usage)
+- `src\AspireApp.WebTest\Tests\AuthenticatedUploadUxTests.cs` — Hardened regression coverage
+- `src\AspireApp.WebTest\Tests\OperationalUploadStoreTests.cs` — Updated tenant context validation
+
+### Test Results
+
+- ✓ UploadData upload and URL add succeed without HTTP boundary crossing
+- ✓ Tenant context persisted throughout upload pipeline
+- ✓ AuthenticatedUploadUxTests verify backend persistence via authenticated client
+- ✓ OperationalUploadStoreTests confirm tenant_id alignment
+- ✓ WebTest project builds and tests pass without errors
+
+### Relationship to Other Decisions
+
+- **Upstream:** "Tenant-context data layer hardening" (2026-04-09) — This fix realizes tenant context preservation in UI workflows
+- **Pattern Alignment:** Scoped service injection follows authenticated circuit architecture patterns established for other file operations
+- **Impact Scope:** Upload path only. No impact on API FileUploadController (remains public-facing REST endpoint for direct file operations).
+
+### Validation Checklist (Complete)
+
+- [x] UploadData injects FileStorageService as scoped dependency
+- [x] HTTP self-call removed; no cross-circuit boundary crossing
+- [x] Tenant context available to FileStorageService within circuit
+- [x] AuthenticatedUploadUxTests verify backend persistence
+- [x] OperationalUploadStoreTests confirm tenant_id alignment
+- [x] Build succeeds (WebTest project)
+- [x] Regression coverage tightened for authenticated upload path
+
+### Regression Prevention
+
+Going forward:
+1. New file operations in authenticated circuits should follow this pattern (scoped service injection, in-circuit execution)
+2. Any HTTP self-call patterns across authenticated boundaries should be reviewed for tenant context loss
+3. Upload tests should always verify tenant_id persistence end-to-end
+
+---
+
