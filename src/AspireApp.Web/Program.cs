@@ -148,7 +148,11 @@ var mockEndpointsEnabled = !string.Equals(
 
 if (mockEndpointsEnabled)
 {
-    app.MapPost("/auth/mock/session", async (MockAuthSessionRequest request, HttpContext httpContext) =>
+    app.MapPost("/auth/mock/session", async (
+        MockAuthSessionRequest request,
+        TenantManagementService tenantManagementService,
+        HttpContext httpContext,
+        CancellationToken cancellationToken) =>
     {
         var selectedUser = MockAuthCatalog.FindUser(request.ProviderId, request.UserId);
         if (selectedUser is null)
@@ -156,9 +160,14 @@ if (mockEndpointsEnabled)
             return Results.BadRequest(new { error = "Unknown mock user." });
         }
 
+        var tenantSnapshot = await tenantManagementService.EnsureTenantAccessAsync(
+            new TenantUserDescriptor(selectedUser.UserId, selectedUser.DisplayName, selectedUser.Email),
+            cancellationToken);
+        var authenticatedUser = selectedUser with { DefaultTenantId = tenantSnapshot.DefaultTenantId };
+
         await httpContext.SignInAsync(
             CookieAuthenticationDefaults.AuthenticationScheme,
-            CreatePrincipal(selectedUser),
+            CreatePrincipal(authenticatedUser),
             new AuthenticationProperties
             {
                 AllowRefresh = true,
@@ -168,7 +177,13 @@ if (mockEndpointsEnabled)
         return Results.Ok();
     });
 
-    app.MapGet("/auth/mock/signin", async (string providerId, string userId, string? returnUrl, HttpContext httpContext) =>
+    app.MapGet("/auth/mock/signin", async (
+        string providerId,
+        string userId,
+        string? returnUrl,
+        TenantManagementService tenantManagementService,
+        HttpContext httpContext,
+        CancellationToken cancellationToken) =>
     {
         var selectedUser = MockAuthCatalog.FindUser(providerId, userId);
         if (selectedUser is null)
@@ -176,9 +191,14 @@ if (mockEndpointsEnabled)
             return Results.BadRequest(new { error = "Unknown mock user." });
         }
 
+        var tenantSnapshot = await tenantManagementService.EnsureTenantAccessAsync(
+            new TenantUserDescriptor(selectedUser.UserId, selectedUser.DisplayName, selectedUser.Email),
+            cancellationToken);
+        var authenticatedUser = selectedUser with { DefaultTenantId = tenantSnapshot.DefaultTenantId };
+
         await httpContext.SignInAsync(
             CookieAuthenticationDefaults.AuthenticationScheme,
-            CreatePrincipal(selectedUser),
+            CreatePrincipal(authenticatedUser),
             new AuthenticationProperties
             {
                 AllowRefresh = true,
@@ -298,9 +318,11 @@ static async Task InitializeDatabaseAsync(IServiceProvider services, string data
         using var scope = services.CreateScope();
         var context = scope.ServiceProvider.GetRequiredService<UploadDbContext>();
         var localAuthBootstrapper = scope.ServiceProvider.GetRequiredService<LocalAuthBootstrapper>();
+        var tenantStoreBootstrapper = scope.ServiceProvider.GetRequiredService<TenantStoreBootstrapper>();
 
         // Ensure database schema is created
         await context.Database.EnsureCreatedAsync();
+        await tenantStoreBootstrapper.InitializeAsync();
         await localAuthBootstrapper.InitializeAsync();
         Console.WriteLine("? Database schema initialized successfully");
 
@@ -314,11 +336,15 @@ static async Task InitializeDatabaseAsync(IServiceProvider services, string data
             var fileCount = await context.Datasources.CountAsync();
             var pageCount = await context.DatasourcePages.CountAsync();
             var localAccountCount = await context.LocalAuthUsers.CountAsync();
+            var tenantCount = await context.Tenants.CountAsync();
+            var membershipCount = await context.TenantMemberships.CountAsync();
 
             Console.WriteLine("Database initialized with:");
             Console.WriteLine($"  - {fileCount} datasources in datasources table");
             Console.WriteLine($"  - {pageCount} datasource pages");
             Console.WriteLine($"  - {localAccountCount} managed local auth users");
+            Console.WriteLine($"  - {tenantCount} tenants");
+            Console.WriteLine($"  - {membershipCount} tenant memberships");
         }
         else
         {

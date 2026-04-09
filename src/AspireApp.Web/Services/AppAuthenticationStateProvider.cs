@@ -16,13 +16,21 @@ public sealed class AppAuthenticationStateProvider(
     private readonly TenantContextService? _tenantContextService = tenantContextService;
     private readonly IHttpContextAccessor _httpContextAccessor = httpContextAccessor ?? new HttpContextAccessor();
 
-    public override Task<AuthenticationState> GetAuthenticationStateAsync()
+    public override async Task<AuthenticationState> GetAuthenticationStateAsync()
     {
-        HydrateFromHttpContext();
+        var user = HydrateFromHttpContext();
         var principal = _httpContextAccessor.HttpContext?.User?.Identity?.IsAuthenticated == true
             ? _httpContextAccessor.HttpContext.User
             : CreatePrincipal(_authenticationContext.CurrentUser);
-        return Task.FromResult(new AuthenticationState(principal));
+
+        if (_tenantContextService is not null)
+        {
+            await _tenantContextService.InitializeForUserAsync(
+                user,
+                _httpContextAccessor.HttpContext?.RequestAborted ?? CancellationToken.None);
+        }
+
+        return new AuthenticationState(principal);
     }
 
     public void SetCurrentUser(AuthenticatedUser? user)
@@ -31,19 +39,19 @@ public sealed class AppAuthenticationStateProvider(
         NotifyAuthenticationStateChanged(GetAuthenticationStateAsync());
     }
 
-    private void HydrateFromHttpContext()
+    private AuthenticatedUser? HydrateFromHttpContext()
     {
         var principal = _httpContextAccessor.HttpContext?.User;
         if (principal?.Identity?.IsAuthenticated != true)
         {
-            return;
+            return null;
         }
 
         var user = AuthenticatedUserClaims.BuildUser(principal);
         if (user is null)
         {
             _authenticationContext.SetCurrentUser(null);
-            return;
+            return null;
         }
 
         if (!string.Equals(_authenticationContext.CurrentUser?.UserId, user.UserId, StringComparison.OrdinalIgnoreCase))
@@ -51,7 +59,7 @@ public sealed class AppAuthenticationStateProvider(
             _authenticationContext.SetCurrentUser(user);
         }
 
-        _tenantContextService?.InitializeForUser(user.DefaultTenantId);
+        return user;
     }
     private static ClaimsPrincipal CreatePrincipal(AuthenticatedUser? user)
     {

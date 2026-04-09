@@ -10,12 +10,14 @@ namespace AspireApp.Web.Services;
 /// </summary>
 public sealed class LocalAuthBootstrapper(
     UploadDbContext dbContext,
-    IOptions<LocalAuthenticationOptions> options)
+    IOptions<LocalAuthenticationOptions> options,
+    TenantManagementService tenantManagementService)
 {
     private const string NpgsqlProviderName = "Npgsql.EntityFrameworkCore.PostgreSQL";
 
     private readonly UploadDbContext _dbContext = dbContext;
     private readonly LocalAuthenticationOptions _options = options.Value;
+    private readonly TenantManagementService _tenantManagementService = tenantManagementService;
 
     public async Task InitializeAsync(CancellationToken cancellationToken = default)
     {
@@ -27,6 +29,7 @@ public sealed class LocalAuthBootstrapper(
         }
 
         await SeedUsersAsync(cancellationToken);
+        await BackfillLocalUserTenantsAsync(cancellationToken);
     }
 
     private async Task EnsureSchemaAsync(CancellationToken cancellationToken)
@@ -67,6 +70,13 @@ public sealed class LocalAuthBootstrapper(
             """
             CREATE INDEX IF NOT EXISTS idx_local_auth_users_is_active
             ON local_auth_users (is_active);
+            """,
+            cancellationToken);
+
+        await _dbContext.Database.ExecuteSqlRawAsync(
+            """
+            CREATE INDEX IF NOT EXISTS idx_local_auth_users_default_tenant
+            ON local_auth_users (default_tenant_id);
             """,
             cancellationToken);
     }
@@ -111,7 +121,7 @@ public sealed class LocalAuthBootstrapper(
                 NormalizedEmail = normalizedEmail,
                 DisplayName = LocalAuthValueNormalizer.Clean(seedUser.DisplayName),
                 PasswordHash = seedUser.PasswordHash.Trim(),
-                DefaultTenantId = LocalAuthValueNormalizer.Clean(seedUser.DefaultTenantId),
+                DefaultTenantId = string.Empty,
                 IsActive = true,
                 CreatedAt = timestamp,
                 UpdatedAt = timestamp
@@ -124,10 +134,44 @@ public sealed class LocalAuthBootstrapper(
         await _dbContext.SaveChangesAsync(cancellationToken);
     }
 
+    private async Task BackfillLocalUserTenantsAsync(CancellationToken cancellationToken)
+    {
+        var users = await _dbContext.LocalAuthUsers
+            .Where(user => user.IsActive)
+            .ToListAsync(cancellationToken);
+
+        if (users.Count == 0)
+        {
+            return;
+        }
+
+        var hasChanges = false;
+
+        foreach (var user in users)
+        {
+            var tenantSnapshot = await _tenantManagementService.EnsureTenantAccessAsync(
+                new TenantUserDescriptor($"local-{user.Id}", user.DisplayName, user.Email),
+                cancellationToken);
+
+            if (string.Equals(user.DefaultTenantId, tenantSnapshot.DefaultTenantId, StringComparison.OrdinalIgnoreCase))
+            {
+                continue;
+            }
+
+            user.DefaultTenantId = tenantSnapshot.DefaultTenantId;
+            user.UpdatedAt = DateTime.UtcNow;
+            hasChanges = true;
+        }
+
+        if (hasChanges)
+        {
+            await _dbContext.SaveChangesAsync(cancellationToken);
+        }
+    }
+
     private void ValidateSeedUsers()
     {
         var knownIdentifiers = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-        var validTenantIds = new HashSet<string>(TenantContextService.GetAvailableTenants(), StringComparer.OrdinalIgnoreCase);
 
         foreach (var seedUser in _options.SeedUsers)
         {
@@ -149,12 +193,6 @@ public sealed class LocalAuthBootstrapper(
             if (string.IsNullOrWhiteSpace(seedUser.PasswordHash))
             {
                 throw new InvalidOperationException("Authentication:Local:SeedUsers entries require a precomputed PasswordHash.");
-            }
-
-            if (!validTenantIds.Contains(seedUser.DefaultTenantId))
-            {
-                throw new InvalidOperationException(
-                    $"Authentication:Local:SeedUsers contains an unsupported DefaultTenantId '{seedUser.DefaultTenantId}'.");
             }
 
             var normalizedUsername = $"username:{LocalAuthValueNormalizer.Normalize(seedUser.Username)}";

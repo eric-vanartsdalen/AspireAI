@@ -13,13 +13,15 @@ namespace AspireApp.Web.Services;
 public sealed class LocalAccountAuthenticator(
     UploadDbContext dbContext,
     IPasswordHasher<LocalAuthUser> passwordHasher,
-    IOptions<LocalAuthenticationOptions> options)
+    IOptions<LocalAuthenticationOptions> options,
+    TenantManagementService tenantManagementService)
 {
     private static readonly Regex ValidUsernamePattern = new("^[A-Za-z0-9._-]{3,100}$", RegexOptions.Compiled | RegexOptions.CultureInvariant);
 
     private readonly UploadDbContext _dbContext = dbContext;
     private readonly IPasswordHasher<LocalAuthUser> _passwordHasher = passwordHasher;
     private readonly LocalAuthenticationOptions _options = options.Value;
+    private readonly TenantManagementService _tenantManagementService = tenantManagementService;
 
     public async Task<AuthenticatedUser?> AuthenticateAsync(string identifier, string password, CancellationToken cancellationToken = default)
     {
@@ -49,8 +51,7 @@ public sealed class LocalAccountAuthenticator(
             user = await TryCreateUserAsync(cleanedIdentifier, normalizedIdentifier, password, cancellationToken);
         }
 
-        if (user is null ||
-            !TenantContextService.GetAvailableTenants().Contains(user.DefaultTenantId, StringComparer.OrdinalIgnoreCase))
+        if (user is null)
         {
             return null;
         }
@@ -61,9 +62,26 @@ public sealed class LocalAccountAuthenticator(
             return null;
         }
 
+        var tenantSnapshot = await _tenantManagementService.EnsureTenantAccessAsync(
+            new TenantUserDescriptor($"local-{user.Id}", user.DisplayName, user.Email),
+            cancellationToken);
+
+        var needsSave = false;
+        if (!string.Equals(user.DefaultTenantId, tenantSnapshot.DefaultTenantId, StringComparison.OrdinalIgnoreCase))
+        {
+            user.DefaultTenantId = tenantSnapshot.DefaultTenantId;
+            needsSave = true;
+        }
+
         if (verificationResult == PasswordVerificationResult.SuccessRehashNeeded)
         {
             user.PasswordHash = _passwordHasher.HashPassword(user, password);
+            user.UpdatedAt = DateTime.UtcNow;
+            needsSave = true;
+        }
+
+        if (needsSave)
+        {
             user.UpdatedAt = DateTime.UtcNow;
             await _dbContext.SaveChangesAsync(cancellationToken);
         }
@@ -74,7 +92,7 @@ public sealed class LocalAccountAuthenticator(
             user.Email,
             LocalAuthService.ProviderId,
             LocalAuthService.ProviderDisplayName,
-            user.DefaultTenantId);
+            tenantSnapshot.DefaultTenantId);
     }
 
     private async Task<LocalAuthUser?> TryCreateUserAsync(
@@ -99,7 +117,7 @@ public sealed class LocalAccountAuthenticator(
             Email = syntheticEmail,
             NormalizedEmail = LocalAuthValueNormalizer.Normalize(syntheticEmail),
             DisplayName = cleanedIdentifier,
-            DefaultTenantId = TenantContextService.DefaultTenantId,
+            DefaultTenantId = string.Empty,
             IsActive = true,
             CreatedAt = timestamp,
             UpdatedAt = timestamp

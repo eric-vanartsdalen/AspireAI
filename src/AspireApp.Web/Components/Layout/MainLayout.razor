@@ -20,9 +20,12 @@
                                  data-auth-tenant="@TenantContext.CurrentTenantId">
                                 @authState.User.Identity?.Name
                             </div>
-                            <div class="small text-muted">
-                                @AuthenticationContext.CurrentUser?.ProviderDisplayName ·
-                                <span>Tenant @TenantContext.CurrentTenantId</span>
+                            <div class="small text-muted d-flex justify-content-end align-items-center gap-2">
+                                <span>@AuthenticationContext.CurrentUser?.ProviderDisplayName · Tenant @TenantContext.CurrentTenantName</span>
+                                @if (TenantContext.CurrentTenantIsProtected)
+                                {
+                                    <span class="badge rounded-pill text-bg-secondary">Protected</span>
+                                }
                             </div>
                         </div>
                         <span class="badge rounded-pill text-bg-dark">@AuthenticationContext.CurrentUser?.Initials</span>

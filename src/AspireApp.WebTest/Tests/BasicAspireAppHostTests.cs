@@ -1,7 +1,8 @@
-﻿using AspireApp.WebTest.DataModels;
+using AspireApp.WebTest.DataModels;
 using AspireApp.WebTest.Fixtures;
 using Microsoft.AspNetCore.Mvc.RazorPages;
 using Microsoft.Playwright;
+using Npgsql;
 using System.ComponentModel;
 using System.Diagnostics;
 using System.Linq.Expressions;
@@ -23,6 +24,8 @@ public class BasicAspireAppHostTests : IClassFixture<TestFixture>
     private const string FileTableRow = "table[class='file-table'] tbody tr";
     private const string FilenameCellInRow = "td[class='file-name-cell'] span[class='file-name-full']";
     private const string DeleteButtonInCell = "td button";
+    private const string DemoProviderId = "demo";
+    private const string DemoUserId = "demo-taylor-jones";
     private static readonly string TestFile = Path.Combine(AppContext.BaseDirectory, "..", "..", "..", "..",
             "AspireApp.WebTest", "DataExample", "processing-smoke.pdf");
     private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web);
@@ -222,7 +225,8 @@ public class BasicAspireAppHostTests : IClassFixture<TestFixture>
     [Fact, Priority(1)]
     public async Task FlowEndToEnd()
     {
-        using var webClient = CreateWebFrontendHttpClient("demo");
+        var clientInfo = await CreateWebFrontendHttpClientAsync();
+        using var webClient = clientInfo.Client;
         await DeleteExistingTestUploadsAsync(webClient);
 
         await WithPageAsync(async page =>
@@ -306,7 +310,8 @@ public class BasicAspireAppHostTests : IClassFixture<TestFixture>
     [Fact, Priority(3)]
     public async Task DeleteUploadedTestFile()
     {
-        using var webClient = CreateWebFrontendHttpClient("demo");
+        var clientInfo = await CreateWebFrontendHttpClientAsync();
+        using var webClient = clientInfo.Client;
         await DeleteExistingTestUploadsAsync(webClient);
         var uploadedFile = await UploadTestFileViaApiAsync(webClient);
 
@@ -371,10 +376,12 @@ public class BasicAspireAppHostTests : IClassFixture<TestFixture>
         await WaitForLocator(signedInSurface.First, 30_000);
     }
 
-    private HttpClient CreateWebFrontendHttpClient(string? tenantId = null)
+    private async Task<AuthenticatedClient> CreateWebFrontendHttpClientAsync()
     {
+        var cookieContainer = new CookieContainer();
         var handler = new HttpClientHandler
         {
+            CookieContainer = cookieContainer,
             ServerCertificateCustomValidationCallback = HttpClientHandler.DangerousAcceptAnyServerCertificateValidator
         };
 
@@ -384,12 +391,12 @@ public class BasicAspireAppHostTests : IClassFixture<TestFixture>
             Timeout = TimeSpan.FromSeconds(30)
         };
 
-        if (!string.IsNullOrWhiteSpace(tenantId))
-        {
-            client.DefaultRequestHeaders.Add("X-Tenant-Id", tenantId);
-        }
+        await AuthenticateAsync(client);
+        var tenantId = await ResolveDefaultTenantIdAsync();
+        client.DefaultRequestHeaders.Remove("X-Tenant-Id");
+        client.DefaultRequestHeaders.Add("X-Tenant-Id", tenantId);
 
-        return client;
+        return new AuthenticatedClient(client, tenantId);
     }
 
     private HttpClient CreatePythonServiceHttpClient()
@@ -399,6 +406,40 @@ public class BasicAspireAppHostTests : IClassFixture<TestFixture>
             BaseAddress = new Uri($"{_data.PythonServiceUri.TrimEnd('/')}/"),
             Timeout = TimeSpan.FromSeconds(30)
         };
+    }
+
+    private async Task AuthenticateAsync(HttpClient webClient)
+    {
+        var signInUri = $"auth/mock/signin?providerId={DemoProviderId}&userId={Uri.EscapeDataString(DemoUserId)}&returnUrl=%2F";
+        using var response = await webClient.GetAsync(signInUri, TestContext.Current.CancellationToken);
+
+        if (!response.IsSuccessStatusCode && response.StatusCode != HttpStatusCode.Found)
+        {
+            var body = await response.Content.ReadAsStringAsync(TestContext.Current.CancellationToken);
+            throw new InvalidOperationException($"Mock sign-in failed with {(int)response.StatusCode}. Response: {body}");
+        }
+    }
+
+    private async Task<string> ResolveDefaultTenantIdAsync()
+    {
+        await using var connection = new NpgsqlConnection(_data.UploadStoreConnectionString);
+        await connection.OpenAsync(TestContext.Current.CancellationToken);
+
+        await using var command = new NpgsqlCommand("""
+            SELECT tenant_id
+            FROM tenant_memberships
+            WHERE user_id = @userId AND is_default = TRUE
+            LIMIT 1
+            """, connection);
+        command.Parameters.AddWithValue("userId", DemoUserId);
+
+        var tenantId = (string?)await command.ExecuteScalarAsync(TestContext.Current.CancellationToken);
+        if (string.IsNullOrWhiteSpace(tenantId))
+        {
+            throw new InvalidOperationException("Mock sign-in did not create a default tenant membership.");
+        }
+
+        return tenantId;
     }
 
     private async Task DeleteExistingTestUploadsAsync(HttpClient webClient)
@@ -1104,6 +1145,8 @@ public class BasicAspireAppHostTests : IClassFixture<TestFixture>
         public string? SourceType { get; set; }
         public string? Status { get; set; }
     }
+
+    private sealed record AuthenticatedClient(HttpClient Client, string TenantId);
 
     private sealed class FileUploadApiResponse
     {

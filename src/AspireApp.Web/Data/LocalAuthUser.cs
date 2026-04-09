@@ -42,7 +42,7 @@ public sealed class LocalAuthUser
     [Required]
     [Column("default_tenant_id")]
     [MaxLength(100)]
-    public string DefaultTenantId { get; set; } = "default";
+    public string DefaultTenantId { get; set; } = string.Empty;
 
     [Column("is_active")]
     public bool IsActive { get; set; } = true;

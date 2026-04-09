@@ -1,6 +1,7 @@
 using AspireApp.WebTest.DataModels;
 using AspireApp.WebTest.Fixtures;
 using Npgsql;
+using System.Net;
 using System.Net.Http.Headers;
 using System.Text.Json;
 using Xunit.v3.Priority;
@@ -22,13 +23,16 @@ public sealed class OperationalUploadStoreTests(TestFixture fixture) : IClassFix
 
     private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web);
     private readonly AppHostMappingModel _mapping = fixture.AppHostMapping;
+    private const string MockUserId = "demo-taylor-jones";
 
     [Fact, Priority(1)]
     public async Task UploadApiPersistsMetadataToPostgres()
     {
         Assert.False(string.IsNullOrWhiteSpace(_mapping.UploadStoreConnectionString));
 
-        using var webClient = CreateWebFrontendHttpClient();
+        var clientInfo = await CreateWebFrontendHttpClientAsync();
+        using var webClient = clientInfo.Client;
+        var tenantId = clientInfo.TenantId;
         await DeleteExistingTestUploadsAsync(webClient);
 
         await using var fileStream = File.OpenRead(TestFile);
@@ -71,7 +75,7 @@ public sealed class OperationalUploadStoreTests(TestFixture fixture) : IClassFix
         Assert.Equal("uploaded", reader.GetString(2));
         Assert.Equal(new FileInfo(TestFile).Length, reader.GetInt64(3));
         Assert.Equal("upload", reader.GetString(4));
-        Assert.Equal("default", reader.GetString(5));
+        Assert.Equal(tenantId, reader.GetString(5));
 
         await reader.CloseAsync();
 
@@ -90,18 +94,27 @@ public sealed class OperationalUploadStoreTests(TestFixture fixture) : IClassFix
             $"Cleanup delete for uploaded test row {uploadResult.Id} failed. Response: {deleteBody}");
     }
 
-    private HttpClient CreateWebFrontendHttpClient()
+    private async Task<AuthenticatedClient> CreateWebFrontendHttpClientAsync()
     {
+        var cookieContainer = new CookieContainer();
         var handler = new HttpClientHandler
         {
+            CookieContainer = cookieContainer,
             ServerCertificateCustomValidationCallback = HttpClientHandler.DangerousAcceptAnyServerCertificateValidator
         };
 
-        return new HttpClient(handler)
+        var client = new HttpClient(handler)
         {
             BaseAddress = new Uri($"{_mapping.WebfrontendUri.TrimEnd('/')}/"),
             Timeout = TimeSpan.FromSeconds(30)
         };
+
+        await AuthenticateAsync(client);
+        var tenantId = await ResolveDefaultTenantIdAsync();
+        client.DefaultRequestHeaders.Remove("X-Tenant-Id");
+        client.DefaultRequestHeaders.Add("X-Tenant-Id", tenantId);
+
+        return new AuthenticatedClient(client, tenantId);
     }
 
     private async Task DeleteExistingTestUploadsAsync(HttpClient webClient)
@@ -130,6 +143,42 @@ public sealed class OperationalUploadStoreTests(TestFixture fixture) : IClassFix
                 $"Pre-test cleanup failed for upload {file.Id}. Response: {deleteBody}");
         }
     }
+
+    private async Task AuthenticateAsync(HttpClient webClient)
+    {
+        var signInUri = $"auth/mock/signin?providerId=demo&userId={Uri.EscapeDataString(MockUserId)}&returnUrl=%2F";
+        using var response = await webClient.GetAsync(signInUri, TestContext.Current.CancellationToken);
+
+        if (!response.IsSuccessStatusCode && response.StatusCode != HttpStatusCode.Found)
+        {
+            var body = await response.Content.ReadAsStringAsync(TestContext.Current.CancellationToken);
+            throw new InvalidOperationException($"Mock sign-in failed with {(int)response.StatusCode}. Response: {body}");
+        }
+    }
+
+    private async Task<string> ResolveDefaultTenantIdAsync()
+    {
+        await using var connection = new NpgsqlConnection(_mapping.UploadStoreConnectionString);
+        await connection.OpenAsync(TestContext.Current.CancellationToken);
+
+        await using var command = new NpgsqlCommand("""
+            SELECT tenant_id
+            FROM tenant_memberships
+            WHERE user_id = @userId AND is_default = TRUE
+            LIMIT 1
+            """, connection);
+        command.Parameters.AddWithValue("userId", MockUserId);
+
+        var tenantId = (string?)await command.ExecuteScalarAsync(TestContext.Current.CancellationToken);
+        if (string.IsNullOrWhiteSpace(tenantId))
+        {
+            throw new InvalidOperationException("Mock sign-in did not create a default tenant membership.");
+        }
+
+        return tenantId;
+    }
+
+    private sealed record AuthenticatedClient(HttpClient Client, string TenantId);
 
     private sealed class FileUploadApiResponse
     {

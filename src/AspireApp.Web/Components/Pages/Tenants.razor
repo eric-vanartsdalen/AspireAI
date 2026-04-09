@@ -1,0 +1,380 @@
+@page "/tenants"
+@rendermode InteractiveServer
+@attribute [Authorize]
+@implements IDisposable
+@inject TenantContextService TenantContext
+
+<PageTitle>Manage tenants</PageTitle>
+
+<section class="py-4" data-testid="tenant-management-page">
+    <div class="mb-4">
+        <h1>Manage tenants</h1>
+        <p class="lead">
+            Create extra workspaces, rename the tenants you own, and add members by username without exposing account details.
+        </p>
+    </div>
+
+    @if (!string.IsNullOrWhiteSpace(_statusMessage))
+    {
+        <div class="alert @_statusCssClass" role="alert" data-testid="tenant-management-status">
+            @_statusMessage
+        </div>
+    }
+
+    <div class="card shadow-sm mb-4">
+        <div class="card-body">
+            <div class="d-flex flex-wrap justify-content-between align-items-start gap-3">
+                <div>
+                    <h2 class="h5 mb-1">Current tenant</h2>
+                    <p class="mb-0 text-muted">Use the sidebar selector whenever you want to switch workspaces.</p>
+                </div>
+                <div class="text-end">
+                    <div class="fw-semibold">@TenantContext.CurrentTenantName</div>
+                    <div class="d-flex justify-content-end flex-wrap gap-2 mt-2">
+                        @if (CurrentTenant?.IsDefault == true)
+                        {
+                            <span class="badge text-bg-dark">Default</span>
+                        }
+                        @if (CurrentTenant?.IsProtected == true)
+                        {
+                            <span class="badge text-bg-secondary">Protected</span>
+                        }
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div class="card shadow-sm mb-4">
+        <div class="card-body">
+            <h2 class="h5 mb-3">Create another tenant</h2>
+            <div class="row g-3 align-items-end">
+                <div class="col-md-8">
+                    <label class="form-label" for="tenant-create-name">Tenant name</label>
+                    <input id="tenant-create-name"
+                           class="form-control"
+                           maxlength="200"
+                           data-testid="tenant-create-name"
+                           @bind="_newTenantName"
+                           @bind:event="oninput" />
+                </div>
+                <div class="col-md-4">
+                    <button type="button"
+                            class="btn btn-primary w-100"
+                            data-testid="tenant-create-submit"
+                            disabled="@_isWorking"
+                            @onclick="CreateTenantAsync">
+                        Create tenant
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    @if (OwnedTenants.Count == 0)
+    {
+        <div class="alert alert-info" role="status">
+            No owned tenants are available yet.
+        </div>
+    }
+    else
+    {
+        <div class="d-flex flex-column gap-3">
+            @foreach (var tenant in OwnedTenants)
+            {
+                var editor = GetEditor(tenant);
+
+                <section class="card shadow-sm" data-testid="@($"tenant-card-{tenant.TenantId}")">
+                    <div class="card-body">
+                        <div class="d-flex flex-wrap justify-content-between align-items-start gap-3 mb-3">
+                            <div>
+                                <h2 class="h5 mb-1">@tenant.Name</h2>
+                                <div class="d-flex flex-wrap gap-2">
+                                    @if (tenant.IsDefault)
+                                    {
+                                        <span class="badge text-bg-dark">Default</span>
+                                    }
+                                    @if (tenant.IsProtected)
+                                    {
+                                        <span class="badge text-bg-secondary" data-testid="tenant-protected-badge">Protected</span>
+                                    }
+                                    @if (TenantContext.CurrentTenantId == tenant.TenantId)
+                                    {
+                                        <span class="badge text-bg-primary">Current</span>
+                                    }
+                                </div>
+                            </div>
+
+                            <button type="button"
+                                    class="btn btn-outline-danger btn-sm"
+                                    data-testid="@($"tenant-delete-{tenant.TenantId}")"
+                                    title="Protected tenants can't be deleted."
+                                    disabled="@(tenant.IsProtected || _isWorking)"
+                                    @onclick="() => DeleteTenantAsync(tenant)">
+                                Delete
+                            </button>
+                        </div>
+
+                        @if (tenant.IsProtected)
+                        {
+                            <p class="small text-muted mb-3">This original tenant is protected and stays undeletable.</p>
+                        }
+
+                        <div class="row g-3">
+                            <div class="col-xl-6">
+                                <label class="form-label" for="@GetRenameInputId(tenant)">Tenant name</label>
+                                <input id="@GetRenameInputId(tenant)"
+                                       class="form-control"
+                                       maxlength="200"
+                                       data-testid="@($"tenant-rename-name-{tenant.TenantId}")"
+                                       @bind="editor.Name"
+                                       @bind:event="oninput" />
+                            </div>
+                            <div class="col-xl-6 d-flex align-items-end">
+                                <button type="button"
+                                        class="btn btn-outline-primary w-100"
+                                        data-testid="@($"tenant-rename-submit-{tenant.TenantId}")"
+                                        disabled="@_isWorking"
+                                        @onclick="() => RenameTenantAsync(tenant, editor)">
+                                    Save name
+                                </button>
+                            </div>
+
+                            <div class="col-xl-6">
+                                <label class="form-label" for="@GetMemberInputId(tenant)">Add member by username</label>
+                                <input id="@GetMemberInputId(tenant)"
+                                       class="form-control"
+                                       maxlength="100"
+                                       autocomplete="off"
+                                       autocapitalize="off"
+                                       spellcheck="false"
+                                       data-testid="@($"tenant-add-member-name-{tenant.TenantId}")"
+                                       @bind="editor.Username"
+                                       @bind:event="oninput" />
+                                <div class="form-text">Use a managed AspireAI username. The result stays generic for privacy.</div>
+                            </div>
+                            <div class="col-xl-6 d-flex align-items-end">
+                                <button type="button"
+                                        class="btn btn-outline-secondary w-100"
+                                        data-testid="@($"tenant-add-member-submit-{tenant.TenantId}")"
+                                        disabled="@_isWorking"
+                                        @onclick="() => AddMemberAsync(tenant, editor)">
+                                    Add member
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+                </section>
+            }
+        </div>
+    }
+</section>
+
+@code {
+    private readonly Dictionary<string, TenantEditorState> _editors = new(StringComparer.OrdinalIgnoreCase);
+
+    private string _newTenantName = string.Empty;
+    private string? _statusMessage;
+    private string _statusCssClass = "alert-info";
+    private bool _isWorking;
+
+    private TenantSummary? CurrentTenant => TenantContext.CurrentTenant;
+
+    private IReadOnlyList<TenantSummary> OwnedTenants => TenantContext.Tenants
+        .Where(tenant => tenant.IsOwner)
+        .OrderByDescending(tenant => tenant.IsDefault)
+        .ThenBy(tenant => tenant.Name, StringComparer.OrdinalIgnoreCase)
+        .ToList();
+
+    protected override async Task OnInitializedAsync()
+    {
+        TenantContext.OnTenantChanged += HandleTenantChanged;
+        TenantContext.OnTenantListChanged += HandleTenantListChanged;
+
+        await TenantContext.EnsureInitializedAsync();
+        SyncEditors();
+    }
+
+    private TenantEditorState GetEditor(TenantSummary tenant)
+    {
+        if (!_editors.TryGetValue(tenant.TenantId, out var editor))
+        {
+            editor = new TenantEditorState
+            {
+                Name = tenant.Name
+            };
+
+            _editors[tenant.TenantId] = editor;
+        }
+
+        return editor;
+    }
+
+    private async Task CreateTenantAsync()
+    {
+        var tenantName = _newTenantName.Trim();
+        if (string.IsNullOrWhiteSpace(tenantName))
+        {
+            ShowError("Enter a tenant name.");
+            return;
+        }
+
+        await RunAsync(async () =>
+        {
+            var tenant = await TenantContext.CreateTenantAsync(tenantName);
+            if (tenant is null)
+            {
+                ShowError("We couldn't create the tenant.");
+                return;
+            }
+
+            _newTenantName = string.Empty;
+            ShowSuccess($"Created {tenant.Name}.");
+        });
+    }
+
+    private async Task RenameTenantAsync(TenantSummary tenant, TenantEditorState editor)
+    {
+        var tenantName = editor.Name.Trim();
+        if (string.IsNullOrWhiteSpace(tenantName))
+        {
+            ShowError("Enter a tenant name.");
+            return;
+        }
+
+        await RunAsync(async () =>
+        {
+            var renamed = await TenantContext.RenameTenantAsync(tenant.TenantId, tenantName);
+            if (!renamed)
+            {
+                ShowError("We couldn't save that tenant name.");
+                return;
+            }
+
+            ShowSuccess("Tenant name saved.");
+        });
+    }
+
+    private async Task DeleteTenantAsync(TenantSummary tenant)
+    {
+        await RunAsync(async () =>
+        {
+            var deleted = await TenantContext.DeleteTenantAsync(tenant.TenantId);
+            if (!deleted)
+            {
+                ShowError("We couldn't delete that tenant.");
+                return;
+            }
+
+            _editors.Remove(tenant.TenantId);
+            ShowSuccess("Tenant deleted.");
+        });
+    }
+
+    private async Task AddMemberAsync(TenantSummary tenant, TenantEditorState editor)
+    {
+        var username = editor.Username.Trim();
+        if (string.IsNullOrWhiteSpace(username))
+        {
+            ShowError("Enter a username.");
+            return;
+        }
+
+        await RunAsync(async () =>
+        {
+            var added = await TenantContext.TryAddMemberAsync(tenant.TenantId, username);
+            editor.Username = string.Empty;
+
+            if (added)
+            {
+                ShowSuccess("Access updated.");
+                return;
+            }
+
+            ShowError("We couldn't update access.");
+        });
+    }
+
+    private async Task RunAsync(Func<Task> action)
+    {
+        if (_isWorking)
+        {
+            return;
+        }
+
+        ClearStatus();
+        _isWorking = true;
+
+        try
+        {
+            await action();
+        }
+        finally
+        {
+            _isWorking = false;
+        }
+    }
+
+    private void SyncEditors()
+    {
+        var tenantIds = TenantContext.Tenants
+            .Select(tenant => tenant.TenantId)
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
+
+        foreach (var tenant in TenantContext.Tenants)
+        {
+            var editor = GetEditor(tenant);
+            editor.Name = tenant.Name;
+        }
+
+        foreach (var removedId in _editors.Keys.Where(id => !tenantIds.Contains(id)).ToList())
+        {
+            _editors.Remove(removedId);
+        }
+    }
+
+    private void HandleTenantChanged()
+    {
+        _ = InvokeAsync(StateHasChanged);
+    }
+
+    private void HandleTenantListChanged()
+    {
+        SyncEditors();
+        _ = InvokeAsync(StateHasChanged);
+    }
+
+    private void ShowSuccess(string message)
+    {
+        _statusCssClass = "alert-success";
+        _statusMessage = message;
+    }
+
+    private void ShowError(string message)
+    {
+        _statusCssClass = "alert-danger";
+        _statusMessage = message;
+    }
+
+    private void ClearStatus()
+    {
+        _statusMessage = null;
+    }
+
+    private static string GetRenameInputId(TenantSummary tenant) => $"rename-{tenant.TenantId}";
+
+    private static string GetMemberInputId(TenantSummary tenant) => $"member-{tenant.TenantId}";
+
+    public void Dispose()
+    {
+        TenantContext.OnTenantChanged -= HandleTenantChanged;
+        TenantContext.OnTenantListChanged -= HandleTenantListChanged;
+    }
+
+    private sealed class TenantEditorState
+    {
+        public string Name { get; set; } = string.Empty;
+
+        public string Username { get; set; } = string.Empty;
+    }
+}

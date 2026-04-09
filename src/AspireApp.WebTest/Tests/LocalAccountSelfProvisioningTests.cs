@@ -2,11 +2,12 @@ extern alias web;
 
 using Microsoft.AspNetCore.Identity;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
 using LocalAccountAuthenticator = web::AspireApp.Web.Services.LocalAccountAuthenticator;
 using LocalAuthenticationOptions = web::AspireApp.Web.Services.LocalAuthenticationOptions;
 using LocalAuthUser = web::AspireApp.Web.Data.LocalAuthUser;
-using TenantContextService = web::AspireApp.Web.Services.TenantContextService;
+using TenantManagementService = web::AspireApp.Web.Services.TenantManagementService;
 using UploadDbContext = web::AspireApp.Web.Shared.UploadDbContext;
 
 namespace AspireApp.WebTest.Tests;
@@ -46,6 +47,8 @@ public sealed class LocalAccountSelfProvisioningTests
         Assert.NotNull(secondLogin);
         Assert.Equal(createdUser.UserId, secondLogin.UserId);
         Assert.Equal(1, await context.LocalAuthUsers.CountAsync(TestContext.Current.CancellationToken));
+        Assert.Equal(1, await context.Tenants.CountAsync(TestContext.Current.CancellationToken));
+        Assert.Equal(1, await context.TenantMemberships.CountAsync(TestContext.Current.CancellationToken));
     }
 
     [Fact]
@@ -74,13 +77,17 @@ public sealed class LocalAccountSelfProvisioningTests
         await authenticator.AuthenticateAsync("  Mixed.User-01  ", "LongEnough123!", TestContext.Current.CancellationToken);
 
         var savedUser = await context.LocalAuthUsers.SingleAsync(TestContext.Current.CancellationToken);
+        var tenant = await context.Tenants.SingleAsync(TestContext.Current.CancellationToken);
+        var membership = await context.TenantMemberships.SingleAsync(TestContext.Current.CancellationToken);
 
         Assert.Equal("Mixed.User-01", savedUser.Username);
         Assert.Equal("MIXED.USER-01", savedUser.NormalizedUsername);
         Assert.Equal("MIXED.USER-01@local.aspireai", savedUser.Email);
         Assert.Equal("MIXED.USER-01@LOCAL.ASPIREAI", savedUser.NormalizedEmail);
         Assert.Equal("Mixed.User-01", savedUser.DisplayName);
-        Assert.Equal(TenantContextService.DefaultTenantId, savedUser.DefaultTenantId);
+        Assert.Equal(tenant.Id, savedUser.DefaultTenantId);
+        Assert.True(tenant.IsProtected);
+        Assert.True(membership.IsDefault);
         Assert.True(savedUser.IsActive);
     }
 
@@ -128,6 +135,10 @@ public sealed class LocalAccountSelfProvisioningTests
         UploadDbContext context,
         PasswordHasher<LocalAuthUser> passwordHasher)
     {
+        var tenantManagementService = new TenantManagementService(
+            context,
+            NullLogger<TenantManagementService>.Instance);
+
         return new LocalAccountAuthenticator(
             context,
             passwordHasher,
@@ -135,7 +146,8 @@ public sealed class LocalAccountSelfProvisioningTests
             {
                 Enabled = true,
                 AllowSelfRegistration = true
-            }));
+            }),
+            tenantManagementService);
     }
 
     private static UploadDbContext CreateDbContext()

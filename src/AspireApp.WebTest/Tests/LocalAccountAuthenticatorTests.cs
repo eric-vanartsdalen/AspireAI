@@ -2,10 +2,12 @@ extern alias web;
 
 using Microsoft.AspNetCore.Identity;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
 using LocalAccountAuthenticator = web::AspireApp.Web.Services.LocalAccountAuthenticator;
 using LocalAuthenticationOptions = web::AspireApp.Web.Services.LocalAuthenticationOptions;
 using LocalAuthUser = web::AspireApp.Web.Data.LocalAuthUser;
+using TenantManagementService = web::AspireApp.Web.Services.TenantManagementService;
 using UploadDbContext = web::AspireApp.Web.Shared.UploadDbContext;
 
 namespace AspireApp.WebTest.Tests;
@@ -28,7 +30,14 @@ public sealed class LocalAccountAuthenticatorTests
         Assert.NotNull(result);
         Assert.Equal("Local Admin", result.DisplayName);
         Assert.Equal("local", result.ProviderId);
-        Assert.Equal("tenant-a", result.DefaultTenantId);
+
+        Assert.False(string.IsNullOrWhiteSpace(result.DefaultTenantId));
+        var tenant = await context.Tenants.SingleAsync(TestContext.Current.CancellationToken);
+        var membership = await context.TenantMemberships.SingleAsync(TestContext.Current.CancellationToken);
+        Assert.Equal(result.DefaultTenantId, tenant.Id);
+        Assert.Equal($"local-{localUser.Id}", tenant.OwnerUserId);
+        Assert.True(tenant.IsProtected);
+        Assert.True(membership.IsDefault);
     }
 
     [Fact]
@@ -121,10 +130,15 @@ public sealed class LocalAccountAuthenticatorTests
         PasswordHasher<LocalAuthUser> passwordHasher,
         LocalAuthenticationOptions? options = null)
     {
+        var tenantManagementService = new TenantManagementService(
+            context,
+            NullLogger<TenantManagementService>.Instance);
+
         return new LocalAccountAuthenticator(
             context,
             passwordHasher,
-            Options.Create(options ?? new LocalAuthenticationOptions { Enabled = true }));
+            Options.Create(options ?? new LocalAuthenticationOptions { Enabled = true }),
+            tenantManagementService);
     }
 
     private static UploadDbContext CreateDbContext()

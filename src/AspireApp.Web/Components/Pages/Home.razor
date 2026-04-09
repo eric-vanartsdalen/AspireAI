@@ -10,20 +10,27 @@
         <div class="py-3">
             <h1>Welcome back, @AuthenticationContext.CurrentUser?.DisplayName</h1>
             <p class="lead">
-                You are signed in and ready to work with chat, uploads, and your current tenant workspace.
+                You are signed in and ready to work with chat, uploads, and tenant-aware workspaces.
             </p>
 
             <div class="row g-3 mb-4">
-                <div class="col-md-4">
+                <div class="col-lg-3 col-md-6">
                     <a class="btn btn-primary w-100" href="chat">Open chat</a>
                 </div>
-                <div class="col-md-4">
+                <div class="col-lg-3 col-md-6">
                     <a class="btn btn-outline-primary w-100" href="upload">Upload documents</a>
                 </div>
-                <div class="col-md-4">
+                <div class="col-lg-3 col-md-6">
+                    <a class="btn btn-outline-primary w-100" href="tenants">Manage tenants</a>
+                </div>
+                <div class="col-lg-3 col-md-6">
                     <a class="btn btn-outline-primary w-100" href="weather">View weather</a>
                 </div>
             </div>
+
+            <p class="text-muted">
+                Need another workspace or want to share one with a teammate? Open tenant management from here or the sidebar.
+            </p>
 
             <hr />
             <h3>Configuration Values</h3>

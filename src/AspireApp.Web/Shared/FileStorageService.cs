@@ -14,6 +14,8 @@ public class FileStorageService(
     private readonly ILogger<FileStorageService> _logger = logger;
     private readonly string _dataDirectory = dataDirectory;
 
+    public string DataDirectory => _dataDirectory;
+
     /// <summary>
     /// Ensures the database and data directory are properly initialized
     /// </summary>
@@ -93,13 +95,20 @@ public class FileStorageService(
     /// <summary>
     /// Checks if a file with the same hash already exists
     /// </summary>
-    public async Task<FileMetadata?> FindDuplicateByHashAsync(string fileHash)
+    public async Task<FileMetadata?> FindDuplicateByHashAsync(string fileHash, string? tenantId = null)
     {
         try
         {
             await EnsureInitializedAsync();
-            return await _context.Datasources
-                .FirstOrDefaultAsync(f => f.FileHash == fileHash);
+            var query = _context.Datasources
+                .Where(f => f.FileHash == fileHash);
+
+            if (!string.IsNullOrWhiteSpace(tenantId))
+            {
+                query = query.Where(f => f.TenantId == tenantId);
+            }
+
+            return await query.FirstOrDefaultAsync();
         }
         catch (Exception ex)
         {
@@ -281,14 +290,22 @@ public class FileStorageService(
         }
     }
 
-    public async Task<bool> DeleteFileAsync(int id)
+    public async Task<bool> DeleteFileAsync(int id, string? tenantId = null)
     {
         try
         {
             // Ensure database is initialized before deleting
             await EnsureInitializedAsync();
 
-            var file = await _context.Datasources.FindAsync(id);
+            var query = _context.Datasources
+                .Where(file => file.Id == id);
+
+            if (!string.IsNullOrWhiteSpace(tenantId))
+            {
+                query = query.Where(file => file.TenantId == tenantId);
+            }
+
+            var file = await query.SingleOrDefaultAsync();
             if (file == null)
             {
                 return false;
@@ -345,13 +362,20 @@ public class FileStorageService(
     /// <summary>
     /// Checks if a URL already exists in the datasources
     /// </summary>
-    public async Task<FileMetadata?> FindDuplicateByUrlAsync(string sourceUrl)
+    public async Task<FileMetadata?> FindDuplicateByUrlAsync(string sourceUrl, string? tenantId = null)
     {
         try
         {
             await EnsureInitializedAsync();
-            return await _context.Datasources
-                .FirstOrDefaultAsync(f => f.SourceUrl == sourceUrl && f.SourceType == "url");
+            var query = _context.Datasources
+                .Where(f => f.SourceUrl == sourceUrl && f.SourceType == "url");
+
+            if (!string.IsNullOrWhiteSpace(tenantId))
+            {
+                query = query.Where(f => f.TenantId == tenantId);
+            }
+
+            return await query.FirstOrDefaultAsync();
         }
         catch (Exception ex)
         {

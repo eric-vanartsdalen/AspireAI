@@ -8,12 +8,14 @@ namespace AspireApp.Web.Services;
 public sealed class MockAuthService(
     AppAuthenticationStateProvider authenticationStateProvider,
     TenantContextService tenantContextService,
+    TenantManagementService tenantManagementService,
     NavigationManager navigationManager) : IAuthService
 {
     public const string ServiceKey = "mock";
 
     private readonly AppAuthenticationStateProvider _authenticationStateProvider = authenticationStateProvider;
     private readonly TenantContextService _tenantContextService = tenantContextService;
+    private readonly TenantManagementService _tenantManagementService = tenantManagementService;
     private readonly NavigationManager _navigationManager = navigationManager;
 
     public IReadOnlyList<AuthProviderOption> GetProviders() => MockAuthCatalog.GetProviders();
@@ -36,10 +38,7 @@ public sealed class MockAuthService(
             throw new InvalidOperationException("The selected mock user could not be found.");
         }
 
-        _authenticationStateProvider.SetCurrentUser(selectedUser);
-        _tenantContextService.InitializeForUser(selectedUser.DefaultTenantId);
-        _navigationManager.NavigateTo(BuildSignInUri(providerId, selectedUser.UserId, redirectUri), forceLoad: true);
-        return Task.CompletedTask;
+        return SignInWithTenantAsync(selectedUser, redirectUri, cancellationToken);
     }
 
     public Task SignOutAsync(string? redirectUri = null, CancellationToken cancellationToken = default)
@@ -50,6 +49,23 @@ public sealed class MockAuthService(
         _tenantContextService.Reset();
         _navigationManager.NavigateTo(BuildSignOutUri(redirectUri), forceLoad: true);
         return Task.CompletedTask;
+    }
+
+    private async Task SignInWithTenantAsync(
+        AuthenticatedUser selectedUser,
+        string? redirectUri,
+        CancellationToken cancellationToken)
+    {
+        var tenantSnapshot = await _tenantManagementService.EnsureTenantAccessAsync(
+            new TenantUserDescriptor(selectedUser.UserId, selectedUser.DisplayName, selectedUser.Email),
+            cancellationToken);
+
+        var authenticatedUser = selectedUser with { DefaultTenantId = tenantSnapshot.DefaultTenantId };
+        _authenticationStateProvider.SetCurrentUser(authenticatedUser);
+        await _tenantContextService.InitializeForUserAsync(authenticatedUser, cancellationToken);
+        _navigationManager.NavigateTo(
+            BuildSignInUri(authenticatedUser.ProviderId, authenticatedUser.UserId, redirectUri),
+            forceLoad: true);
     }
 
     private static string BuildSignInUri(string providerId, string userId, string? redirectUri)

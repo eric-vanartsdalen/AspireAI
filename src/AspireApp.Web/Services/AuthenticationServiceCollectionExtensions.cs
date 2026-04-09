@@ -3,6 +3,7 @@ using Microsoft.AspNetCore.Authentication.Cookies;
 using Microsoft.AspNetCore.Authentication.OpenIdConnect;
 using Microsoft.AspNetCore.Components.Authorization;
 using Microsoft.AspNetCore.Identity;
+using Microsoft.Extensions.DependencyInjection;
 using Microsoft.IdentityModel.Protocols.OpenIdConnect;
 using System.Security.Claims;
 
@@ -57,14 +58,27 @@ public static class AuthenticationServiceCollectionExtensions
                 options.TokenValidationParameters.NameClaimType = "name";
                 options.Events = new OpenIdConnectEvents
                 {
-                    OnTokenValidated = context =>
+                    OnTokenValidated = async context =>
                     {
-                        var appUser = BuildMicrosoftUser(context.Principal, microsoftOptions);
-                        if (appUser is null)
+                        var userDescriptor = BuildMicrosoftUserDescriptor(context.Principal);
+                        if (userDescriptor is null)
                         {
                             context.Fail("The Microsoft Entra ID sign-in response did not include the claims required to establish the local app session.");
-                            return Task.CompletedTask;
+                            return;
                         }
+
+                        var tenantManagement = context.HttpContext.RequestServices.GetRequiredService<TenantManagementService>();
+                        var tenantSnapshot = await tenantManagement.EnsureTenantAccessAsync(
+                            userDescriptor,
+                            context.HttpContext.RequestAborted);
+
+                        var appUser = new AuthenticatedUser(
+                            userDescriptor.UserId,
+                            userDescriptor.DisplayName,
+                            userDescriptor.Email,
+                            MicrosoftEntraAuthService.ProviderId,
+                            "Microsoft",
+                            tenantSnapshot.DefaultTenantId);
 
                         if (context.Principal?.Identity is ClaimsIdentity identity)
                         {
@@ -73,8 +87,6 @@ public static class AuthenticationServiceCollectionExtensions
                             RemoveClaimIfPresent(identity, AuthenticatedUserClaims.TenantId);
                             AuthenticatedUserClaims.AddClaims(identity, appUser);
                         }
-
-                        return Task.CompletedTask;
                     }
                 };
             });
@@ -95,6 +107,8 @@ public static class AuthenticationServiceCollectionExtensions
         services.AddScoped<AuthenticationStateProvider>(sp => sp.GetRequiredService<AppAuthenticationStateProvider>());
         services.AddScoped<AuthServiceFactory>();
         services.AddScoped<IPasswordHasher<LocalAuthUser>, PasswordHasher<LocalAuthUser>>();
+        services.AddScoped<TenantManagementService>();
+        services.AddScoped<TenantStoreBootstrapper>();
         services.AddAuthServiceRegistration<LocalAuthService>(AuthenticationOptions.LocalService);
         services.AddAuthServiceRegistration<MicrosoftEntraAuthService>(AuthenticationOptions.MicrosoftService);
         services.AddAuthServiceRegistration<MockAuthService>(AuthenticationOptions.MockService);
@@ -140,7 +154,7 @@ public static class AuthenticationServiceCollectionExtensions
         }
     }
 
-    private static AuthenticatedUser? BuildMicrosoftUser(ClaimsPrincipal? principal, MicrosoftEntraAuthenticationOptions options)
+    private static TenantUserDescriptor? BuildMicrosoftUserDescriptor(ClaimsPrincipal? principal)
     {
         if (principal is null)
         {
@@ -162,37 +176,10 @@ public static class AuthenticationServiceCollectionExtensions
             return null;
         }
 
-        return new AuthenticatedUser(
+        return new TenantUserDescriptor(
             userId,
             displayName,
-            email,
-            MicrosoftEntraAuthService.ProviderId,
-            "Microsoft",
-            ResolveTenantSeed(email, options));
-    }
-
-    private static string ResolveTenantSeed(string email, MicrosoftEntraAuthenticationOptions options)
-    {
-        if (options.UserTenantSeeds.TryGetValue(email, out var userTenant) &&
-            !string.IsNullOrWhiteSpace(userTenant))
-        {
-            return userTenant;
-        }
-
-        var atIndex = email.LastIndexOf('@');
-        if (atIndex > -1)
-        {
-            var domain = email[(atIndex + 1)..];
-            if (options.DomainTenantSeeds.TryGetValue(domain, out var domainTenant) &&
-                !string.IsNullOrWhiteSpace(domainTenant))
-            {
-                return domainTenant;
-            }
-        }
-
-        return string.IsNullOrWhiteSpace(options.DefaultAppTenantId)
-            ? "default"
-            : options.DefaultAppTenantId;
+            email);
     }
 
     private static void RemoveClaimIfPresent(ClaimsIdentity identity, string claimType)

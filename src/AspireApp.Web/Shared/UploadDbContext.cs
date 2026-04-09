@@ -22,6 +22,16 @@ namespace AspireApp.Web.Shared
         /// </summary>
         public DbSet<LocalAuthUser> LocalAuthUsers => Set<LocalAuthUser>();
 
+        /// <summary>
+        /// Workspace tenants owned and shared across authenticated users.
+        /// </summary>
+        public DbSet<Tenant> Tenants => Set<Tenant>();
+
+        /// <summary>
+        /// Per-user tenant memberships and default tenant selections.
+        /// </summary>
+        public DbSet<TenantMembership> TenantMemberships => Set<TenantMembership>();
+
         // Backward compatibility alias
         [Obsolete("Use Datasources DbSet instead")]
         public DbSet<FileMetadata> Files => Set<FileMetadata>();
@@ -114,6 +124,50 @@ namespace AspireApp.Web.Shared
 
                 entity.HasIndex(e => e.IsActive)
                       .HasDatabaseName("idx_local_auth_users_is_active");
+
+                entity.HasIndex(e => e.DefaultTenantId)
+                      .HasDatabaseName("idx_local_auth_users_default_tenant");
+            });
+
+            modelBuilder.Entity<Tenant>(entity =>
+            {
+                entity.ToTable("tenants");
+                entity.HasKey(e => e.Id);
+                entity.Property(e => e.Id).HasMaxLength(100);
+                entity.Property(e => e.Name).IsRequired().HasMaxLength(200);
+                entity.Property(e => e.OwnerUserId).IsRequired().HasMaxLength(200);
+                entity.Property(e => e.IsProtected).HasDefaultValue(false);
+                entity.Property(e => e.CreatedAt).HasDefaultValueSql("CURRENT_TIMESTAMP");
+                entity.Property(e => e.UpdatedAt).HasDefaultValueSql("CURRENT_TIMESTAMP");
+
+                entity.HasIndex(e => e.OwnerUserId)
+                      .HasDatabaseName("idx_tenants_owner_user");
+            });
+
+            modelBuilder.Entity<TenantMembership>(entity =>
+            {
+                entity.ToTable("tenant_memberships");
+                entity.HasKey(e => e.Id);
+                entity.Property(e => e.Id).ValueGeneratedOnAdd();
+                entity.Property(e => e.TenantId).IsRequired().HasMaxLength(100);
+                entity.Property(e => e.UserId).IsRequired().HasMaxLength(200);
+                entity.Property(e => e.IsDefault).HasDefaultValue(false);
+                entity.Property(e => e.CreatedAt).HasDefaultValueSql("CURRENT_TIMESTAMP");
+
+                entity.HasIndex(e => new { e.TenantId, e.UserId })
+                      .IsUnique()
+                      .HasDatabaseName("ux_tenant_memberships_tenant_user");
+
+                entity.HasIndex(e => e.UserId)
+                      .HasDatabaseName("idx_tenant_memberships_user");
+
+                entity.HasIndex(e => e.TenantId)
+                      .HasDatabaseName("idx_tenant_memberships_tenant");
+
+                entity.HasOne(e => e.Tenant)
+                      .WithMany(t => t.Memberships)
+                      .HasForeignKey(e => e.TenantId)
+                      .OnDelete(DeleteBehavior.Cascade);
             });
 
             // ==================== Legacy Schema Configuration (Backward Compatibility) ====================
