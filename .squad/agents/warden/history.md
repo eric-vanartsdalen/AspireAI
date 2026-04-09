@@ -116,3 +116,26 @@
   - UI password hint missing: `SignInPanel.razor` credential form has no `minlength` or helper text. Jeff should add both.
   - Password reset deferred: already explicitly deferred in prior security gate. Acceptable — user acknowledged "this can wait."
   - Decision logged: `.squad/decisions/inbox/warden-password-floor-relaxation.md`
+
+### 2026-04-09 — Tenant Slice Session: Security Review & Revision
+
+**Role:** Security Specialist (Tenant Edge Cases)
+
+**Outcome:** Approved core security model; identified and fixed add-member exception handling + direct recovery test gaps.
+
+**What Warden Did:**
+1. Reviewed tenant isolation model: default-tenant protection, upload authorization, membership enforcement
+2. Approved default-tenant protection mechanism (is_default immutable, delete rejection)
+3. Approved upload authorization hardening (403 for unmembered tenants)
+4. Identified gap: AddMemberByUsernameAsync only catches DbUpdateException; other transient failures bubble unhandled
+5. Identified gap: No direct tests for EnsureTenantAccessAsync recovery logic
+6. Created revision decision with fixes:
+   - Broaden exception catch to all failures (excluding OperationCanceledException)
+   - Add 6 direct tests: no memberships, multiple defaults, save failure, etc.
+7. Coordinated with Buster on final test audit
+
+**Key Decisions Contributed:**
+- Tenant Isolation, Default-Tenant Protection & Add-Member Security Requirements — comprehensive security model
+- Tenant Edge-Case Revision — save-failure catch broadening + direct recovery tests
+
+**Status:** Approved; revision implemented; security gate passed

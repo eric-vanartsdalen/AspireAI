@@ -870,3 +870,27 @@ The behavior being tested (legacy schema detection with detailed diagnostics) st
 **Cross-Service Impact:** Tenant selector regression test required (Buster + Jeff coordination)
 
 **Next:** Implementation by Jeff; validation by Buster per gate pass/fail criteria
+
+### 2026-04-09 — Tenant Slice Session: Test Audit & Multi-Gate Review
+
+**Role:** QA / Tester (Tenant Coverage & Authorization)
+
+**Outcome:** Produced comprehensive test strategy; 3 review cycles; final approval after edge-case fixes. 28/28 tests passing.
+
+**What Buster Did:**
+1. Conducted audit of tenant provisioning, protection, and isolation requirements
+2. Produced 42-50 test case strategy across auth, security, UI, and regression categories
+3. First review: Rejected — missing direct recovery tests and add-member edge cases
+4. Second review: Rejected — missing UploadUrl tenant-isolation regression test
+5. Escalated UploadUrl test to specialist agent (focused fix)
+6. Final review: Approved — all gates met; 28 targeted tests passing
+
+**Key Learnings:**
+- Test-first validation catches implementation gaps early
+- Multi-gate QA (security + coverage) ensures distinct risk classes don't slip
+- Specialist escalation works well for targeted edge-case tests
+
+**Key Decisions Contributed:**
+- Tenant Management Test Coverage Audit — 42-50 test cases + prerequisites + risk summary
+
+**Status:** Final approval; tenant slice ready for merge; 28/28 tests green

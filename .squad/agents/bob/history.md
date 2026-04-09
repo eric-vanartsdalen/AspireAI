@@ -485,3 +485,25 @@ The entire codebase has a gap between C# upload and Python processing:
 - UI surface: `Components/Shared/SignInPanel.razor`
 - Cookie endpoints: `Program.cs` (lines 144-195 for mock pattern to follow)
 - Config: `appsettings.json` → `Authentication:Local` section
+
+### 2026-04-09 — Tenant Slice Session: Architecture Coordination
+
+**Role:** Lead / Architect (Cross-Service Tenant Model)
+
+**Outcome:** Approved tenant slice foundation; recommended local-auth-slice as next layer.
+
+**What Bob Did:**
+1. Reviewed tenant architecture: persisted model, default-tenant protection, membership enforcement
+2. Approved seam fit: tenant context integrated seamlessly with existing auth provider abstraction
+3. Identified local-auth-slice as natural next step: config-provisioned users + extensible provider pattern
+4. Recommended starting local-auth work after tenant slice complete
+
+**Key Decisions Contributed:**
+- Local Username/Password Auth — First Slice Recommendation — managed credentials, no full Identity import, provider seam extensibility
+
+**Coordination Notes:**
+- Tenant slice unblocks multi-user auth stories
+- Local auth foundation will support tenant per-user provisioning in later phase
+- BRAIN gateway Phase 6 will propagate tenant_id header across services
+
+**Status:** Approved; recommendation ready for implementation

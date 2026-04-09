@@ -9,6 +9,21 @@
 
 <!-- Append new learnings below. Each entry is something lasting about the project. -->
 
+### 2026-04-07 — Tenant access is now per-user with protected defaults and membership enforcement
+
+**Status:** Implemented and tested.
+
+**Implementation Results:**
+- ✅ Tenants are now persisted via `tenants` + `tenant_memberships`; each authenticated user gets a protected default tenant on first sign-in or backfill.
+- ✅ `TenantContextService` now loads per-user tenant lists, supports create/rename/delete, and adds members by username without exposing user lists.
+- ✅ Upload APIs resolve tenant membership from auth claims and enforce tenant-scoped duplicate detection + deletion.
+
+**Key Paths:**
+- `src\AspireApp.Web\Data\Tenant.cs` / `TenantMembership.cs` — tenant persistence models
+- `src\AspireApp.Web\Services\TenantManagementService.cs` / `TenantContextService.cs` — provisioning + UI orchestration
+- `src\AspireApp.Web\Controllers\FileUploadController.cs` / `Shared\FileStorageService.cs` — tenant-scoped upload enforcement
+- `src\AspireApp.Web\Components\Shared\TenantSelector.razor` — management UI
+
 ### 2026-04-06 — Local auth UX should surface the same password floor the server enforces
 
 **Status:** Implemented and validated.
@@ -899,3 +914,31 @@
 
 **Status:** ✅ Documentation ready for user testing. Auth implementation approved by security specialist. All decisions merged and inbox cleared.
 
+
+### 2026-04-09 — Tenant Slice Session: Core Implementation
+
+**Role:** .NET Dev (Core Tenant Model)
+
+**Outcome:** Implemented persisted tenant model with default-tenant protection and upload authorization hardening. 28 targeted tests passing; ready for merge.
+
+**What Jeff Did:**
+1. Created tenants and tenant_memberships tables with proper constraints
+2. Implemented TenantManagementService.EnsureTenantAccessAsync() for idempotent default-tenant recovery
+3. Hardened FileUploadController to validate X-Tenant-Id membership; reject 403 for unmembered tenants
+4. Added tenant-scoped duplicate detection and file deletion
+5. Updated TenantSelector.razor to render user's actual memberships (not hardcoded list)
+6. Implemented add-member by username with generic success/failure response
+7. Created /tenants management page with protected badge for original tenant
+8. Added test coverage for provisioning, protection, and authorization paths
+
+**Coordination:**
+- Warden identified add-member exception handling gap; Jeff broadened catch block
+- Buster required direct recovery tests; Jeff added 6 direct tests
+- Specialist added UploadUrl tenant-isolation regression test
+
+**Key Decisions Contributed:**
+- Tenant Core Implementation — persisted model + cached DefaultTenantId pointer
+- Tenant UI Implementation — single management page + protected badge UI
+- Tenant Upload Authorization Enforcement — X-Tenant-Id validation on every operation
+
+**Status:** Slice complete; security approved; tests passing; merged to decisions.md

@@ -4,6 +4,7 @@
 > Scribe merges new decisions from `.squad/decisions/inbox/` after each session.
 > **Note (2026-04-05T21:33:20Z):** Merged 18 inbox decisions from auth documentation and QA validation (Jeff, Warden, Bob, Buster). Consolidated Bob's UX revision + Buster's multi-gate approval into a single "Mock Pluggable Auth Slice" decision. No duplicates found. Inbox cleared.
 > **Note (2026-04-06T18:38:14Z):** Merged local auth password floor relaxation decision (Warden approval + Jeff implementation). Relax minimum from 12 to 10 characters; add visible UI hint; confirm case-insensitive username uniqueness already implemented; defer password reset. All implementation work complete and tested.
+> **Note (2026-04-09T15:39:08Z):** Merged 6 tenant slice decisions (Jeff, Warden, Buster, Bob). Tenant isolation via persisted tenants/memberships, default-tenant protection + backfill, upload authorization hardening, add-member edge-case revision, and local-auth-slice foundation recommendation. 28 targeted tests passing. No duplicates found. Inbox cleared.
 
 <!-- Decisions are appended below. Each entry starts with ### -->
 
@@ -553,7 +554,194 @@ User request — captured for team memory.
 
 ---
 
-## Authentication Auto Mode Security Audit: APPROVED — Warden — 2026-07-22
+## Tenant Isolation, Default-Tenant Protection & Add-Member Security Requirements — Warden — 2025-07-25
+
+**Author:** Warden (Security Specialist)  
+**Status:** IMPLEMENTED  
+**Scope:** Per-user tenant ownership, protected default tenants, tenant CRUD authorization, username-based add-member flow, tenant isolation enforcement.
+
+### Context
+
+Current tenant model is a hardcoded static array in `TenantContextService`. Every authenticated user sees every tenant. There is no database-backed tenant entity, no user-to-tenant membership, no ownership, and no authorization boundary.
+
+### Security Requirements (Implemented)
+
+**SR-1: Database-Backed Tenant Entity** — `tenants` table with id, display_name, owner_user_id, is_default, created_at, updated_at. Unique index on (owner_user_id, display_name).
+
+**SR-2: Tenant Membership Table** — `tenant_memberships` junction with id, tenant_id, user_id, role ('owner'/'member'), created_at. Composite unique index on (tenant_id, user_id).
+
+**SR-3: Auto-Provisioned Default Tenant** — New user creation atomically creates persisted tenant with is_default=true, owner is the new user, membership role is 'owner'.
+
+**SR-4: Default Tenant Undeletable** — is_default flag immutable after creation; delete operations reject when is_default=true. Server-side enforcement only.
+
+**SR-5: Tenant CRUD Authorization** — Create (any authenticated user), Read (user's memberships only), Update (owner only), Delete (owner + non-default only).
+
+**SR-6: Tenant-Scoped Data Access** — Every query validates user membership before returning data. FileUploadController validates X-Tenant-Id header against memberships; rejects 403.
+
+**SR-7: Username-Based Add-Member Anti-Enumeration** — Accept username, normalize, lookup privately. Uniform success/failure response. No user-list or search endpoint. Rate limiting logged.
+
+**SR-8: Prevent Self-Addition** — Self-add silently rejected same as other failures.
+
+**SR-9: Migration from Hardcoded Tenants** — Existing FileMetadata rows and LocalAuthUser records migrate to per-user tenants or orphan handling.
+
+**SR-10: Tenant Deletion Cascade** — Tenant_memberships cascade-deleted; FileMetadata handled (migrate to default or block). Member's DefaultTenantId reassigned if points to deleted tenant.
+
+### Implementation Complete
+
+- [x] Tenants and tenant_memberships tables created
+- [x] Unique constraints enforced
+- [x] Auto-provisioning in LocalAccountAuthenticator.TryCreateUserAsync
+- [x] Upload authorization validation in FileUploadController
+- [x] TenantContextService returns user-scoped tenants only
+- [x] Add-member endpoint with anti-enumeration
+
+---
+
+## Tenant Core Implementation — Jeff — 2026-04-09
+
+**Author:** Jeff (.NET Dev)  
+**Status:** IMPLEMENTED  
+**Scope:** Persisted tenant model, default-tenant backfill, upload authorization.
+
+### Decision
+
+Persisted `tenants` and `tenant_memberships` tables remain source of truth. `LocalAuthUser.DefaultTenantId` treated as cached pointer, backfilled from persisted memberships on login/bootstrap. Upload authorization scoped by membership.
+
+### Implementation
+
+1. **Persisted Model** — Tenants table with owner_user_id FK, is_default boolean, display_name. TenantMemberships table with tenant_id/user_id FKs, role column.
+
+2. **Default Tenant Creation** — On first login, `TenantManagementService.EnsureTenantAccessAsync` atomically creates protected default tenant if user has no memberships. Backfill migration handles legacy users.
+
+3. **Upload Authorization** — `FileUploadController` validates X-Tenant-Id header against current user's tenant_memberships. Rejects 403 Forbidden if no membership found. Duplicate detection and file deletion scoped to resolved tenant.
+
+4. **Idempotent Recovery** — EnsureTenantAccessAsync handles multiple defaults, missing memberships, and transient failures gracefully.
+
+### Key Paths
+
+- `src/AspireApp.Web/Services/TenantManagementService.cs`
+- `src/AspireApp.Web/Data/Tenant.cs`, `TenantMembership.cs`
+- `src/AspireApp.Web/Controllers/FileUploadController.cs`
+
+---
+
+## Tenant UI Implementation — Jeff — 2026-04-09
+
+**Author:** Jeff (.NET Dev)  
+**Status:** IMPLEMENTED  
+**Scope:** Tenant management page, TenantSelector binding, add-member flow.
+
+### Decision
+
+Single protected `/tenants` page linked from sidebar, home, and tenant selector. Original default tenant shown with protected badge; delete unavailable. Add-member by username with generic success/failure response.
+
+### Implementation
+
+1. **Tenant Management Page** — `/tenants` lists user's tenants, shows protected badge for original, enables rename for owned, enables delete for non-protected non-default.
+
+2. **TenantSelector Binding** — Renders only user's actual memberships, not hardcoded list. Defaults to user's default tenant on login.
+
+3. **Add-Member Form** — Username input only (no autocomplete, no suggestions). Returns generic success/failure; no username hints. Self-add and already-member collapse to failure.
+
+### Key Paths
+
+- `src/AspireApp.Web/Components/Pages/Tenants.razor`
+- `src/AspireApp.Web/Components/Shared/TenantSelector.razor`
+
+---
+
+## Tenant Edge-Case Revision — Warden — 2026-04-07
+
+**Author:** Warden (Security Specialist)  
+**Status:** IMPLEMENTED  
+**Scope:** Add-member exception handling, direct recovery test coverage.
+
+### Decision
+
+Broaden save-failure catch in `AddMemberByUsernameAsync` to `Exception` (excluding `OperationCanceledException`) so all failures collapse to return false. Add six direct tests for `EnsureTenantAccessAsync` recovery paths.
+
+### Rationale
+
+Original code only caught `DbUpdateException`. Transient failures (e.g., `InvalidOperationException`) would bubble unhandled, leaking implementation details. Direct recovery tests prove idempotence and multiple-default resolution.
+
+### Implementation
+
+1. **Exception Catch Broadening** — Wrap SaveChangesAsync in broader catch; log warning; return false.
+2. **Direct Tests** — No memberships → create default; multiple defaults → resolve; save failure → return false; etc.
+
+### No Schema Changes
+
+Test coverage only; all logic changes backward-compatible.
+
+---
+
+## Tenant Upload Authorization Enforcement — Jeff — 2026-04-07
+
+**Author:** Jeff (.NET Dev)  
+**Status:** IMPLEMENTED  
+**Scope:** X-Tenant-Id header validation, file-operation scoping.
+
+### Decision
+
+Upload endpoints validate X-Tenant-Id header against authenticated user's tenant_memberships. Rejects 403 Forbidden for unmembered tenants. Duplicate detection and deletion scoped to resolved tenant.
+
+### Rationale
+
+Prevents malicious or confused users from exfiltrating data by spoofing X-Tenant-Id header. Tenant isolation is meaningless without enforcement on every operation.
+
+### Key Paths
+
+- `src/AspireApp.Web/Controllers/FileUploadController.cs`
+- `src/AspireApp.Web/Services/FileStorageService.cs`
+
+---
+
+## Local Username/Password Auth — First Slice Recommendation — Bob — 2026-07-29
+
+**Author:** Bob (Lead / Architect)  
+**Status:** RECOMMENDED — Approved for implementation  
+**Scope:** Managed local username/password authentication within existing pluggable auth architecture.
+
+### Decision
+
+Add `LocalAuthService : IAuthService` to validate username/password credentials against config-provisioned users. Issue same ASP.NET Core cookie ticket as mock/Microsoft providers. Stay on custom auth seam; do not import ASP.NET Core Identity.
+
+### Why
+
+- Provider seam already exists; local auth fits cleanly
+- No self-service registration (pre-provisioned users only)
+- Credential validation in server-side endpoint, not Blazor interactive
+- Foundation for DB-backed user management in later phase
+
+### Implementation Outline
+
+1. `LocalAuthenticationOptions` — options class with Users list, MinimumPasswordLength
+2. `LocalAuthService : IAuthService` — returns AuthProviderOption with RequiresCredentials=true
+3. `AuthProviderOption` — add RequiresCredentials property
+4. `CompositeAuthService` — refactor to accept providers dynamically
+5. `SignInPanel.razor` — new branch for credentials-form rendering
+6. `POST /auth/local/signin` — validate credentials → hash check → issue cookie
+7. Config — Authentication:Local section with pre-provisioned users (hashed passwords)
+8. Offline hash tool — generate BCrypt hashes for initial provisioning
+
+### Red Flags Mitigated
+
+- Don't import full ASP.NET Core Identity (use standalone PasswordHasher<T>)
+- Don't add new DbContext yet (config-based users keep slice additive)
+- Don't modify IAuthService interface (password validation server-side)
+- SignInPanel needs RequiresCredentials flag for form rendering
+- CompositeAuthService must be dynamic, not hardcoded providers
+- Password hashes acceptable in config for first slice (mark secret in Aspire)
+
+### What This Unlocks
+
+- Real credential-based login alongside mock and Microsoft auth
+- Proves provider seam is genuinely extensible
+- Foundation for DB-backed users and self-service registration later
+
+---
+
+
 
 **Author:** Warden (Security Specialist)
 **Status:** APPROVED
