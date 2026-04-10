@@ -37,6 +37,7 @@ namespace AspireApp.Web.Components.Pages
         public AiInfoStateService AiInfoState { get; set; } = default!;
 
         private ElementReference questionInput;
+        private ElementReference conversationTitleInput;
         private CancellationTokenSource? _cancellationTokenSource;
         private DotNetObjectReference<Chat>? _dotNetRef;
 
@@ -49,6 +50,7 @@ namespace AspireApp.Web.Components.Pages
         private string ActiveConversationTitle { get; set; } = ChatConversationTitleHelper.BuildFallbackTitle(string.Empty);
         private string ConversationTitleDraft { get; set; } = string.Empty;
         private bool IsEditingConversationTitle { get; set; }
+        private bool ShouldFocusConversationTitleInput { get; set; }
         private string ConversationStatusMessage { get; set; } = string.Empty;
         private bool ConversationStatusIsError { get; set; }
         private AuthenticatedUser? CurrentUser { get; set; }
@@ -219,11 +221,13 @@ namespace AspireApp.Web.Components.Pages
 
             ConversationTitleDraft = ActiveConversationTitle;
             IsEditingConversationTitle = true;
+            ShouldFocusConversationTitleInput = true;
         }
 
         private void CancelConversationTitleEdit()
         {
             IsEditingConversationTitle = false;
+            ShouldFocusConversationTitleInput = false;
             ConversationTitleDraft = ActiveConversationTitle;
         }
 
@@ -237,6 +241,7 @@ namespace AspireApp.Web.Components.Pages
             if (string.IsNullOrWhiteSpace(ConversationTitleDraft))
             {
                 SetConversationStatus("Enter a title before saving.", isError: true);
+                ShouldFocusConversationTitleInput = true;
                 return;
             }
 
@@ -244,6 +249,7 @@ namespace AspireApp.Web.Components.Pages
             if (user is null)
             {
                 SetConversationStatus("Your sign-in session expired. Please sign in again.", isError: true);
+                ShouldFocusConversationTitleInput = true;
                 return;
             }
 
@@ -255,11 +261,13 @@ namespace AspireApp.Web.Components.Pages
             if (renamedConversation is null)
             {
                 SetConversationStatus("That conversation could not be renamed.", isError: true);
+                ShouldFocusConversationTitleInput = true;
                 return;
             }
 
             ApplyConversationSummary(renamedConversation);
             IsEditingConversationTitle = false;
+            ShouldFocusConversationTitleInput = false;
             await LoadConversationSummariesAsync();
             ClearConversationStatus();
         }
@@ -837,7 +845,12 @@ namespace AspireApp.Web.Components.Pages
                 StateHasChanged();
             }
 
-            if (firstRender || !IsAIResponsing)
+            if (ShouldFocusConversationTitleInput && IsEditingConversationTitle)
+            {
+                ShouldFocusConversationTitleInput = false;
+                await FocusConversationTitleInput();
+            }
+            else if ((firstRender || !IsAIResponsing) && !IsEditingConversationTitle)
             {
                 await FocusQuestionInput();
             }
@@ -857,6 +870,18 @@ namespace AspireApp.Web.Components.Pages
             catch (Exception ex)
             {
                 Console.WriteLine($"Error focusing input: {ex.Message}");
+            }
+        }
+
+        private async Task FocusConversationTitleInput()
+        {
+            try
+            {
+                await JSRuntime.InvokeVoidAsync("focusElement", conversationTitleInput);
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"Error focusing conversation title input: {ex.Message}");
             }
         }
 

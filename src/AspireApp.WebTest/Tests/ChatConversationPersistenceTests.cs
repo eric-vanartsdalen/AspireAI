@@ -49,7 +49,7 @@ public sealed class ChatConversationPersistenceTests : IClassFixture<TestFixture
             Assert.False(string.IsNullOrWhiteSpace(generatedTitle));
             Assert.DoesNotMatch(PlaceholderConversationTitleRegex, generatedTitle);
 
-            await RenameCurrentConversationAsync(page, renamedTitle);
+            await RenameCurrentConversationAsync(page, renamedTitle, verifyFocusWhileTyping: true);
             await WaitForConversationItemVisibleAsync(page, renamedTitle);
 
             await ClickNewConversationAsync(page);
@@ -215,7 +215,10 @@ public sealed class ChatConversationPersistenceTests : IClassFixture<TestFixture
         return string.Empty;
     }
 
-    private static async Task RenameCurrentConversationAsync(IPage page, string renamedTitle)
+    private static async Task RenameCurrentConversationAsync(
+        IPage page,
+        string renamedTitle,
+        bool verifyFocusWhileTyping = false)
     {
         var renameButton = await RequireVisibleAsync(page,
             "[data-testid='chat-conversation-rename']",
@@ -226,7 +229,37 @@ public sealed class ChatConversationPersistenceTests : IClassFixture<TestFixture
             "[data-testid='chat-conversation-title-input']",
             "conversation title input");
 
-        await titleInput.FillAsync(renamedTitle);
+        if (!verifyFocusWhileTyping)
+        {
+            await titleInput.FillAsync(renamedTitle);
+        }
+        else
+        {
+            await titleInput.FillAsync(string.Empty);
+            await titleInput.ClickAsync();
+
+            var chatInput = await RequireVisibleAsync(page,
+                "[data-testid='chat-message-input']",
+                "chat message input");
+            var chatInputValueBeforeTyping = await chatInput.InputValueAsync();
+
+            var firstCharacter = renamedTitle[..1];
+            await titleInput.PressSequentiallyAsync(firstCharacter);
+            await Task.Delay(250, TestContext.Current.CancellationToken);
+            await AssertActiveElementTestIdAsync(page, "chat-conversation-title-input", "rename title input after typing the first character");
+            Assert.Equal(firstCharacter, await titleInput.InputValueAsync());
+            Assert.Equal(chatInputValueBeforeTyping, await chatInput.InputValueAsync());
+
+            if (renamedTitle.Length > 1)
+            {
+                await titleInput.PressSequentiallyAsync(renamedTitle[1..]);
+                await Task.Delay(250, TestContext.Current.CancellationToken);
+            }
+
+            await AssertActiveElementTestIdAsync(page, "chat-conversation-title-input", "rename title input after typing the full title");
+            Assert.Equal(renamedTitle, await titleInput.InputValueAsync());
+            Assert.Equal(chatInputValueBeforeTyping, await chatInput.InputValueAsync());
+        }
 
         var saveButton = await FindVisibleAsync(page,
             current => current.Locator("[data-testid='chat-conversation-save-title']"),
@@ -389,6 +422,16 @@ public sealed class ChatConversationPersistenceTests : IClassFixture<TestFixture
         }
 
         Assert.Fail($"Conversation '{title}' remained visible when it should have been absent.");
+    }
+
+    private static async Task AssertActiveElementTestIdAsync(IPage page, string expectedTestId, string description)
+    {
+        var activeElementTestId = await page.EvaluateAsync<string>(
+            "() => document.activeElement?.getAttribute('data-testid') ?? ''");
+
+        Assert.True(
+            string.Equals(expectedTestId, activeElementTestId, StringComparison.Ordinal),
+            $"{description} expected active element '{expectedTestId}' but found '{activeElementTestId}'.");
     }
 
     private static async Task<ILocator> RequireConversationItemByTitleAsync(IPage page, string title)

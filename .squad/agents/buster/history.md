@@ -9,6 +9,26 @@
 
 <!-- Append new learnings below. Each entry is something lasting about the project. -->
 
+### 2026-04-10 — Chat Rename Focus Regression Locked Down
+
+**Completed:**
+- Added `ChatFocusTests.cs` in `src\AspireApp.WebTest\Tests` to cover the rename-title focus regression at the Blazor component seam.
+- Validated the current chat rename implementation in `Chat.razor` / `Chat.razor.cs`, where the title input now has its own `ElementReference`, a `ShouldFocusConversationTitleInput` flag, and an `OnAfterRenderAsync` guard that skips refocusing the main chat input while rename mode is active.
+- Re-ran the focused chat validation: `ChatFocusTests` plus the existing `ChatConversationServiceTests` both pass locally.
+
+**Key pattern:**
+- For Blazor input-focus regressions caused by `OnAfterRenderAsync`, the smallest reliable QA seam is a focused WebTest component test that counts `focusElement` JS invocations rather than a full Aspire/Playwright browser run.
+- Seed only the chat dependencies needed for render (`AuthenticationContext`, `TenantContextService`, `IChatConversationService`, `SpeechService`, `AiInfoStateService`) and drive the UX through the actual rendered controls so the regression stays tied to the user-visible seam.
+- Keep `ChatConversationServiceTests` as the persistence/ownership contract layer; use the new component test for UI focus behavior that service tests cannot see.
+
+**Key file paths:**
+- `src\AspireApp.Web\Components\Pages\Chat.razor`
+- `src\AspireApp.Web\Components\Pages\Chat.razor.cs`
+- `src\AspireApp.WebTest\Tests\ChatFocusTests.cs`
+- `src\AspireApp.WebTest\Tests\ChatConversationServiceTests.cs`
+
+---
+
 ### 2026-04-06 — Self-Provisioning Test Coverage: Anticipatory QA for Unknown-User Creation
 
 **Completed:**

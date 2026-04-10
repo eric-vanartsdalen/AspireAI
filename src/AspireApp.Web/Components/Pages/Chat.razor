@@ -541,7 +541,8 @@ else
                                    @bind:event="oninput"
                                    class="form-control"
                                    maxlength="200"
-                                   data-testid="chat-conversation-title-input" />
+                                   data-testid="chat-conversation-title-input"
+                                   @ref="conversationTitleInput" />
                             <button class="btn btn-primary"
                                     @onclick="SaveConversationTitleAsync"
                                     disabled="@IsAIResponsing"
