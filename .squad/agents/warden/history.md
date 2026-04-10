@@ -139,3 +139,9 @@
 - Tenant Edge-Case Revision — save-failure catch broadening + direct recovery tests
 
 **Status:** Approved; revision implemented; security gate passed
+- **2026-04-10 — Chat persistence privacy review: REJECTED pending independent revision.**
+  - `ChatConversationService.cs` correctly scopes list/get/add/rename/delete operations by `owner_user_id`, so shared tenant membership does not widen conversation access by itself.
+  - The actual `/chat` UI in `src\AspireApp.Web\Components\Pages\Chat.razor` and `Chat.razor.cs` still does not render the saved-conversation shell or call `IChatConversationService`, so rename/delete/resume privacy is not proven in the product yet.
+  - `src\AspireApp.WebTest\Tests\ChatConversationServiceTests.cs` passes service-layer owner-isolation coverage, but it still lacks a direct unauthorized `AddMessageAsync` assertion for another user attempting to continue an existing conversation.
+  - `src\AspireApp.WebTest\Tests\ChatConversationPersistenceTests.cs` is written as the intended end-to-end privacy gate, but it explicitly skips when the conversation shell hooks are absent; live execution here was also blocked because Docker/Aspire was unhealthy.
+  - Recommended revision owner: Bob for an independent follow-up pass that wires the real chat shell and closes the privacy proof.

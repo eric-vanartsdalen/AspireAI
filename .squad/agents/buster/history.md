@@ -218,6 +218,7 @@
 
 **Completed:**
 - Audited current auth state: no authentication exists; tenant context provides data-layer isolation only
+
 - Designed multi-layer test strategy (UI → Component → Integration → Service → Contract)
 - Defined 6 acceptance gates blocking real Google/Microsoft auth wiring
 - Identified mock auth contract shape and provider pluggability pattern
@@ -255,6 +256,33 @@
 - PKCE / SAML details
 
 **Rationale:** Mock auth proves the *shape* and *contract*. Real provider specifics are implementation details; pluggable factory ensures no rearchitecting when wiring Google/Microsoft.
+
+---
+
+### 2026-04-10 — Chat Persistence QA Contract Staged
+
+**Completed:**
+- Added `ChatConversationServiceTests.cs` to cover save/load/rename/delete and owner-only access on Jeff's new `ChatConversationService`.
+- Added `ChatConversationPersistenceTests.cs` with two focused Playwright/Aspire acceptance tests: one for save → auto-title → rename → resume → delete, and one for user-only isolation even when two users share the same tenant membership.
+- Kept the tests on the existing `TestFixture` browser/AppHost harness instead of inventing a separate chat test host.
+- Hardened `TestFixture.GetAppHostContentRoot()` so custom `BaseOutputPath` runs can still discover `src\AspireApp.AppHost`.
+
+**Key pattern:**
+- For this repo's chat history slice, start with service-layer ownership tests against `ChatConversationService`, then stage Playwright contracts for the saved-conversation UX that Jeff still needs to land.
+- For Blazor chat persistence, stage executable UX contracts early and dynamically skip until the saved-conversation shell is actually present.
+- Require stable `data-testid` hooks on the conversation-management seams (`chat-conversations-shell`, `chat-conversation-list`, `chat-new-conversation`, `chat-conversation-item`, `chat-current-conversation-title`, `chat-conversation-rename`, `chat-conversation-title-input`, `chat-conversation-delete`) and only use semantic fallbacks for obvious chat input/send controls.
+- To prove privacy is user-scoped rather than tenant-scoped, seed a shared tenant membership in Postgres for two users and assert the second user cannot see the first user’s renamed conversation or transcript.
+
+**Environment note:**
+- Focused chat service unit tests and non-Docker auth unit tests passed after the changes.
+- The Docker/Aspire browser slice is currently blocked in this environment by `Aspire.Hosting.DistributedApplicationException`: Docker is present but unhealthy, so the chat/browser fixture cannot start.
+
+**Key file paths:**
+- `src\AspireApp.WebTest\Tests\ChatConversationServiceTests.cs`
+- `src\AspireApp.WebTest\Tests\ChatConversationPersistenceTests.cs`
+- `src\AspireApp.WebTest\Fixtures\TestFixture.cs`
+- `.squad\decisions\inbox\buster-chat-history-tests.md`
+- `.squad\skills\chat-persistence-ux-contracts\SKILL.md`
 
 ---
 

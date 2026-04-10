@@ -9,6 +9,25 @@
 
 <!-- Append new learnings below. Each entry is something lasting about the project. -->
 
+### 2026-04-10 — Chat history now uses per-user ownership, fallback titles, and operational-store bootstrapping
+
+**Status:** Implemented and validated.
+
+**Implementation Results:**
+- ✅ Chat conversations/messages now live in the existing operational EF store via `chat_conversations` + `chat_messages`; every list/load/update/delete path filters on `owner_user_id`, so tenant metadata never grants cross-user access.
+- ✅ New chats are created on the first user message with a fast fallback title from that prompt; the first assistant reply can refine the title via Ollama, but user-renamed titles are never overwritten.
+- ✅ The Chat page now has a conversation sidebar with stable `data-testid` seams for new/open/delete/rename flows while keeping the existing streaming and speech features intact.
+
+**Key Paths:**
+- `src\AspireApp.Web\Data\ChatConversationEntities.cs`
+- `src\AspireApp.Web\Services\ChatConversationService.cs` / `ChatTitleGenerator.cs` / `ChatConversationStoreBootstrapper.cs`
+- `src\AspireApp.Web\Components\Pages\Chat.razor` / `Chat.razor.cs`
+- `src\AspireApp.WebTest\Tests\ChatConversationServiceTests.cs`
+
+**Validation Notes:**
+- `dotnet build AspireApp.sln --nologo`
+- `dotnet test src\AspireApp.WebTest\AspireApp.WebTest.csproj --nologo --no-build --filter "FullyQualifiedName~ChatConversationServiceTests|FullyQualifiedName~TenantManagementServiceTests|FullyQualifiedName~FileUploadControllerTests|FullyQualifiedName~UploadDataTests|FullyQualifiedName~SignInPanelTests"`
+
 ### 2026-04-09 — Upload flow fixed: Direct service calls preserve authentication and tenant context in InteractiveServer
 
 **Status:** Implemented and validated.

@@ -186,8 +186,6 @@ public class TestFixture : IAsyncLifetime
 
 	private static string GetAppHostContentRoot()
 	{
-		var appHostContentRoot = Path.GetFullPath(
-			Path.Combine(AppContext.BaseDirectory, "..", "..", "..", "..", "AspireApp.AppHost"));
 		// determine mode in use
 		var debugMode = false;
 #if DEBUG
@@ -199,12 +197,28 @@ public class TestFixture : IAsyncLifetime
 		string targetConfigFilename = debugMode
 			? "appsettings.Development.json"
 			: "appsettings.json";
-		if (!File.Exists(Path.Combine(appHostContentRoot, targetConfigFilename)))
+
+		var current = new DirectoryInfo(AppContext.BaseDirectory);
+		while (current is not null)
+		{
+			var candidate = Path.Combine(current.FullName, "AspireApp.AppHost");
+			if (File.Exists(Path.Combine(candidate, targetConfigFilename)))
+			{
+				return candidate;
+			}
+
+			current = current.Parent;
+		}
+
+		var legacyCandidate = Path.GetFullPath(
+			Path.Combine(AppContext.BaseDirectory, "..", "..", "..", "..", "AspireApp.AppHost"));
+		if (!File.Exists(Path.Combine(legacyCandidate, targetConfigFilename)))
 		{
 			throw new DirectoryNotFoundException(
-				$"Could not locate the AspireApp.AppHost content root at '{appHostContentRoot}'.");
+				$"Could not locate the AspireApp.AppHost content root at '{legacyCandidate}'.");
 		}
-		return appHostContentRoot;
+
+		return legacyCandidate;
 	}
 
 	private static string GetRepositoryRoot(string appHostContentRoot)

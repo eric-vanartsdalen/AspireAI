@@ -55,6 +55,9 @@ builder.Services.AddScoped<FileStorageService>(sp =>
         sp.GetRequiredService<UploadDbContext>(),
         sp.GetRequiredService<ILogger<FileStorageService>>(),
         dataDirectory));
+builder.Services.AddScoped<IChatTitleGenerator, ChatTitleGenerator>();
+builder.Services.AddScoped<IChatConversationService, ChatConversationService>();
+builder.Services.AddScoped<ChatConversationStoreBootstrapper>();
 
 // Add this right after the AddHttpClient section
 builder.Services.AddSingleton<IConfiguration>(builder.Configuration);
@@ -319,11 +322,13 @@ static async Task InitializeDatabaseAsync(IServiceProvider services, string data
         var context = scope.ServiceProvider.GetRequiredService<UploadDbContext>();
         var localAuthBootstrapper = scope.ServiceProvider.GetRequiredService<LocalAuthBootstrapper>();
         var tenantStoreBootstrapper = scope.ServiceProvider.GetRequiredService<TenantStoreBootstrapper>();
+        var chatConversationStoreBootstrapper = scope.ServiceProvider.GetRequiredService<ChatConversationStoreBootstrapper>();
 
         // Ensure database schema is created
         await context.Database.EnsureCreatedAsync();
         await tenantStoreBootstrapper.InitializeAsync();
         await localAuthBootstrapper.InitializeAsync();
+        await chatConversationStoreBootstrapper.InitializeAsync();
         Console.WriteLine("? Database schema initialized successfully");
 
         // Test database connection
@@ -338,6 +343,8 @@ static async Task InitializeDatabaseAsync(IServiceProvider services, string data
             var localAccountCount = await context.LocalAuthUsers.CountAsync();
             var tenantCount = await context.Tenants.CountAsync();
             var membershipCount = await context.TenantMemberships.CountAsync();
+            var conversationCount = await context.ChatConversations.CountAsync();
+            var chatMessageCount = await context.ChatConversationMessages.CountAsync();
 
             Console.WriteLine("Database initialized with:");
             Console.WriteLine($"  - {fileCount} datasources in datasources table");
@@ -345,6 +352,8 @@ static async Task InitializeDatabaseAsync(IServiceProvider services, string data
             Console.WriteLine($"  - {localAccountCount} managed local auth users");
             Console.WriteLine($"  - {tenantCount} tenants");
             Console.WriteLine($"  - {membershipCount} tenant memberships");
+            Console.WriteLine($"  - {conversationCount} chat conversations");
+            Console.WriteLine($"  - {chatMessageCount} chat messages");
         }
         else
         {

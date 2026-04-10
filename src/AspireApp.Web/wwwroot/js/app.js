@@ -22,6 +22,12 @@ window.focusElement = function (element) {
     }
 };
 
+window.getElementValue = function (element) {
+    return typeof element?.value === 'string'
+        ? element.value
+        : '';
+};
+
 // Scroll to bottom of page or specific chat container
 window.scrollToBottom = function (containerId = null) {
     if (containerId) {

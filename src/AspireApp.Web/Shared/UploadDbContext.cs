@@ -32,6 +32,16 @@ namespace AspireApp.Web.Shared
         /// </summary>
         public DbSet<TenantMembership> TenantMemberships => Set<TenantMembership>();
 
+        /// <summary>
+        /// Persisted chat conversations owned by individual authenticated users.
+        /// </summary>
+        public DbSet<ChatConversation> ChatConversations => Set<ChatConversation>();
+
+        /// <summary>
+        /// Persisted chat messages owned by individual authenticated users.
+        /// </summary>
+        public DbSet<ChatConversationMessage> ChatConversationMessages => Set<ChatConversationMessage>();
+
         // Backward compatibility alias
         [Obsolete("Use Datasources DbSet instead")]
         public DbSet<FileMetadata> Files => Set<FileMetadata>();
@@ -168,6 +178,50 @@ namespace AspireApp.Web.Shared
                       .WithMany(t => t.Memberships)
                       .HasForeignKey(e => e.TenantId)
                       .OnDelete(DeleteBehavior.Cascade);
+            });
+
+            modelBuilder.Entity<ChatConversation>(entity =>
+            {
+                entity.ToTable("chat_conversations");
+                entity.HasKey(e => e.Id);
+                entity.Property(e => e.Id).ValueGeneratedNever();
+                entity.Property(e => e.OwnerUserId).IsRequired().HasMaxLength(200);
+                entity.Property(e => e.TenantId).HasMaxLength(100);
+                entity.Property(e => e.Title).IsRequired().HasMaxLength(200);
+                entity.Property(e => e.TitleSource).IsRequired().HasMaxLength(20);
+                entity.Property(e => e.CreatedAt).HasDefaultValueSql("CURRENT_TIMESTAMP");
+                entity.Property(e => e.UpdatedAt).HasDefaultValueSql("CURRENT_TIMESTAMP");
+
+                entity.HasIndex(e => new { e.OwnerUserId, e.UpdatedAt })
+                      .HasDatabaseName("idx_chat_conversations_owner_updated");
+
+                entity.HasIndex(e => e.TenantId)
+                      .HasDatabaseName("idx_chat_conversations_tenant");
+
+                entity.HasMany(e => e.Messages)
+                      .WithOne(message => message.Conversation)
+                      .HasForeignKey(message => message.ConversationId)
+                      .OnDelete(DeleteBehavior.Cascade);
+            });
+
+            modelBuilder.Entity<ChatConversationMessage>(entity =>
+            {
+                entity.ToTable("chat_messages");
+                entity.HasKey(e => e.Id);
+                entity.Property(e => e.Id).ValueGeneratedNever();
+                entity.Property(e => e.OwnerUserId).IsRequired().HasMaxLength(200);
+                entity.Property(e => e.Role).IsRequired().HasMaxLength(20);
+                entity.Property(e => e.Content).IsRequired();
+
+                entity.HasIndex(e => new { e.ConversationId, e.Sequence })
+                      .IsUnique()
+                      .HasDatabaseName("ux_chat_messages_conversation_sequence");
+
+                entity.HasIndex(e => e.OwnerUserId)
+                      .HasDatabaseName("idx_chat_messages_owner");
+
+                entity.HasIndex(e => new { e.ConversationId, e.CreatedAt })
+                      .HasDatabaseName("idx_chat_messages_conversation_created");
             });
 
             // ==================== Legacy Schema Configuration (Backward Compatibility) ====================
