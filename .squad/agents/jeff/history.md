@@ -9,6 +9,26 @@
 
 <!-- Append new learnings below. Each entry is something lasting about the project. -->
 
+### 2026-04-11 — Chat send must not stay blocked on stale AI config or local-model cold starts
+
+**Status:** Implemented and validated.
+
+**Implementation Results:**
+- ✅ `Chat.razor.cs` now refreshes `HomeConfigurations` before building Semantic Kernel chat clients, so late-resolved Ollama service-discovery values win over any stale startup defaults.
+- ✅ `OllamaWarmupService` now retries readiness checks instead of giving up after the first miss, which makes first-request model warmup more reliable under Aspire cold starts.
+- ✅ The chat UI now bounds the first-token wait and overall response window, keeps the user prompt saved, and releases the send button with a clear status instead of leaving the circuit blocked indefinitely while the local model stalls.
+- ✅ `ChatTitleGenerator` also refreshes runtime AI settings before its follow-up title request, keeping the title path aligned with the live chat endpoint/model.
+
+**Key Paths:**
+- `src\AspireApp.Web\Components\Pages\Chat.razor.cs`
+- `src\AspireApp.Web\Services\OllamaWarmupService.cs`
+- `src\AspireApp.Web\Services\ChatTitleGenerator.cs`
+- `src\AspireApp.Web\Components\Pages\HomeConfigurations.cs`
+
+**Validation Notes:**
+- `dotnet test src\AspireApp.WebTest\AspireApp.WebTest.csproj --filter "FullyQualifiedName~ConversationsRemainPrivateEvenWithinSharedTenantMembership" --logger "console;verbosity=minimal"`
+- `dotnet test src\AspireApp.WebTest\AspireApp.WebTest.csproj --filter "FullyQualifiedName~SignedInUserCanSaveRenameResumeAndDeleteConversation" --logger "console;verbosity=minimal"`
+
 ### 2026-04-11 — Auth shell state must hydrate from HttpContext early, and InteractiveServer upload inputs must wait for the first interactive render
 
 **Status:** Implemented and validated.

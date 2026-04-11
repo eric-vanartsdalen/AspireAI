@@ -75,8 +75,8 @@ public sealed class ChatConversationPersistenceTests : IClassFixture<TestFixture
         var suffix = Guid.NewGuid().ToString("N")[..8];
         var sharedTenantId = $"tenant-chat-shared-{suffix}";
         var sharedTenantName = $"Shared chat tenant {suffix}";
-        var privateTitle = $"Buster private {suffix}";
         var privatePrompt = $"Buster private chat {suffix}: this must stay hidden from other users.";
+        var privateConversationTitle = string.Empty;
         var privateConversationUrl = string.Empty;
 
         await EnsureSharedTenantMembershipAsync(sharedTenantId, sharedTenantName);
@@ -89,9 +89,11 @@ public sealed class ChatConversationPersistenceTests : IClassFixture<TestFixture
                 await EnsureConversationUxAvailableOrSkipAsync(ownerPage);
                 await SelectTenantAsync(ownerPage, sharedTenantId);
 
-                await SendPromptAsync(ownerPage, privatePrompt);
-                await RenameCurrentConversationAsync(ownerPage, privateTitle);
-                await WaitForConversationItemVisibleAsync(ownerPage, privateTitle);
+                await SendPromptAsync(ownerPage, privatePrompt, cancelResponseAfterPromptVisible: true);
+                privateConversationTitle = await TryReadCurrentConversationTitleAsync(ownerPage);
+                Assert.False(string.IsNullOrWhiteSpace(privateConversationTitle));
+                Assert.DoesNotMatch(PlaceholderConversationTitleRegex, privateConversationTitle);
+                await WaitForConversationItemVisibleAsync(ownerPage, privateConversationTitle);
                 privateConversationUrl = ownerPage.Url;
 
                 await WithPageAsync(async otherPage =>
@@ -100,7 +102,7 @@ public sealed class ChatConversationPersistenceTests : IClassFixture<TestFixture
                     await EnsureConversationUxAvailableOrSkipAsync(otherPage);
                     await SelectTenantAsync(otherPage, sharedTenantId);
 
-                    await WaitForConversationItemAbsentAsync(otherPage, privateTitle);
+                    await WaitForConversationItemAbsentAsync(otherPage, privateConversationTitle);
 
                     if (!string.IsNullOrWhiteSpace(privateConversationUrl) &&
                         !string.Equals(privateConversationUrl, BuildAbsoluteUri(_mapping.WebfrontendUri, "chat"), StringComparison.OrdinalIgnoreCase))
@@ -111,11 +113,11 @@ public sealed class ChatConversationPersistenceTests : IClassFixture<TestFixture
 
                     var transcript = await TryReadVisibleTranscriptAsync(otherPage);
                     Assert.DoesNotContain(privatePrompt, transcript, StringComparison.Ordinal);
-                    Assert.Null(await TryFindConversationItemByTitleAsync(otherPage, privateTitle));
+                    Assert.Null(await TryFindConversationItemByTitleAsync(otherPage, privateConversationTitle));
                 });
 
                 await DeleteCurrentConversationAsync(ownerPage);
-                await WaitForConversationItemAbsentAsync(ownerPage, privateTitle);
+                await WaitForConversationItemAbsentAsync(ownerPage, privateConversationTitle);
             });
         }
         finally
@@ -173,7 +175,10 @@ public sealed class ChatConversationPersistenceTests : IClassFixture<TestFixture
             "Chat persistence UX is not available in this checkout yet. Jeff needs to land the saved-conversation shell plus stable hooks for chat-conversations-shell, chat-conversation-list, chat-new-conversation, chat-conversation-item, chat-current-conversation-title, chat-conversation-rename, chat-conversation-title-input, and chat-conversation-delete.");
     }
 
-    private static async Task SendPromptAsync(IPage page, string prompt)
+    private static async Task SendPromptAsync(
+        IPage page,
+        string prompt,
+        bool cancelResponseAfterPromptVisible = false)
     {
         var input = await FindVisibleAsync(page,
             current => current.Locator("[data-testid='chat-message-input']"),
@@ -191,7 +196,35 @@ public sealed class ChatConversationPersistenceTests : IClassFixture<TestFixture
         await WaitForControlEnabledAsync(sendButton!, "chat send button");
         await sendButton!.ClickAsync();
         await WaitForTranscriptToContainAsync(page, prompt);
+
+        if (cancelResponseAfterPromptVisible)
+        {
+            await StopResponseIfVisibleAsync(page, sendButton);
+        }
+
         await WaitForControlEnabledAsync(sendButton, "chat send button");
+    }
+
+    private static async Task StopResponseIfVisibleAsync(IPage page, ILocator sendButton)
+    {
+        var timeoutAt = DateTime.UtcNow.AddSeconds(10);
+        while (DateTime.UtcNow < timeoutAt)
+        {
+            if (!await sendButton.IsDisabledAsync())
+            {
+                return;
+            }
+
+            var stopButton = await FindVisibleAsync(page,
+                current => current.Locator("[data-testid='chat-stop-button']"));
+            if (stopButton is not null)
+            {
+                await stopButton.ClickAsync();
+                return;
+            }
+
+            await Task.Delay(250, TestContext.Current.CancellationToken);
+        }
     }
 
     private static async Task<string> WaitForGeneratedConversationTitleAsync(IPage page)

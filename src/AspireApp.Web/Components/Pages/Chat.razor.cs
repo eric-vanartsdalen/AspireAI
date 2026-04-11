@@ -40,6 +40,10 @@ namespace AspireApp.Web.Components.Pages
         private ElementReference conversationTitleInput;
         private CancellationTokenSource? _cancellationTokenSource;
         private DotNetObjectReference<Chat>? _dotNetRef;
+        private const int AiFirstTokenTimeoutSeconds = 45;
+        private const int AiResponseTimeoutSeconds = 150;
+        private const string HaltedResponseTag = "[AI response was manually halted prematurely.]";
+        private const string TimedOutResponseTag = "[AI response timed out before completion.]";
 
         private Kernel? _kernel;
         private readonly object _kernelLock = new();
@@ -464,6 +468,7 @@ namespace AspireApp.Web.Components.Pages
                 {
                     if (_kernel == null)
                     {
+                        HomeConfigurations.ForceReconfigure();
                         IKernelBuilder builder = Kernel.CreateBuilder();
                         builder.AddOllamaChatCompletion(
                             modelId: HomeConfigurations.ActiveModel,
@@ -481,6 +486,7 @@ namespace AspireApp.Web.Components.Pages
             {
                 if (_kernel == null)
                 {
+                    HomeConfigurations.ForceReconfigure();
                     IKernelBuilder builder = Kernel.CreateBuilder();
                     builder.AddOllamaChatCompletion(
                         modelId: HomeConfigurations.ActiveModel,
@@ -903,7 +909,15 @@ namespace AspireApp.Web.Components.Pages
             var kernel = GetOrCreateKernel();
             var stopwatch = Stopwatch.StartNew();
 
-            _cancellationTokenSource = new CancellationTokenSource();
+            var manualStopTokenSource = new CancellationTokenSource();
+            using var firstTokenTimeoutTokenSource = new CancellationTokenSource(TimeSpan.FromSeconds(AiFirstTokenTimeoutSeconds));
+            using var responseTimeoutTokenSource = new CancellationTokenSource(TimeSpan.FromSeconds(AiResponseTimeoutSeconds));
+            using var linkedTokenSource = CancellationTokenSource.CreateLinkedTokenSource(
+                manualStopTokenSource.Token,
+                firstTokenTimeoutTokenSource.Token,
+                responseTimeoutTokenSource.Token);
+
+            _cancellationTokenSource = manualStopTokenSource;
 
             try
             {
@@ -914,7 +928,7 @@ namespace AspireApp.Web.Components.Pages
                     _chatHistory,
                     promptSettings,
                     kernel,
-                    _cancellationTokenSource.Token);
+                    linkedTokenSource.Token);
 
                 var updateBuffer = new System.Text.StringBuilder();
                 var lastUpdateTime = DateTime.UtcNow;
@@ -927,6 +941,11 @@ namespace AspireApp.Web.Components.Pages
                 {
                     updateBuffer.Append(message.Content);
                     tokenCount++;
+
+                    if (tokenCount == 1)
+                    {
+                        firstTokenTimeoutTokenSource.CancelAfter(Timeout.InfiniteTimeSpan);
+                    }
 
                     var now = DateTime.UtcNow;
                     var shouldUpdate = tokenCount <= earlyTokenThreshold ||
@@ -955,12 +974,29 @@ namespace AspireApp.Web.Components.Pages
 
                 AIResponse = updateBuffer.ToString();
             }
-            catch (OperationCanceledException)
+            catch (OperationCanceledException) when (manualStopTokenSource.IsCancellationRequested)
             {
-                const string haltTag = "[AI response was manually halted prematurely.]";
-                if (!AIResponse.Contains(haltTag, StringComparison.Ordinal))
+                if (!AIResponse.Contains(HaltedResponseTag, StringComparison.Ordinal))
                 {
-                    AIResponse += "\n" + haltTag;
+                    AIResponse += "\n" + HaltedResponseTag;
+                }
+            }
+            catch (OperationCanceledException) when (firstTokenTimeoutTokenSource.IsCancellationRequested)
+            {
+                SetConversationStatus(
+                    "The AI service is still warming up. Your prompt is saved, and you can retry once the model is ready.",
+                    isError: true);
+            }
+            catch (OperationCanceledException) when (responseTimeoutTokenSource.IsCancellationRequested)
+            {
+                SetConversationStatus(
+                    "The AI service took too long to respond. Your prompt is still saved, so you can retry in a moment.",
+                    isError: true);
+
+                if (!string.IsNullOrWhiteSpace(AIResponse) &&
+                    !AIResponse.Contains(TimedOutResponseTag, StringComparison.Ordinal))
+                {
+                    AIResponse = $"{AIResponse.TrimEnd()}{Environment.NewLine}{Environment.NewLine}{TimedOutResponseTag}";
                 }
             }
             catch (Exception e)

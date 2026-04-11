@@ -22,7 +22,7 @@ public sealed class ChatTitleGenerator(ILogger<ChatTitleGenerator> logger) : ICh
             return null;
         }
 
-        HomeConfigurations.PullConfigure();
+        HomeConfigurations.ForceReconfigure();
 
         if (!Uri.TryCreate(HomeConfigurations.ActiveModelURL, UriKind.Absolute, out var endpoint) ||
             string.IsNullOrWhiteSpace(HomeConfigurations.ActiveModel))
