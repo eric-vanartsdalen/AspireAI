@@ -13,6 +13,16 @@ public partial class Program
         var repositoryRoot = Path.GetFullPath(Path.Combine(builder.Environment.ContentRootPath, "..", ".."));
         var sharedDataPath = ResolveSharedPath(builder.Configuration, "SharedPaths:Data", repositoryRoot, "data");
         var sharedDatabasePath = ResolveSharedPath(builder.Configuration, "SharedPaths:Database", repositoryRoot, "database");
+        var postgresDataPath = Path.Combine(sharedDatabasePath, "postgres");
+        var redisDataPath = Path.Combine(sharedDatabasePath, "redis");
+        var neo4jRootPath = Path.Combine(sharedDatabasePath, "neo4j");
+        var neo4jDataPath = Path.Combine(neo4jRootPath, "data");
+        var neo4jLogsPath = Path.Combine(neo4jRootPath, "logs");
+        var neo4jPluginsPath = Path.Combine(neo4jRootPath, "plugins");
+        var neo4jConfigPath = Path.Combine(neo4jRootPath, "conf");
+        var neo4jImportPath = Path.Combine(neo4jRootPath, "import");
+        var neo4jMetricsPath = Path.Combine(neo4jRootPath, "metrics");
+        var neo4jBackupPath = Path.Combine(neo4jRootPath, "backup");
 
         // SQLite database file setup with configuration and fallback
         var sharedDatabaseFileName = builder.Configuration.GetValue<string>("SharedPaths:DatabaseFileName");
@@ -23,6 +33,15 @@ public partial class Program
         var sharedDatabaseFile = Path.Combine(sharedDatabasePath, sharedDatabaseFileName);
         Directory.CreateDirectory(sharedDataPath);
         Directory.CreateDirectory(sharedDatabasePath);
+        Directory.CreateDirectory(postgresDataPath);
+        Directory.CreateDirectory(redisDataPath);
+        Directory.CreateDirectory(neo4jDataPath);
+        Directory.CreateDirectory(neo4jLogsPath);
+        Directory.CreateDirectory(neo4jPluginsPath);
+        Directory.CreateDirectory(neo4jConfigPath);
+        Directory.CreateDirectory(neo4jImportPath);
+        Directory.CreateDirectory(neo4jMetricsPath);
+        Directory.CreateDirectory(neo4jBackupPath);
         if (!File.Exists(sharedDatabaseFile))
         {
             using var _ = File.Create(sharedDatabaseFile);
@@ -58,13 +77,13 @@ public partial class Program
         // PROJECTS SETUP
         // Postgres SQL service
         var postgres = builder.AddPostgres("postgres", postgresUser, postgresPass)
-            .WithBindMount("../../database/postgres/", "/var/lib/postgresql/data")
+            .WithBindMount(postgresDataPath, "/var/lib/postgresql/data")
             .WithEnvironment("PGDATA", "/var/lib/postgresql/data/pgdata")
             .WithPgWeb();
         var uploadStore = postgres.AddDatabase("appdb");
         // Add Redis cache service
         var redis = builder.AddRedis("redis-cache")
-            .WithBindMount("../../database/redis/", "/data")
+            .WithBindMount(redisDataPath, "/data")
             .WithRedisCommander();
 
         // API Service
@@ -91,13 +110,13 @@ public partial class Program
         var neo4jDb = builder.AddDockerfile("graph-db", "../../src/AspireApp.Neo4jService/", neo4jDockerfile)
             .WithHttpEndpoint(port: 7474, targetPort: 7474, name: "http")  // Neo4j browser interface
             .WithEndpoint(port: 7687, targetPort: 7687, name: "bolt")      // Neo4j bolt protocol
-            .WithBindMount("../../database/neo4j/data", "/data")           // Persistent data
-            .WithBindMount("../../database/neo4j/logs", "/logs")           // Logs persistence
-            .WithBindMount("../../database/neo4j/plugins", "/plugins")     // Plugin persistence
-            .WithBindMount("../../database/neo4j/conf", "/conf")           // Configuration persistence
-            .WithBindMount("../../database/neo4j/import", "/import")       // Import persistence
-            .WithBindMount("../../database/neo4j/metrics", "/metrics")     // Metrics persistence (optional)
-            .WithBindMount("../../database/neo4j/backup", "/backup")       // Backup directory (optional)															   
+            .WithBindMount(neo4jDataPath, "/data")                         // Persistent data
+            .WithBindMount(neo4jLogsPath, "/logs")                         // Logs persistence
+            .WithBindMount(neo4jPluginsPath, "/plugins")                   // Plugin persistence
+            .WithBindMount(neo4jConfigPath, "/conf")                       // Configuration persistence
+            .WithBindMount(neo4jImportPath, "/import")                     // Import persistence
+            .WithBindMount(neo4jMetricsPath, "/metrics")                   // Metrics persistence (optional)
+            .WithBindMount(neo4jBackupPath, "/backup")                     // Backup directory (optional)
             .WithEnvironment("NEO4J_AUTH", $"{neo4jUserValue}/{neo4jPassValue}")
             .WithEnvironment("NEO4J_ACCEPT_LICENSE_AGREEMENT", "yes")
             .WithEnvironment("DOCKER_BUILDKIT", "1")                      // Enable BuildKit for Neo4j too

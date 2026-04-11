@@ -4,18 +4,36 @@ namespace AspireApp.Web.Services;
 /// Scoped service for managing tenant context in Blazor sessions.
 /// Provides tenant isolation without full authentication infrastructure.
 /// </summary>
-public sealed class TenantContextService(
-    TenantManagementService tenantManagementService,
-    AuthenticationContext authenticationContext)
+public sealed class TenantContextService
 {
     public const string DefaultTenantId = "default";
 
-    private readonly TenantManagementService _tenantManagementService = tenantManagementService;
-    private readonly AuthenticationContext _authenticationContext = authenticationContext;
+    private readonly TenantManagementService? _tenantManagementService;
+    private readonly AuthenticationContext _authenticationContext;
     private readonly List<TenantSummary> _tenants = [];
 
     private string _currentTenantId = DefaultTenantId;
     private string? _currentUserId;
+
+    public TenantContextService(
+        TenantManagementService tenantManagementService,
+        AuthenticationContext authenticationContext)
+        : this(authenticationContext, tenantManagementService)
+    {
+    }
+
+    public TenantContextService(AuthenticationContext authenticationContext)
+        : this(authenticationContext, tenantManagementService: null)
+    {
+    }
+
+    private TenantContextService(
+        AuthenticationContext authenticationContext,
+        TenantManagementService? tenantManagementService)
+    {
+        _authenticationContext = authenticationContext;
+        _tenantManagementService = tenantManagementService;
+    }
 
     /// <summary>
     /// Gets or sets the current tenant ID for this session.
@@ -70,9 +88,11 @@ public sealed class TenantContextService(
         }
 
         _currentUserId = user.UserId;
-        var accessSnapshot = await _tenantManagementService.EnsureTenantAccessAsync(
-            new TenantUserDescriptor(user.UserId, user.DisplayName, user.Email),
-            cancellationToken);
+        var accessSnapshot = _tenantManagementService is null
+            ? BuildFallbackSnapshot(user)
+            : await _tenantManagementService.EnsureTenantAccessAsync(
+                new TenantUserDescriptor(user.UserId, user.DisplayName, user.Email),
+                cancellationToken);
 
         UpdateTenants(accessSnapshot);
     }
@@ -88,7 +108,7 @@ public sealed class TenantContextService(
     public async Task<TenantSummary?> CreateTenantAsync(string tenantName, CancellationToken cancellationToken = default)
     {
         var currentUser = _authenticationContext.CurrentUser;
-        if (currentUser is null)
+        if (currentUser is null || _tenantManagementService is null)
         {
             return null;
         }
@@ -111,7 +131,7 @@ public sealed class TenantContextService(
     public async Task<bool> RenameTenantAsync(string tenantId, string tenantName, CancellationToken cancellationToken = default)
     {
         var currentUser = _authenticationContext.CurrentUser;
-        if (currentUser is null)
+        if (currentUser is null || _tenantManagementService is null)
         {
             return false;
         }
@@ -134,7 +154,7 @@ public sealed class TenantContextService(
     public async Task<bool> DeleteTenantAsync(string tenantId, CancellationToken cancellationToken = default)
     {
         var currentUser = _authenticationContext.CurrentUser;
-        if (currentUser is null)
+        if (currentUser is null || _tenantManagementService is null)
         {
             return false;
         }
@@ -156,7 +176,7 @@ public sealed class TenantContextService(
     public async Task<bool> TryAddMemberAsync(string tenantId, string username, CancellationToken cancellationToken = default)
     {
         var currentUser = _authenticationContext.CurrentUser;
-        if (currentUser is null)
+        if (currentUser is null || _tenantManagementService is null)
         {
             return false;
         }
@@ -174,6 +194,12 @@ public sealed class TenantContextService(
         if (currentUser is null)
         {
             Reset();
+            return;
+        }
+
+        if (_tenantManagementService is null)
+        {
+            UpdateTenants(BuildFallbackSnapshot(currentUser));
             return;
         }
 
@@ -220,5 +246,20 @@ public sealed class TenantContextService(
 
         _currentTenantId = value;
         OnTenantChanged?.Invoke();
+    }
+
+    private static TenantAccessSnapshot BuildFallbackSnapshot(AuthenticatedUser user)
+    {
+        var tenantId = string.IsNullOrWhiteSpace(user.DefaultTenantId)
+            ? DefaultTenantId
+            : user.DefaultTenantId;
+
+        var tenantName = string.IsNullOrWhiteSpace(user.DisplayName)
+            ? tenantId
+            : $"{user.DisplayName}'s workspace";
+
+        return new TenantAccessSnapshot(
+            tenantId,
+            [new TenantSummary(tenantId, tenantName, true, true, true)]);
     }
 }

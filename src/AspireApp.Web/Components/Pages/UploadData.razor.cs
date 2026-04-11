@@ -19,6 +19,7 @@ public partial class UploadData : ComponentBase, IAsyncDisposable, IDisposable
     protected bool _isUploading = false;
     private int _uploadProgress = 0;
     private readonly List<string> _uploadErrors = [];
+    private bool _uploadControlsReady;
     
     // Duplicate detection tracking
     protected bool _isDuplicate;
@@ -150,6 +151,12 @@ public partial class UploadData : ComponentBase, IAsyncDisposable, IDisposable
         if (firstRender && Logger.IsEnabled(LogLevel.Information))
         {
             Logger.LogInformation("UploadData component rendered for the first time");
+        }
+
+        if (firstRender)
+        {
+            _uploadControlsReady = true;
+            await InvokeAsync(StateHasChanged);
         }
     }
 

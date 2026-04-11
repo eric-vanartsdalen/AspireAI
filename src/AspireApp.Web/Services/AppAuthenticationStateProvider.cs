@@ -18,10 +18,10 @@ public sealed class AppAuthenticationStateProvider(
 
     public override async Task<AuthenticationState> GetAuthenticationStateAsync()
     {
-        var user = HydrateFromHttpContext();
+        var user = HydrateFromHttpContext() ?? _authenticationContext.CurrentUser;
         var principal = _httpContextAccessor.HttpContext?.User?.Identity?.IsAuthenticated == true
             ? _httpContextAccessor.HttpContext.User
-            : CreatePrincipal(_authenticationContext.CurrentUser);
+            : CreatePrincipal(user);
 
         if (_tenantContextService is not null)
         {

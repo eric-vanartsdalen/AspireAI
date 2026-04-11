@@ -5,18 +5,32 @@ namespace AspireApp.Web.Services;
 /// <summary>
 /// Mock interactive auth service with hardcoded provider-backed users.
 /// </summary>
-public sealed class MockAuthService(
-    AppAuthenticationStateProvider authenticationStateProvider,
-    TenantContextService tenantContextService,
-    TenantManagementService tenantManagementService,
-    NavigationManager navigationManager) : IAuthService
+public sealed class MockAuthService : IAuthService
 {
     public const string ServiceKey = "mock";
 
-    private readonly AppAuthenticationStateProvider _authenticationStateProvider = authenticationStateProvider;
-    private readonly TenantContextService _tenantContextService = tenantContextService;
-    private readonly TenantManagementService _tenantManagementService = tenantManagementService;
-    private readonly NavigationManager _navigationManager = navigationManager;
+    private readonly AppAuthenticationStateProvider _authenticationStateProvider;
+    private readonly TenantContextService _tenantContextService;
+    private readonly NavigationManager _navigationManager;
+
+    public MockAuthService(
+        AppAuthenticationStateProvider authenticationStateProvider,
+        TenantContextService tenantContextService,
+        NavigationManager navigationManager)
+    {
+        _authenticationStateProvider = authenticationStateProvider;
+        _tenantContextService = tenantContextService;
+        _navigationManager = navigationManager;
+    }
+
+    public MockAuthService(
+        AppAuthenticationStateProvider authenticationStateProvider,
+        TenantContextService tenantContextService,
+        TenantManagementService _,
+        NavigationManager navigationManager)
+        : this(authenticationStateProvider, tenantContextService, navigationManager)
+    {
+    }
 
     public IReadOnlyList<AuthProviderOption> GetProviders() => MockAuthCatalog.GetProviders();
 
@@ -56,13 +70,9 @@ public sealed class MockAuthService(
         string? redirectUri,
         CancellationToken cancellationToken)
     {
-        var tenantSnapshot = await _tenantManagementService.EnsureTenantAccessAsync(
-            new TenantUserDescriptor(selectedUser.UserId, selectedUser.DisplayName, selectedUser.Email),
-            cancellationToken);
-
-        var authenticatedUser = selectedUser with { DefaultTenantId = tenantSnapshot.DefaultTenantId };
+        await _tenantContextService.InitializeForUserAsync(selectedUser, cancellationToken);
+        var authenticatedUser = selectedUser with { DefaultTenantId = _tenantContextService.CurrentTenantId };
         _authenticationStateProvider.SetCurrentUser(authenticatedUser);
-        await _tenantContextService.InitializeForUserAsync(authenticatedUser, cancellationToken);
         _navigationManager.NavigateTo(
             BuildSignInUri(authenticatedUser.ProviderId, authenticatedUser.UserId, redirectUri),
             forceLoad: true);

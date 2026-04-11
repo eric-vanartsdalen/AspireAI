@@ -24,7 +24,7 @@ public class MockAuthServiceTests
         var tenantContext = new TenantContextService(tenantManagementService, authenticationContext);
         var authenticationStateProvider = new AppAuthenticationStateProvider(authenticationContext, tenantContext, new HttpContextAccessor());
         var navigationManager = new TestNavigationManager();
-        var service = new MockAuthService(authenticationStateProvider, tenantContext, tenantManagementService, navigationManager);
+        var service = new MockAuthService(authenticationStateProvider, tenantContext, navigationManager);
 
         await service.SignInAsync("demo", "demo-taylor-jones", "/chat", TestContext.Current.CancellationToken);
 
@@ -43,7 +43,7 @@ public class MockAuthServiceTests
         var tenantContext = new TenantContextService(tenantManagementService, authenticationContext);
         var authenticationStateProvider = new AppAuthenticationStateProvider(authenticationContext, tenantContext, new HttpContextAccessor());
         var navigationManager = new TestNavigationManager();
-        var service = new MockAuthService(authenticationStateProvider, tenantContext, tenantManagementService, navigationManager);
+        var service = new MockAuthService(authenticationStateProvider, tenantContext, navigationManager);
 
         await service.SignInAsync("microsoft", "ms-avery-collins", "/chat", TestContext.Current.CancellationToken);
         await service.SignOutAsync("/", TestContext.Current.CancellationToken);
@@ -60,7 +60,7 @@ public class MockAuthServiceTests
         var tenantContext = new TenantContextService(tenantManagementService, authenticationContext);
         var authenticationStateProvider = new AppAuthenticationStateProvider(authenticationContext, tenantContext, new HttpContextAccessor());
         var navigationManager = new TestNavigationManager();
-        var service = new MockAuthService(authenticationStateProvider, tenantContext, tenantManagementService, navigationManager);
+        var service = new MockAuthService(authenticationStateProvider, tenantContext, navigationManager);
 
         await Assert.ThrowsAsync<InvalidOperationException>(() => service.SignInAsync("demo", "not-a-user", "/chat", TestContext.Current.CancellationToken));
     }

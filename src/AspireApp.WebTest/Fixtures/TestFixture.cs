@@ -235,7 +235,7 @@ public class TestFixture : IAsyncLifetime
 			"AspireApp.WebTest",
 			testRunId);
 		_testDataPath = Path.Combine(_testRunRoot, "data");
-		_testDatabasePath = Path.Combine(repositoryRoot, "database");
+		_testDatabasePath = Path.Combine(_testRunRoot, "database");
 		_testDatabaseFileName = $"data-resources-test-{testRunId}.db";
 
 		Directory.CreateDirectory(_testDataPath);
