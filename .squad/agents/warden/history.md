@@ -145,3 +145,20 @@
   - `src\AspireApp.WebTest\Tests\ChatConversationServiceTests.cs` passes service-layer owner-isolation coverage, but it still lacks a direct unauthorized `AddMessageAsync` assertion for another user attempting to continue an existing conversation.
   - `src\AspireApp.WebTest\Tests\ChatConversationPersistenceTests.cs` is written as the intended end-to-end privacy gate, but it explicitly skips when the conversation shell hooks are absent; live execution here was also blocked because Docker/Aspire was unhealthy.
   - Recommended revision owner: Bob for an independent follow-up pass that wires the real chat shell and closes the privacy proof.
+
+- **2026-04-10 — Auth/Upload UX Test Failures Security Review: APPROVED — No Vulnerabilities Detected.**
+  - User reported: `AuthenticatedUploadUxTests`, `AuthUxFoundationTests`, `CompositeAuthServiceTests` are failing.
+  - Warden security verdict: **No auth shortcuts or insecure patterns detected.** All security controls properly in place:
+    - Mock endpoints correctly gated by service mode (line 147–150, Program.cs)
+    - OIDC handler conditionally registered only when Microsoft config present
+    - Session cookies hardened (HttpOnly, SameSite=Lax, 8-hour sliding, SecurePolicy=SameAsRequest)
+    - Tenant isolation enforced (403 for unmembered tenants in FileUploadController)
+    - No secrets committed; credentials in dotnet user-secrets only
+  - **Root cause of failures: Integration/timing issues, not auth bypass risks:**
+    - `SuccessfulMockSignInTransitionsIntoAuthenticatedShell` fails because `MockAuthService.SignInAsync()` uses `forceLoad: true`, causing Blazor circuit rebuild mid-flight. Test assertion checks URL immediately after, catching transient `/signin` in redirect chain.
+    - `SignOutReturnsToLandingAndReprotectsAppAreas` fails with `net::ERR_ABORTED` navigating to `/chat` — suggests Aspire testhost unhealthy or chat component crash, not auth layer failure.
+  - **Approved fix direction:** Adjust test timing/assertions to account for Blazor circuit cycles; verify `/chat` endpoint health in testhost. Do NOT bypass mock endpoint gating, OIDC conditional registration, or tenant isolation.
+  - **Anti-patterns explicitly rejected:** Test-only backdoors, opt-in tenant checks, removal of forceLoad from SignIn flow.
+  - Decision logged: `.squad/decisions/inbox/warden-auth-test-failures-no-vulnerabilities.md`
+  - Key files: `MockAuthService.cs`, `Program.cs` (lines 147–225), `FileUploadController.cs` (lines 345–390), `AuthenticationServiceCollectionExtensions.cs` (lines 22–34).
+   - **Cross-agent coordination:** Buster diagnosed fixture orchestration root cause (shared storage corruption); Jeff applied 3 app-level fixes. All 13 originally failing tests now passing.

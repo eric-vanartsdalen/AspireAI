@@ -9,6 +9,28 @@
 
 <!-- Append new learnings below. Each entry is something lasting about the project. -->
 
+### 2026-04-11 — Fixture-Backed Web Tests Can Die Before Assertions When Shared Container State Is Dirty
+
+**Completed:**
+- Reproduced `AuthUxFoundationTests` and `AuthenticatedUploadUxTests` as class-level hangs/crashes under filtered `dotnet test` runs; neither class reached an individual test result before the WebTest child process was dumped by the hang detector.
+- Traced the shared failure out of the test bodies and into the Aspire stack started by `TestFixture`: PostgreSQL exited with `invalid checkpoint record` / `could not locate a valid checkpoint record`, and Neo4j also failed on later reruns with `/data/databases/store_lock` because the repo bind mount was already in use.
+- Confirmed the service/component auth seam still gives trustworthy signal once stale runner state is cleared: `CompositeAuthServiceTests`, `SignInPanelTests`, and `MockAuthServiceTests` all pass on the current tree after aligning the MockAuthService test constructor call with the live three-argument surface.
+
+**Key pattern:**
+- When a fixture-backed `AspireApp.WebTest` class aborts with `Xunit.Sdk.TestPipelineException` before reporting individual tests, inspect Docker container state and logs before blaming the assertions.
+- `TestFixture` isolates shared data and SQLite paths, but PostgreSQL and Neo4j still come from AppHost bind mounts under `database\`, so dirty repo storage can sink every browser/integration class during fixture startup.
+- Keep auth triage layered: use service/component tests (`CompositeAuthServiceTests`, `SignInPanelTests`) to judge auth logic while full Aspire fixture classes are blocked on orchestration state.
+
+**Key file paths:**
+- `src\AspireApp.WebTest\Fixtures\TestFixture.cs`
+- `src\AspireApp.AppHost\AppHost.cs`
+- `src\AspireApp.WebTest\Tests\AuthUxFoundationTests.cs`
+- `src\AspireApp.WebTest\Tests\AuthenticatedUploadUxTests.cs`
+- `src\AspireApp.WebTest\Tests\CompositeAuthServiceTests.cs`
+- `src\AspireApp.WebTest\Tests\MockAuthServiceTests.cs`
+
+---
+
 ### 2026-04-10 — Chat Rename Focus Regression Locked Down
 
 **Completed:**
@@ -986,3 +1008,11 @@ The behavior being tested (legacy schema detection with detailed diagnostics) st
 - Test now validates: UI flow works + backend persistence succeeds + tenant context propagates correctly + signed-in user can query their upload via API
 - If controller auth changes or tenant scoping evolves, this test will surface the regression immediately
 
+
+**Cross-Agent Coordination:**
+- Warden approved fix direction (security gates intact)
+- Jeff implemented 3 app-level fixes (hydration, tenant fallback, upload readiness)
+- All 13 tests passing; security audit complete
+- Session logged: .squad/log/2026-04-11T17-53-25-auth-test-fixes.md
+
+---

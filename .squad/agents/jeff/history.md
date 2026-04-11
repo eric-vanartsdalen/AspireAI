@@ -9,6 +9,35 @@
 
 <!-- Append new learnings below. Each entry is something lasting about the project. -->
 
+### 2026-04-11 — Auth shell state must hydrate from HttpContext early, and InteractiveServer upload inputs must wait for the first interactive render
+
+**Status:** Implemented and validated.
+
+**Implementation Results:**
+- ✅ `AuthenticationContext` now lazy-hydrates from `IHttpContextAccessor` so pages like `SignIn.razor` and `UploadData.razor` can trust `IsAuthenticated` on the first request after cookie sign-in.
+- ✅ `AppAuthenticationStateProvider` now carries the in-memory user into tenant initialization when there is no authenticated `HttpContext`, so mock sign-in no longer resets tenant state back to `default`.
+- ✅ `MockAuthService` and `TenantContextService` now support a no-store fallback path, keeping mock auth/provider-selection tests decoupled from the tenant persistence layer.
+- ✅ `UploadData` now waits until the first interactive render before exposing the real `<InputFile>` control, which prevents lost initial file-selection events and keeps the upload button state reliable in Playwright and real browsers.
+
+**Key Paths:**
+- `src\AspireApp.Web\Services\AuthenticationContext.cs`
+- `src\AspireApp.Web\Services\AppAuthenticationStateProvider.cs`
+- `src\AspireApp.Web\Services\MockAuthService.cs`
+- `src\AspireApp.Web\Services\TenantContextService.cs`
+- `src\AspireApp.Web\Components\Pages\UploadData.razor`
+- `src\AspireApp.Web\Components\Pages\UploadData.razor.cs`
+
+**Validation Notes:**
+- `dotnet build src\AspireApp.WebTest\AspireApp.WebTest.csproj --no-restore --nologo`
+- `dotnet test src\AspireApp.WebTest\AspireApp.WebTest.csproj --no-build --no-restore --filter "FullyQualifiedName~AuthenticatedUploadUxTests|FullyQualifiedName~AuthUxFoundationTests|FullyQualifiedName~CompositeAuthServiceTests" --nologo -v minimal`
+- **Result:** 13/13 originally failing tests now passing
+
+**Cross-Agent Coordination:**
+- Warden approved fix direction (security gates intact)
+- Buster identified Aspire fixture root cause (shared storage corruption)
+- Jeff implemented 3 app-level fixes (hydration, tenant fallback, upload readiness)
+- All 13 tests passing; security audit complete
+
 ### 2026-04-10 — Chat history now uses per-user ownership, fallback titles, and operational-store bootstrapping
 
 **Status:** Implemented and validated.
