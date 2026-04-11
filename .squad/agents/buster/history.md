@@ -9,6 +9,28 @@
 
 <!-- Append new learnings below. Each entry is something lasting about the project. -->
 
+### 2026-04-11 — Chat Privacy Browser Tests Must Decouple Persistence From Assistant Latency
+
+**Completed:**
+- Reproduced `ChatConversationPersistenceTests.ConversationsRemainPrivateEvenWithinSharedTenantMembership` failing after the owner prompt was already persisted; the UI stayed disabled because `Chat.razor.cs` intentionally keeps send/rename/delete controls locked while `IsAIResponsing` is true.
+- Confirmed this was not shared browser or storage state: `TestFixture` still gives each page its own browser context and isolated test-run data/database roots, and the failure happened on the owner page before the second user page was created.
+- Updated the privacy Playwright test to stop the in-flight AI response after the owner prompt becomes visible, capture the rendered saved-conversation title, and continue the shared-tenant privacy assertions without waiting on full model completion.
+- Re-ran the smallest focused validation Eric asked for: `ChatConversationServiceTests` plus the targeted privacy UI test both pass on the current tree.
+
+**Key pattern:**
+- For chat persistence/privacy browser tests, treat the visible owner prompt as the persistence gate and separate that from assistant latency. The owner-only contract is already in play once the conversation is saved and listed.
+- When the scenario is about ownership/isolation rather than answer quality, use `data-testid="chat-stop-button"` to cancel the live response once the prompt is visible, then continue assertions after controls re-enable.
+- Keep privacy enforcement double-covered: service tests (`ListAndGetConversationAsync_ReturnOnlyOwnerRecords`, `AddMessageAsync_DoesNotAllowAnotherUserToContinueConversation`) provide the cheap authorization contract, while Playwright proves the shared-tenant UI still hides the conversation end to end.
+- User preference: for slow browser suites in this repo, run only the smallest targeted validation needed instead of broad reruns.
+
+**Key file paths:**
+- `src\AspireApp.WebTest\Tests\ChatConversationPersistenceTests.cs`
+- `src\AspireApp.WebTest\Tests\ChatConversationServiceTests.cs`
+- `src\AspireApp.Web\Components\Pages\Chat.razor.cs`
+- `src\AspireApp.WebTest\Fixtures\TestFixture.cs`
+
+---
+
 ### 2026-04-11 — Fixture-Backed Web Tests Can Die Before Assertions When Shared Container State Is Dirty
 
 **Completed:**

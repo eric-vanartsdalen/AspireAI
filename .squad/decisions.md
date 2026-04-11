@@ -7,6 +7,7 @@
 > **Note (2026-04-09T15:39:08Z):** Merged 6 tenant slice decisions (Jeff, Warden, Buster, Bob). Tenant isolation via persisted tenants/memberships, default-tenant protection + backfill, upload authorization hardening, add-member edge-case revision, and local-auth-slice foundation recommendation. 28 targeted tests passing. No duplicates found. Inbox cleared.
 > **Note (2026-04-09T15:39:12Z):** Added Upload Authentication Regression decision (Jeff, Buster): FileStorageService scoped injection removes HTTP self-call pattern in UploadData; tenant context preserved in-circuit. Regression coverage tightened. Build success. No inbox files to merge.
 > **Note (2026-04-10T07:48:03Z):** Merged 9 inbox decisions from chat persistence & rename focus work (Jeff, Warden, Eric, Buster). Consolidated chat history tests audit, persistence audit, service implementation, rename focus fix, upload auth test gap closure, privacy review notes, and user privacy directive. No exact duplicates; privacy review rejected prematurely (Warden flagged incomplete UI wiring, not design flaw). All implementation work complete. Inbox cleared.
+> **Note (2026-04-11T18:38:10Z):** Merged 1 inbox decision from chat persistence QA validation session (Buster). "Chat privacy tests should not wait on full AI completion" — acceptance seam is owner message persistence + owner-only visibility, not Ollama response completion. 7/7 focused tests passing. Inbox cleared.
 
 <!-- Decisions are appended below. Each entry starts with ### -->
 
@@ -1457,3 +1458,44 @@ dotnet test src\AspireApp.WebTest\AspireApp.WebTest.csproj \
 - **Auth/Upload Test Failures Security Verdict** (2026-04-11, Warden) — Approved this fix direction
 - **WebTest Fixture Shared State** (2026-04-11, Buster) — Identified orchestration root cause
 - **Upload Authentication Regression** (2026-04-09, Jeff) — Earlier auth-in-circuit fix
+
+## Chat Privacy Tests Should Not Wait on Full AI Completion — Buster — 2026-04-11
+
+**Authors:** Buster (QA / Tester)  
+**Status:** IMPLEMENTED  
+**Scope:** Chat persistence and shared-tenant privacy acceptance tests, AI response lifecycle handling
+
+### Context
+
+`ChatConversationPersistenceTests.ConversationsRemainPrivateEvenWithinSharedTenantMembership` was failing intermittently because the test awaited full Ollama response completion. However, `src\AspireApp.Web\Components\Pages\Chat.razor.cs` intentionally disables send, rename, and delete controls during the `IsAIResponsing` window to prevent user actions while streaming is active.
+
+The persistence contract was actually satisfied (owner prompt saved, visibility remained private), but the test failed on latency rather than on the ownership invariant.
+
+### Decision
+
+**For `/chat` privacy/isolation browser tests, the acceptance seam is the persisted owner message plus owner-only conversation visibility, not the assistant finishing a live Ollama response. Tests may stop the active AI response via `data-testid="chat-stop-button"` once the owner prompt is visible, then continue privacy assertions against the captured saved-conversation title.**
+
+#### Rationale
+
+- **Decouples test from AI latency:** Ollama response time is non-deterministic. Test reliability should not depend on external model performance.
+- **Preserves privacy contract:** Conversation is persisted and access-gated before streaming completes. Privacy is never compromised.
+- **Respects UI/UX discipline:** Disabling controls during streaming prevents mid-flight mutations and is intentional behavior.
+- **Simplifies acceptance gates:** One acceptance seam (persistence + visibility) is clearer than "persistence AND full response".
+
+#### Implementation
+
+Updated `src/AspireApp.WebTest/Tests/ChatConversationPersistenceTests.cs`:
+1. After sending owner prompt, wait for message to appear and save-state confirmation (short wait).
+2. Click stop button to halt in-flight AI response.
+3. Capture the rendered conversation title from the saved state.
+4. Continue shared-tenant privacy assertions using persisted conversation record.
+
+#### Validation
+
+- `dotnet test src\AspireApp.WebTest\AspireApp.WebTest.csproj --filter "FullyQualifiedName~ChatConversationServiceTests"` → 5/5 passing
+- `dotnet test src\AspireApp.WebTest\AspireApp.WebTest.csproj --filter "FullyQualifiedName~ChatConversationPersistenceTests.ConversationsRemainPrivateEvenWithinSharedTenantMembership" --no-build --no-restore` → 1/1 passing
+
+### Related Decisions
+
+- **Chat History Tests Audit** (2026-04-10, Buster) — Earlier review of persistence test structure
+- **WebTest Fixture Shared State** (2026-04-11, Buster) — Isolation fix at orchestration level
