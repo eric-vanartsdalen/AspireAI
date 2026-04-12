@@ -1,6 +1,8 @@
-﻿using AspireApp.Web.Components.Shared;
+using AspireApp.Web.Components.Shared;
+using AspireApp.Web.Services;
 using Markdig;
 using Microsoft.AspNetCore.Components;
+using Microsoft.AspNetCore.Components.Authorization;
 using Microsoft.JSInterop;
 using Microsoft.SemanticKernel;
 using Microsoft.SemanticKernel.ChatCompletion;
@@ -17,88 +19,418 @@ namespace AspireApp.Web.Components.Pages
         public required IJSRuntime JSRuntime { get; set; }
 
         [Inject]
-        public required ChatRefreshService RefreshService { get; set; }
-
-        [Inject]
         public required IHttpClientFactory HttpClientFactory { get; set; }
 
         [Inject]
         public required SpeechService SpeechService { get; set; }
 
-        private ElementReference questionInput;
-        private CancellationTokenSource? _cancellationTokenSource;
-        private DotNetObjectReference<Chat>? _dotNetRef;
-        
-        // Cache the kernel instance to avoid recreation overhead
-        private Kernel? _kernel;
-        private readonly object _kernelLock = new object();
+        [Inject]
+        public required AuthenticationStateProvider AuthenticationStateProvider { get; set; }
 
-        private Microsoft.SemanticKernel.ChatCompletion.ChatHistory _chatHistory { get; set; } = new Microsoft.SemanticKernel.ChatCompletion.ChatHistory();
-        private string Status { get; set; } = string.Empty;
-        private string Question { get; set; } = string.Empty;
-        private string AIResponse { get; set; } = string.Empty;
-        private string ElapsedTimeMessage { get; set; } = string.Empty;
-        private Boolean IsAIResponsing { get; set; } = false;
-        private Boolean IsNotFirstTimeLoading { get; set; } = false;
-        private string OllamaServiceMessage { get; set; } = string.Empty;
+        [Inject]
+        public required IChatConversationService ChatConversationService { get; set; }
 
-        // Speech-related properties
-        private SpeechSupport? SpeechSupport { get; set; }
-        private bool IsListening { get; set; } = false;
-        private bool IsSpeaking { get; set; } = false;
-        private string SpeechTranscript { get; set; } = string.Empty;
-        private string InterimTranscript { get; set; } = string.Empty;
-        private string SpeechStatusText { get; set; } = string.Empty;
-        private string SpeechStatusMessage { get; set; } = string.Empty;
-        private string? CurrentlySpeakingMessage { get; set; } = null; // Track which message is being spoken
+        [Inject]
+        public required TenantContextService TenantContext { get; set; }
 
         [Inject]
         public AiInfoStateService AiInfoState { get; set; } = default!;
 
+        private ElementReference questionInput;
+        private ElementReference conversationTitleInput;
+        private CancellationTokenSource? _cancellationTokenSource;
+        private DotNetObjectReference<Chat>? _dotNetRef;
+        private const int AiFirstTokenTimeoutSeconds = 45;
+        private const int AiResponseTimeoutSeconds = 150;
+        private const string HaltedResponseTag = "[AI response was manually halted prematurely.]";
+        private const string TimedOutResponseTag = "[AI response timed out before completion.]";
+
+        private Kernel? _kernel;
+        private readonly object _kernelLock = new();
+
+        private ChatHistory _chatHistory { get; set; } = new();
+        private IReadOnlyList<ChatConversationSummary> Conversations { get; set; } = [];
+        private Guid? ActiveConversationId { get; set; }
+        private string ActiveConversationTitle { get; set; } = ChatConversationTitleHelper.BuildFallbackTitle(string.Empty);
+        private string ConversationTitleDraft { get; set; } = string.Empty;
+        private bool IsEditingConversationTitle { get; set; }
+        private bool ShouldFocusConversationTitleInput { get; set; }
+        private string ConversationStatusMessage { get; set; } = string.Empty;
+        private bool ConversationStatusIsError { get; set; }
+        private AuthenticatedUser? CurrentUser { get; set; }
+        private string Status { get; set; } = string.Empty;
+        private string Question { get; set; } = string.Empty;
+        private string AIResponse { get; set; } = string.Empty;
+        private string ElapsedTimeMessage { get; set; } = string.Empty;
+        private bool IsAIResponsing { get; set; }
+        private bool IsNotFirstTimeLoading { get; set; }
+        private string OllamaServiceMessage { get; set; } = string.Empty;
+
+        // Speech-related properties
+        private SpeechSupport? SpeechSupport { get; set; }
+        private bool IsListening { get; set; }
+        private bool IsSpeaking { get; set; }
+        private string SpeechTranscript { get; set; } = string.Empty;
+        private string InterimTranscript { get; set; } = string.Empty;
+        private string SpeechStatusText { get; set; } = string.Empty;
+        private string SpeechStatusMessage { get; set; } = string.Empty;
+        private string? CurrentlySpeakingMessage { get; set; }
+        private bool IsInteractiveReady { get; set; }
+
+        private string ConversationStatusCssClass => ConversationStatusIsError ? "alert alert-danger" : "alert alert-info";
+
+        private bool HasActiveConversation => ActiveConversationId.HasValue;
+
+        private string ConversationHeading => HasActiveConversation
+            ? ActiveConversationTitle
+            : ChatConversationTitleHelper.BuildFallbackTitle(string.Empty);
+
+        private string InputPlaceholder => AiInfoState.EndPointAvailable
+            ? "Enter your question or use voice input"
+            : "AI service unavailable. Saved conversations are still available.";
+
         protected override async Task OnInitializedAsync()
         {
             Console.WriteLine("=== Chat OnInitializedAsync START ===");
-            
-            // Debug: Check what configuration values we have
+
             var configEndpoint = configuration["AI-Endpoint"];
             var configModel = configuration["AI-Chat-Model"];
             var envEndpoint = Environment.GetEnvironmentVariable("AI-Endpoint");
             var envModel = Environment.GetEnvironmentVariable("AI-Chat-Model");
-            
+
             Console.WriteLine($"Chat: Config AI-Endpoint = '{configEndpoint}'");
             Console.WriteLine($"Chat: Config AI-Chat-Model = '{configModel}'");
             Console.WriteLine($"Chat: Env AI-Endpoint = '{envEndpoint}'");
             Console.WriteLine($"Chat: Env AI-Chat-Model = '{envModel}'");
             Console.WriteLine($"Chat: HomeConfigurations.ActiveModelURL = '{HomeConfigurations.ActiveModelURL}'");
             Console.WriteLine($"Chat: HomeConfigurations.ActiveModel = '{HomeConfigurations.ActiveModel}'");
-            
-            // Use the centralized AiInfoStateService initialization
+
+            CurrentUser = await ResolveCurrentUserAsync();
+            if (CurrentUser is not null)
+            {
+                await TenantContext.EnsureInitializedAsync();
+                await LoadConversationSummariesAsync();
+            }
+
             await AiInfoState.InitializeAsync();
-            
+
             Console.WriteLine($"Chat: AiInfoState.EndPointAvailable = {AiInfoState.EndPointAvailable}");
             Console.WriteLine($"Chat: AiInfoState.CurrentAiUri = '{AiInfoState.CurrentAiUri}'");
             Console.WriteLine($"Chat: AiInfoState.CurrentAiModel = '{AiInfoState.CurrentAiModel}'");
 
-            // Initialize speech service
             await InitializeSpeechService();
-
-            // Initialize kernel early to avoid delays during first AI call
             await InitializeKernelAsync();
-
             await CheckOllamaService();
+
             IsNotFirstTimeLoading = true;
-            
+
             Console.WriteLine("=== Chat OnInitializedAsync END ===");
-            StateHasChanged(); // This call is for the Chatbot component itself.
+            StateHasChanged();
+        }
+
+        private async Task<AuthenticatedUser?> ResolveCurrentUserAsync()
+        {
+            if (AuthenticationContext.CurrentUser is not null)
+            {
+                CurrentUser = AuthenticationContext.CurrentUser;
+                return CurrentUser;
+            }
+
+            var authState = await AuthenticationStateProvider.GetAuthenticationStateAsync();
+            var user = AuthenticatedUserClaims.BuildUser(authState.User);
+            if (user is null)
+            {
+                AuthenticationContext.SetCurrentUser(null);
+                CurrentUser = null;
+                return null;
+            }
+
+            AuthenticationContext.SetCurrentUser(user);
+            CurrentUser = user;
+            return CurrentUser;
+        }
+
+        private async Task LoadConversationSummariesAsync()
+        {
+            var user = await ResolveCurrentUserAsync();
+            if (user is null)
+            {
+                Conversations = [];
+                ResetConversationDraft(clearStatus: false);
+                return;
+            }
+
+            Conversations = await ChatConversationService.ListConversationsAsync(user.UserId);
+
+            if (!ActiveConversationId.HasValue)
+            {
+                return;
+            }
+
+            var activeConversation = Conversations.FirstOrDefault(conversation => conversation.ConversationId == ActiveConversationId.Value);
+            if (activeConversation is null)
+            {
+                ResetConversationDraft(clearStatus: false);
+                return;
+            }
+
+            ApplyConversationSummary(activeConversation);
+        }
+
+        private async Task StartNewConversationAsync()
+        {
+            if (IsAIResponsing)
+            {
+                return;
+            }
+
+            ResetConversationDraft();
+            await FocusQuestionInput();
+            StateHasChanged();
+        }
+
+        private async Task SelectConversationAsync(Guid conversationId)
+        {
+            if (IsAIResponsing)
+            {
+                return;
+            }
+
+            var user = await ResolveCurrentUserAsync();
+            if (user is null)
+            {
+                SetConversationStatus("Your sign-in session expired. Please sign in again.", isError: true);
+                return;
+            }
+
+            var conversation = await ChatConversationService.GetConversationAsync(conversationId, user.UserId);
+            if (conversation is null)
+            {
+                SetConversationStatus("That conversation could not be loaded.", isError: true);
+                await LoadConversationSummariesAsync();
+                return;
+            }
+
+            ApplyConversationDetail(conversation);
+            ClearConversationStatus();
+            await ScrollChatToBottomAsync();
+        }
+
+        private void BeginConversationTitleEdit()
+        {
+            if (!HasActiveConversation || IsAIResponsing)
+            {
+                return;
+            }
+
+            ConversationTitleDraft = ActiveConversationTitle;
+            IsEditingConversationTitle = true;
+            ShouldFocusConversationTitleInput = true;
+        }
+
+        private void CancelConversationTitleEdit()
+        {
+            IsEditingConversationTitle = false;
+            ShouldFocusConversationTitleInput = false;
+            ConversationTitleDraft = ActiveConversationTitle;
+        }
+
+        private async Task SaveConversationTitleAsync()
+        {
+            if (!HasActiveConversation || IsAIResponsing)
+            {
+                return;
+            }
+
+            if (string.IsNullOrWhiteSpace(ConversationTitleDraft))
+            {
+                SetConversationStatus("Enter a title before saving.", isError: true);
+                ShouldFocusConversationTitleInput = true;
+                return;
+            }
+
+            var user = await ResolveCurrentUserAsync();
+            if (user is null)
+            {
+                SetConversationStatus("Your sign-in session expired. Please sign in again.", isError: true);
+                ShouldFocusConversationTitleInput = true;
+                return;
+            }
+
+            var renamedConversation = await ChatConversationService.RenameConversationAsync(
+                ActiveConversationId!.Value,
+                user.UserId,
+                ConversationTitleDraft);
+
+            if (renamedConversation is null)
+            {
+                SetConversationStatus("That conversation could not be renamed.", isError: true);
+                ShouldFocusConversationTitleInput = true;
+                return;
+            }
+
+            ApplyConversationSummary(renamedConversation);
+            IsEditingConversationTitle = false;
+            ShouldFocusConversationTitleInput = false;
+            await LoadConversationSummariesAsync();
+            ClearConversationStatus();
+        }
+
+        private async Task DeleteConversationAsync(Guid conversationId)
+        {
+            if (IsAIResponsing)
+            {
+                return;
+            }
+
+            var user = await ResolveCurrentUserAsync();
+            if (user is null)
+            {
+                SetConversationStatus("Your sign-in session expired. Please sign in again.", isError: true);
+                return;
+            }
+
+            var deleted = await ChatConversationService.DeleteConversationAsync(conversationId, user.UserId);
+            if (!deleted)
+            {
+                SetConversationStatus("That conversation could not be deleted.", isError: true);
+                return;
+            }
+
+            if (ActiveConversationId == conversationId)
+            {
+                ResetConversationDraft(clearStatus: false);
+            }
+
+            await LoadConversationSummariesAsync();
+            SetConversationStatus("Conversation deleted.", isError: false);
+        }
+
+        private void ApplyConversationSummary(ChatConversationSummary conversation)
+        {
+            ActiveConversationId = conversation.ConversationId;
+            ActiveConversationTitle = conversation.Title;
+
+            if (!IsEditingConversationTitle)
+            {
+                ConversationTitleDraft = conversation.Title;
+            }
+        }
+
+        private void ApplyConversationDetail(ChatConversationDetail conversation)
+        {
+            ActiveConversationId = conversation.ConversationId;
+            ActiveConversationTitle = conversation.Title;
+            ConversationTitleDraft = conversation.Title;
+            IsEditingConversationTitle = false;
+            Question = string.Empty;
+            AIResponse = string.Empty;
+            ElapsedTimeMessage = string.Empty;
+            _chatHistory = conversation.Messages.ToChatHistory();
+        }
+
+        private void ResetConversationDraft(bool clearStatus = true)
+        {
+            ActiveConversationId = null;
+            ActiveConversationTitle = ChatConversationTitleHelper.BuildFallbackTitle(string.Empty);
+            ConversationTitleDraft = string.Empty;
+            IsEditingConversationTitle = false;
+            Question = string.Empty;
+            AIResponse = string.Empty;
+            ElapsedTimeMessage = string.Empty;
+            _chatHistory = new ChatHistory();
+
+            if (clearStatus)
+            {
+                ClearConversationStatus();
+            }
+        }
+
+        private void SetConversationStatus(string message, bool isError)
+        {
+            ConversationStatusMessage = message;
+            ConversationStatusIsError = isError;
+        }
+
+        private void ClearConversationStatus()
+        {
+            ConversationStatusMessage = string.Empty;
+            ConversationStatusIsError = false;
+        }
+
+        private async Task<bool> PersistUserMessageAsync(string message)
+        {
+            var user = await ResolveCurrentUserAsync();
+            if (user is null)
+            {
+                SetConversationStatus("Your sign-in session expired. Please sign in again.", isError: true);
+                return false;
+            }
+
+            ChatConversationSummary? conversationSummary;
+            if (!ActiveConversationId.HasValue)
+            {
+                conversationSummary = await ChatConversationService.StartConversationAsync(
+                    user.UserId,
+                    TenantContext.CurrentTenantId,
+                    message);
+            }
+            else
+            {
+                conversationSummary = await ChatConversationService.AddMessageAsync(
+                    ActiveConversationId.Value,
+                    user.UserId,
+                    ChatConversationRoles.User,
+                    message);
+            }
+
+            if (conversationSummary is null)
+            {
+                SetConversationStatus("We couldn't save your message. Try starting a new conversation.", isError: true);
+                return false;
+            }
+
+            ApplyConversationSummary(conversationSummary);
+            await LoadConversationSummariesAsync();
+            return true;
+        }
+
+        private async Task PersistAssistantMessageAsync(string message)
+        {
+            if (!ActiveConversationId.HasValue)
+            {
+                return;
+            }
+
+            var user = await ResolveCurrentUserAsync();
+            if (user is null)
+            {
+                SetConversationStatus("The response was shown, but your session expired before it could be saved.", isError: true);
+                return;
+            }
+
+            var conversationSummary = await ChatConversationService.AddMessageAsync(
+                ActiveConversationId.Value,
+                user.UserId,
+                ChatConversationRoles.Assistant,
+                message);
+
+            if (conversationSummary is null)
+            {
+                SetConversationStatus("The response was shown, but it could not be saved to your history.", isError: true);
+                return;
+            }
+
+            ApplyConversationSummary(conversationSummary);
+            await LoadConversationSummariesAsync();
         }
 
         private async Task InitializeSpeechService()
         {
             try
             {
-                // Initialize speech service and get support information
                 SpeechSupport = await SpeechService.InitializeAsync();
-                
+
                 if (!SpeechSupport.SpeechRecognition && !SpeechSupport.TextToSpeech)
                 {
                     SpeechStatusMessage = "Speech features are not supported in this browser. Please use Chrome, Edge, or Safari for voice functionality.";
@@ -112,7 +444,6 @@ namespace AspireApp.Web.Components.Pages
                     SpeechStatusMessage = "Text-to-speech is not supported in this browser. Speech recognition is available.";
                 }
 
-                // Subscribe to speech events
                 SpeechService.SpeechRecognitionResult += OnSpeechRecognitionResult;
                 SpeechService.SpeechRecognitionError += OnSpeechRecognitionError;
                 SpeechService.SpeechRecognitionEnd += OnSpeechRecognitionEnd;
@@ -137,6 +468,7 @@ namespace AspireApp.Web.Components.Pages
                 {
                     if (_kernel == null)
                     {
+                        HomeConfigurations.ForceReconfigure();
                         IKernelBuilder builder = Kernel.CreateBuilder();
                         builder.AddOllamaChatCompletion(
                             modelId: HomeConfigurations.ActiveModel,
@@ -154,6 +486,7 @@ namespace AspireApp.Web.Components.Pages
             {
                 if (_kernel == null)
                 {
+                    HomeConfigurations.ForceReconfigure();
                     IKernelBuilder builder = Kernel.CreateBuilder();
                     builder.AddOllamaChatCompletion(
                         modelId: HomeConfigurations.ActiveModel,
@@ -167,51 +500,76 @@ namespace AspireApp.Web.Components.Pages
 
         private async Task QueryAIChat()
         {
-            if (!Question.Trim().Equals(string.Empty) && !IsAIResponsing)
+            if (IsAIResponsing)
             {
-                // Stop listening if currently active before submitting query
-                if (IsListening)
-                {
-                    await StopListening();
-                }
+                return;
+            }
 
-                Status = Question;
-                Question = string.Empty;
-                
-                // Clear speech transcript when sending message
-                SpeechTranscript = string.Empty;
-                InterimTranscript = string.Empty;
-                
-                IsAIResponsing = true;
-                AIResponse = string.Empty;
+            var currentQuestion = await ReadQuestionInputAsync();
+            if (string.IsNullOrWhiteSpace(currentQuestion))
+            {
+                return;
+            }
+
+            if (!AiInfoState.EndPointAvailable)
+            {
+                SetConversationStatus("The AI service is currently unavailable. You can still browse saved conversations.", isError: true);
+                return;
+            }
+
+            ClearConversationStatus();
+
+            if (IsListening)
+            {
+                await StopListening();
+            }
+
+            Status = currentQuestion;
+            Question = string.Empty;
+            SpeechTranscript = string.Empty;
+            InterimTranscript = string.Empty;
+
+            var persisted = await PersistUserMessageAsync(Status);
+            if (!persisted)
+            {
+                Question = Status;
+                Status = string.Empty;
                 StateHasChanged();
+                return;
+            }
 
-                _chatHistory.AddUserMessage(Status);
-                StateHasChanged();
+            IsAIResponsing = true;
+            AIResponse = string.Empty;
+            _chatHistory.AddUserMessage(Status);
+            StateHasChanged();
 
-                // Scroll to bottom after adding user message with a small delay
-                try
-                {
-                    await Task.Delay(50); // Small delay to ensure DOM update
-                    await JSRuntime.InvokeVoidAsync("scrollChatToBottom");
-                }
-                catch (Exception ex)
-                {
-                    Console.WriteLine($"Error scrolling: {ex.Message}");
-                }
+            await ScrollChatToBottomAsync();
+            await CallBackgroundAI();
+        }
 
-                await CallBackgroundAI();
+        private async Task<string> ReadQuestionInputAsync()
+        {
+            var fallback = Question.Trim();
+
+            try
+            {
+                var currentValue = await JSRuntime.InvokeAsync<string>("getElementValue", questionInput);
+                return string.IsNullOrWhiteSpace(currentValue)
+                    ? fallback
+                    : currentValue.Trim();
+            }
+            catch (JSException)
+            {
+                return fallback;
             }
         }
 
-        // Speech event handlers
         private void OnSpeechRecognitionResult(string finalTranscript, string interimTranscript)
         {
             InvokeAsync(() =>
             {
                 if (!string.IsNullOrWhiteSpace(finalTranscript))
                 {
-                    // Add final transcript to the question input
                     if (string.IsNullOrWhiteSpace(Question))
                     {
                         Question = finalTranscript.Trim();
@@ -220,10 +578,10 @@ namespace AspireApp.Web.Components.Pages
                     {
                         Question += " " + finalTranscript.Trim();
                     }
-                    
+
                     SpeechTranscript = string.Empty;
                 }
-                
+
                 InterimTranscript = interimTranscript;
                 SpeechTranscript = finalTranscript;
                 StateHasChanged();
@@ -235,7 +593,7 @@ namespace AspireApp.Web.Components.Pages
             InvokeAsync(() =>
             {
                 IsListening = false;
-                SpeechStatusText = $"Speech recognition stopped";
+                SpeechStatusText = "Speech recognition stopped";
                 StateHasChanged();
             });
         }
@@ -267,7 +625,7 @@ namespace AspireApp.Web.Components.Pages
             {
                 IsSpeaking = false;
                 CurrentlySpeakingMessage = null;
-                SpeechStatusText = $"Text-to-speech stopped";
+                SpeechStatusText = "Text-to-speech stopped";
                 StateHasChanged();
             });
         }
@@ -278,12 +636,11 @@ namespace AspireApp.Web.Components.Pages
             {
                 IsSpeaking = false;
                 CurrentlySpeakingMessage = null;
-                SpeechStatusText = $"Text-to-speech stopped";
+                SpeechStatusText = "Text-to-speech stopped";
                 StateHasChanged();
             });
         }
 
-        // Speech control methods
         private async Task ToggleMicrophone()
         {
             if (IsListening)
@@ -303,12 +660,11 @@ namespace AspireApp.Web.Components.Pages
                 var success = await SpeechService.StartListeningAsync();
                 if (success)
                 {
-                    // Stop any ongoing TTS when starting speech recognition
                     if (IsSpeaking)
                     {
                         await StopSpeaking();
                     }
-                    
+
                     IsListening = true;
                     SpeechStatusText = "Listening... Speak now";
                 }
@@ -366,22 +722,19 @@ namespace AspireApp.Web.Components.Pages
         {
             try
             {
-                // Stop any ongoing speech or listening
                 if (IsSpeaking)
                 {
                     await StopSpeaking();
-                    return; // If we're already speaking this message, just stop
+                    return;
                 }
-                
+
                 if (IsListening)
                 {
                     await StopListening();
                 }
 
-                // Set the currently speaking message
                 CurrentlySpeakingMessage = message;
-                
-                // Convert markdown to plain text for better speech
+
                 var plainText = ConvertMarkdownToPlainText(message);
                 await SpeechService.SpeakAsync(plainText);
             }
@@ -409,13 +762,11 @@ namespace AspireApp.Web.Components.Pages
             }
         }
 
-        // Helper method to check if a specific message is currently being spoken
         private bool IsMessageBeingSpoken(string message)
         {
             return IsSpeaking && CurrentlySpeakingMessage == message;
         }
 
-        // Helper properties for HTML attributes to avoid complex Razor expressions
         private bool IsTtsMessageButtonDisabled(string message)
         {
             return IsSpeaking && !IsMessageBeingSpoken(message);
@@ -429,62 +780,53 @@ namespace AspireApp.Web.Components.Pages
         private string ConvertMarkdownToPlainText(string markdown)
         {
             if (string.IsNullOrWhiteSpace(markdown))
+            {
                 return string.Empty;
+            }
 
             try
             {
-                // Convert markdown to HTML first
                 var html = Markdown.ToHtml(markdown);
-                
-                // Simple HTML tag removal for speech
                 var plainText = System.Text.RegularExpressions.Regex.Replace(html, "<.*?>", string.Empty);
-                
-                // Decode HTML entities
                 plainText = System.Net.WebUtility.HtmlDecode(plainText);
-                
                 return plainText.Trim();
             }
             catch
             {
-                // Fallback to original text if conversion fails
                 return markdown;
             }
         }
-
-        // Other existing methods...
 
         protected override async Task OnAfterRenderAsync(bool firstRender)
         {
             if (firstRender)
             {
-                _dotNetRef?.Dispose(); // Cleanup any existing reference
+                _dotNetRef?.Dispose();
                 _dotNetRef = DotNetObjectReference.Create(this);
 
-                bool functionReady = false;
-                int retries = 20; // Try for up to 2 seconds (20 * 100ms)
-                for (int i = 0; i < retries; i++)
+                var functionReady = false;
+                const int retries = 20;
+                for (var i = 0; i < retries; i++)
                 {
                     try
                     {
-                        // Check if the JS function is defined on the window object
                         functionReady = await JSRuntime.InvokeAsync<bool>("eval", "typeof window.initializeKeyboardShortcuts === 'function'");
                         if (functionReady)
                         {
                             Console.WriteLine($"initializeKeyboardShortcuts function found after {i + 1} attempt(s).");
-                            break; // Function is ready
+                            break;
                         }
                     }
                     catch (JSException ex)
                     {
-                        // Log if eval itself fails, might indicate JS environment issues
                         Console.WriteLine($"JS eval check for initializeKeyboardShortcuts failed (attempt {i + 1}/{retries}): {ex.Message}");
                     }
                     catch (Exception ex)
                     {
-                        // Catch other potential exceptions during the check
                         Console.WriteLine($"Generic error during JS eval check (attempt {i + 1}/{retries}): {ex.Message}");
                     }
-                    await Task.Delay(100); // Wait before retrying
+
+                    await Task.Delay(100);
                 }
 
                 if (functionReady)
@@ -496,34 +838,32 @@ namespace AspireApp.Web.Components.Pages
                     }
                     catch (Exception ex)
                     {
-                        // This catch is for errors during the actual call to initializeKeyboardShortcuts
                         Console.WriteLine($"Error calling initializeKeyboardShortcuts after it was found: {ex.Message}");
                         Console.WriteLine($"Stack trace: {ex.StackTrace}");
                     }
                 }
                 else
                 {
-                    // Log an error if the function is still not found after all retries
                     Console.WriteLine($"Error initializing keyboard shortcuts: 'initializeKeyboardShortcuts' function not found after {retries * 100}ms timeout.");
                 }
+
+                IsInteractiveReady = true;
+                StateHasChanged();
             }
-            if (firstRender || !IsAIResponsing)
+
+            if (ShouldFocusConversationTitleInput && IsEditingConversationTitle)
+            {
+                ShouldFocusConversationTitleInput = false;
+                await FocusConversationTitleInput();
+            }
+            else if ((firstRender || !IsAIResponsing) && !IsEditingConversationTitle)
             {
                 await FocusQuestionInput();
             }
 
-            // Auto-scroll to bottom after each render when AI is responding
             if (IsAIResponsing)
             {
-                try
-                {
-                    await Task.Delay(10); // Small delay to ensure DOM update
-                    await JSRuntime.InvokeVoidAsync("scrollChatToBottom");
-                }
-                catch (Exception ex)
-                {
-                    Console.WriteLine($"Error scrolling during render: {ex.Message}");
-                }
+                await ScrollChatToBottomAsync(delayMs: 10);
             }
         }
 
@@ -539,13 +879,45 @@ namespace AspireApp.Web.Components.Pages
             }
         }
 
+        private async Task FocusConversationTitleInput()
+        {
+            try
+            {
+                await JSRuntime.InvokeVoidAsync("focusElement", conversationTitleInput);
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"Error focusing conversation title input: {ex.Message}");
+            }
+        }
+
+        private async Task ScrollChatToBottomAsync(int delayMs = 50)
+        {
+            try
+            {
+                await Task.Delay(delayMs);
+                await JSRuntime.InvokeVoidAsync("scrollChatToBottom");
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"Error scrolling chat: {ex.Message}");
+            }
+        }
+
         private async Task CallBackgroundAI()
         {
-            // Use the cached kernel instance instead of creating new one each time
             var kernel = GetOrCreateKernel();
             var stopwatch = Stopwatch.StartNew();
 
-            _cancellationTokenSource = new CancellationTokenSource();
+            var manualStopTokenSource = new CancellationTokenSource();
+            using var firstTokenTimeoutTokenSource = new CancellationTokenSource(TimeSpan.FromSeconds(AiFirstTokenTimeoutSeconds));
+            using var responseTimeoutTokenSource = new CancellationTokenSource(TimeSpan.FromSeconds(AiResponseTimeoutSeconds));
+            using var linkedTokenSource = CancellationTokenSource.CreateLinkedTokenSource(
+                manualStopTokenSource.Token,
+                firstTokenTimeoutTokenSource.Token,
+                responseTimeoutTokenSource.Token);
+
+            _cancellationTokenSource = manualStopTokenSource;
 
             try
             {
@@ -556,59 +928,75 @@ namespace AspireApp.Web.Components.Pages
                     _chatHistory,
                     promptSettings,
                     kernel,
-                    _cancellationTokenSource.Token
-                );
+                    linkedTokenSource.Token);
 
-                // Highly responsive streaming with minimal buffering
                 var updateBuffer = new System.Text.StringBuilder();
                 var lastUpdateTime = DateTime.UtcNow;
                 var lastScrollTime = DateTime.UtcNow;
-                const int updateIntervalMs = 20; // Update UI every 20ms for very responsive feel
-                const int earlyTokenThreshold = 10; // First 10 tokens update immediately
-                int tokenCount = 0;
+                const int updateIntervalMs = 20;
+                const int earlyTokenThreshold = 10;
+                var tokenCount = 0;
 
                 await foreach (var message in stream)
                 {
                     updateBuffer.Append(message.Content);
                     tokenCount++;
-                    
+
+                    if (tokenCount == 1)
+                    {
+                        firstTokenTimeoutTokenSource.CancelAfter(Timeout.InfiniteTimeSpan);
+                    }
+
                     var now = DateTime.UtcNow;
-                    // Update immediately for first 10 tokens, then batch every 20ms
-                    bool shouldUpdate = tokenCount <= earlyTokenThreshold || 
-       (now - lastUpdateTime).TotalMilliseconds >= updateIntervalMs;
-    
-      if (shouldUpdate)
-          {
-    AIResponse = updateBuffer.ToString();
-          StateHasChanged();
-              lastUpdateTime = now;
-               
-         // Auto-scroll during AI response (throttled to every 150ms to reduce overhead)
-            if ((now - lastScrollTime).TotalMilliseconds >= 150)
-       {
-                 try
-    {
-          await JSRuntime.InvokeVoidAsync("scrollChatToBottom");
-    lastScrollTime = now;
-     }
-            catch (Exception ex)
-      {
-       Console.WriteLine($"Error scrolling during stream: {ex.Message}");
-     }
-            }
-          }
-      }
-                
-                // Final update to ensure all content is displayed
+                    var shouldUpdate = tokenCount <= earlyTokenThreshold ||
+                        (now - lastUpdateTime).TotalMilliseconds >= updateIntervalMs;
+
+                    if (shouldUpdate)
+                    {
+                        AIResponse = updateBuffer.ToString();
+                        StateHasChanged();
+                        lastUpdateTime = now;
+
+                        if ((now - lastScrollTime).TotalMilliseconds >= 150)
+                        {
+                            try
+                            {
+                                await JSRuntime.InvokeVoidAsync("scrollChatToBottom");
+                                lastScrollTime = now;
+                            }
+                            catch (Exception ex)
+                            {
+                                Console.WriteLine($"Error scrolling during stream: {ex.Message}");
+                            }
+                        }
+                    }
+                }
+
                 AIResponse = updateBuffer.ToString();
             }
-            catch (OperationCanceledException)
+            catch (OperationCanceledException) when (manualStopTokenSource.IsCancellationRequested)
             {
-                // Append halt message immediately on cancellation
-                const string haltTag = "[AI response was manually halted prematurely.]";
-                if (!AIResponse.Contains(haltTag, StringComparison.Ordinal))
+                if (!AIResponse.Contains(HaltedResponseTag, StringComparison.Ordinal))
                 {
-                    AIResponse += "\n" + haltTag;
+                    AIResponse += "\n" + HaltedResponseTag;
+                }
+            }
+            catch (OperationCanceledException) when (firstTokenTimeoutTokenSource.IsCancellationRequested)
+            {
+                SetConversationStatus(
+                    "The AI service is still warming up. Your prompt is saved, and you can retry once the model is ready.",
+                    isError: true);
+            }
+            catch (OperationCanceledException) when (responseTimeoutTokenSource.IsCancellationRequested)
+            {
+                SetConversationStatus(
+                    "The AI service took too long to respond. Your prompt is still saved, so you can retry in a moment.",
+                    isError: true);
+
+                if (!string.IsNullOrWhiteSpace(AIResponse) &&
+                    !AIResponse.Contains(TimedOutResponseTag, StringComparison.Ordinal))
+                {
+                    AIResponse = $"{AIResponse.TrimEnd()}{Environment.NewLine}{Environment.NewLine}{TimedOutResponseTag}";
                 }
             }
             catch (Exception e)
@@ -620,29 +1008,19 @@ namespace AspireApp.Web.Components.Pages
                 _cancellationTokenSource?.Dispose();
                 _cancellationTokenSource = null;
             }
-            
-            // Add the complete AI response to chat history only once after streaming is done
+
             if (!string.IsNullOrEmpty(AIResponse))
             {
                 _chatHistory.AddAssistantMessage(AIResponse);
+                await PersistAssistantMessageAsync(AIResponse);
             }
-            
+
             stopwatch.Stop();
             IsAIResponsing = false;
             ElapsedTimeMessage = $"Response time: {stopwatch.Elapsed.TotalMilliseconds} milliseconds";
             StateHasChanged();
 
-            // Final scroll to bottom after AI response is complete
-            try
-            {
-                await Task.Delay(50); // Delay to ensure DOM update
-                await JSRuntime.InvokeVoidAsync("scrollChatToBottom");
-            }
-            catch (Exception ex)
-            {
-                Console.WriteLine($"Error scrolling after AI response: {ex.Message}");
-            }
-
+            await ScrollChatToBottomAsync();
             await FocusQuestionInput();
         }
 
@@ -664,10 +1042,9 @@ namespace AspireApp.Web.Components.Pages
             }
             try
             {
-                // Use HttpClient factory instead of creating new instance
                 using var client = HttpClientFactory.CreateClient();
-                client.Timeout = TimeSpan.FromSeconds(5); // Set reasonable timeout
-                
+                client.Timeout = TimeSpan.FromSeconds(5);
+
                 var response = await client.GetAsync(AiInfoState.CurrentAiUri);
                 if (response.IsSuccessStatusCode)
                 {
@@ -724,7 +1101,6 @@ namespace AspireApp.Web.Components.Pages
         {
             try
             {
-                // Unsubscribe from speech events
                 if (SpeechService != null)
                 {
                     SpeechService.SpeechRecognitionResult -= OnSpeechRecognitionResult;
@@ -733,17 +1109,14 @@ namespace AspireApp.Web.Components.Pages
                     SpeechService.TextToSpeechStart -= OnTextToSpeechStart;
                     SpeechService.TextToSpeechEnd -= OnTextToSpeechEnd;
                     SpeechService.TextToSpeechError -= OnTextToSpeechError;
-                    
+
                     await SpeechService.DisposeAsync();
                 }
 
-                // Cancel any ongoing AI operations
                 _cancellationTokenSource?.Cancel();
                 _cancellationTokenSource?.Dispose();
-                
-                // Note: Kernel doesn't implement IDisposable, so we don't need to dispose it
                 _kernel = null;
-                
+
                 if (_dotNetRef != null)
                 {
                     await JSRuntime.InvokeVoidAsync("dispose");
@@ -752,7 +1125,6 @@ namespace AspireApp.Web.Components.Pages
             }
             catch (JSDisconnectedException)
             {
-                // Ignore disconnect exceptions
             }
             catch (Exception ex)
             {

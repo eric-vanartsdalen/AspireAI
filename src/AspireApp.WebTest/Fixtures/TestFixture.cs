@@ -5,8 +5,10 @@ using AspireApp.WebTest.DataModels;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Playwright;
+using Npgsql;
 using System.Diagnostics;
 using System.Text;
+using System.Threading;
 
 namespace AspireApp.WebTest.Fixtures;
 
@@ -29,11 +31,11 @@ public class TestFixture : IAsyncLifetime
 
 	private IPlaywright? _playwright;
 	private IBrowser? _browser;
-	private IBrowserContext? _context;
 	private string? _testRunRoot;
 	private string? _testDataPath;
 	private string? _testDatabasePath;
 	private string? _testDatabaseFileName;
+	private int _disposeSignaled;
 
 	public async Task InitializeAsync()
 	{
@@ -116,25 +118,37 @@ public class TestFixture : IAsyncLifetime
         _playwright = await Playwright.CreateAsync();
 		_browser = await _playwright.Chromium.LaunchAsync(new()
 		{
-			Headless = false
+			Headless = true
 		});
-		_context = await _browser.NewContextAsync(new()
-		{
-			IgnoreHTTPSErrors = true
-		});
-        // Map main browser context for tests to use.
-		AppHostMapping.BrowserContext = _context;
+        // Reuse the browser process, but let each test create its own context.
+		AppHostMapping.Browser = _browser;
 	}
 
 	public async Task DisposeAsync()
 	{
-		if (_context != null)
-			await _context.DisposeAsync();
+		if (Interlocked.Exchange(ref _disposeSignaled, 1) != 0)
+		{
+			return;
+		}
+
+		AppHostMapping.Browser = null;
+
 		if (_browser != null)
+		{
 			await _browser.DisposeAsync();
+			_browser = null;
+		}
+
 		_playwright?.Dispose();
+		_playwright = null;
+
 		if (_app != null)
+		{
+			await _app.StopAsync(CancellationToken.None);
 			await _app.DisposeAsync();
+			_app = null;
+		}
+
 		RestoreEnvironmentVariables();
 		CleanupIsolatedStorage();
 	}
@@ -172,8 +186,6 @@ public class TestFixture : IAsyncLifetime
 
 	private static string GetAppHostContentRoot()
 	{
-		var appHostContentRoot = Path.GetFullPath(
-			Path.Combine(AppContext.BaseDirectory, "..", "..", "..", "..", "AspireApp.AppHost"));
 		// determine mode in use
 		var debugMode = false;
 #if DEBUG
@@ -185,12 +197,28 @@ public class TestFixture : IAsyncLifetime
 		string targetConfigFilename = debugMode
 			? "appsettings.Development.json"
 			: "appsettings.json";
-		if (!File.Exists(Path.Combine(appHostContentRoot, targetConfigFilename)))
+
+		var current = new DirectoryInfo(AppContext.BaseDirectory);
+		while (current is not null)
+		{
+			var candidate = Path.Combine(current.FullName, "AspireApp.AppHost");
+			if (File.Exists(Path.Combine(candidate, targetConfigFilename)))
+			{
+				return candidate;
+			}
+
+			current = current.Parent;
+		}
+
+		var legacyCandidate = Path.GetFullPath(
+			Path.Combine(AppContext.BaseDirectory, "..", "..", "..", "..", "AspireApp.AppHost"));
+		if (!File.Exists(Path.Combine(legacyCandidate, targetConfigFilename)))
 		{
 			throw new DirectoryNotFoundException(
-				$"Could not locate the AspireApp.AppHost content root at '{appHostContentRoot}'.");
+				$"Could not locate the AspireApp.AppHost content root at '{legacyCandidate}'.");
 		}
-		return appHostContentRoot;
+
+		return legacyCandidate;
 	}
 
 	private static string GetRepositoryRoot(string appHostContentRoot)
@@ -207,7 +235,7 @@ public class TestFixture : IAsyncLifetime
 			"AspireApp.WebTest",
 			testRunId);
 		_testDataPath = Path.Combine(_testRunRoot, "data");
-		_testDatabasePath = Path.Combine(repositoryRoot, "database");
+		_testDatabasePath = Path.Combine(_testRunRoot, "database");
 		_testDatabaseFileName = $"data-resources-test-{testRunId}.db";
 
 		Directory.CreateDirectory(_testDataPath);
@@ -276,27 +304,34 @@ public class TestFixture : IAsyncLifetime
 		}
 	}
 
-	private void ValidateDatabaseBindings(IEnumerable<EnvironmentVariableSnapshot> webVariables, IEnumerable<EnvironmentVariableSnapshot> pythonVariables)
-	{
-		if (string.IsNullOrWhiteSpace(_testDatabaseFileName))
-		{
-			return;
-		}
+    private void ValidateDatabaseBindings(IEnumerable<EnvironmentVariableSnapshot> webVariables, IEnumerable<EnvironmentVariableSnapshot> pythonVariables)
+    {
+        if (string.IsNullOrWhiteSpace(_testDatabaseFileName))
+        {
+            return;
+        }
 
-		var webConnectionString = GetEnvironmentVariable(webVariables, "ConnectionStrings__DefaultConnection");
-		if (!string.IsNullOrWhiteSpace(webConnectionString) &&
-			!webConnectionString.Contains(_testDatabaseFileName, StringComparison.OrdinalIgnoreCase))
-		{
-			throw new InvalidOperationException(
-				$"Web frontend connection string did not include expected test database '{_testDatabaseFileName}'. Value: {webConnectionString}");
-		}
+        var webConnectionString = GetEnvironmentVariable(webVariables, "ConnectionStrings__appdb");
+        if (string.IsNullOrWhiteSpace(webConnectionString))
+        {
+            throw new InvalidOperationException(
+                "Web frontend did not receive the operational upload store connection string.");
+        }
 
-		var pythonDbPath = GetEnvironmentVariable(pythonVariables, "ASPIRE_DB_PATH");
-		if (!string.IsNullOrWhiteSpace(pythonDbPath) &&
-			!pythonDbPath.EndsWith(_testDatabaseFileName, StringComparison.OrdinalIgnoreCase))
-		{
-			throw new InvalidOperationException(
-				$"Python service database path did not include expected test database '{_testDatabaseFileName}'. Value: {pythonDbPath}");
-		}
-	}
+        AppHostMapping.UploadStoreConnectionString = webConnectionString;
+
+        var uploadStoreConnection = new NpgsqlConnectionStringBuilder(webConnectionString);
+        if (!string.Equals(uploadStoreConnection.Database, "appdb", StringComparison.OrdinalIgnoreCase))
+        {
+            throw new InvalidOperationException(
+                $"Web frontend connection string targeted unexpected PostgreSQL database '{uploadStoreConnection.Database}'.");
+        }
+
+        var pythonDatabase = GetEnvironmentVariable(pythonVariables, "POSTGRES_DATABASE");
+        if (!string.Equals(pythonDatabase, "appdb", StringComparison.OrdinalIgnoreCase))
+        {
+            throw new InvalidOperationException(
+                $"Python service targeted unexpected PostgreSQL database '{pythonDatabase ?? "<missing>"}'.");
+        }
+    }
 }

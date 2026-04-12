@@ -19,6 +19,14 @@
         { "name": "Kujan", "role": "Adversarial Architect Reviewer" },
         { "name": "Verbal", "role": "Strategic Product Reviewer" }
       ]
+    },
+    {
+      "assignment_id": "aspireai-2026-04-05-security",
+      "universe": "User-specified",
+      "created_at": "2026-04-05T16:47:47Z",
+      "agents": [
+        { "name": "Warden", "role": "Security Specialist" }
+      ]
     }
   ]
 }

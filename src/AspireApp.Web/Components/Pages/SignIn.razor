@@ -1,0 +1,47 @@
+@page "/signin"
+@rendermode InteractiveServer
+@inject AuthenticationContext AuthenticationContext
+@inject NavigationManager NavigationManager
+
+<PageTitle>Sign in</PageTitle>
+
+<div class="py-4" data-testid="auth-sign-in">
+    <div class="mb-4">
+        <h1>Sign in to continue</h1>
+        <p class="lead">
+            Choose a sign-in method for your workspace. Use a managed AspireAI username or email, continue to Microsoft, or pick a demo identity for local-only UX checks. Every account starts with a protected personal workspace, and you can manage additional tenants after you sign in.
+        </p>
+    </div>
+
+    <SignInPanel RedirectUri="@GetRedirectUri()" />
+</div>
+
+@code {
+    [SupplyParameterFromQuery(Name = "returnUrl")]
+    private string? ReturnUrl { get; set; }
+
+    protected override void OnParametersSet()
+    {
+        if (AuthenticationContext.IsAuthenticated)
+        {
+            NavigationManager.NavigateTo(GetRedirectUri());
+        }
+    }
+
+    private string GetRedirectUri()
+    {
+        return NormalizeLocalPath(ReturnUrl);
+    }
+
+    private static string NormalizeLocalPath(string? returnUrl)
+    {
+        if (string.IsNullOrWhiteSpace(returnUrl))
+        {
+            return "/";
+        }
+
+        return returnUrl.StartsWith("/", StringComparison.Ordinal) && !returnUrl.StartsWith("//", StringComparison.Ordinal)
+            ? returnUrl
+            : "/";
+    }
+}

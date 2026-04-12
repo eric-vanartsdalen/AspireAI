@@ -1,5 +1,4 @@
-﻿using Microsoft.Data.Sqlite;
-using Microsoft.EntityFrameworkCore;
+﻿using Microsoft.EntityFrameworkCore;
 using System.Security.Cryptography;
 using System.Text;
 using AspireApp.Web.Data;
@@ -14,6 +13,8 @@ public class FileStorageService(
     private readonly UploadDbContext _context = context;
     private readonly ILogger<FileStorageService> _logger = logger;
     private readonly string _dataDirectory = dataDirectory;
+
+    public string DataDirectory => _dataDirectory;
 
     /// <summary>
     /// Ensures the database and data directory are properly initialized
@@ -94,13 +95,20 @@ public class FileStorageService(
     /// <summary>
     /// Checks if a file with the same hash already exists
     /// </summary>
-    public async Task<FileMetadata?> FindDuplicateByHashAsync(string fileHash)
+    public async Task<FileMetadata?> FindDuplicateByHashAsync(string fileHash, string? tenantId = null)
     {
         try
         {
             await EnsureInitializedAsync();
-            return await _context.Datasources
-                .FirstOrDefaultAsync(f => f.FileHash == fileHash);
+            var query = _context.Datasources
+                .Where(f => f.FileHash == fileHash);
+
+            if (!string.IsNullOrWhiteSpace(tenantId))
+            {
+                query = query.Where(f => f.TenantId == tenantId);
+            }
+
+            return await query.FirstOrDefaultAsync();
         }
         catch (Exception ex)
         {
@@ -115,7 +123,7 @@ public class FileStorageService(
     /// <summary>
     /// Adds a file with hash calculation and duplicate detection
     /// </summary>
-    public async Task<FileMetadata> AddFileAsync(string fileName, string originalFilename, string fileDirectory, long size, string fileHash, string status = "uploaded")
+    public async Task<FileMetadata> AddFileAsync(string fileName, string originalFilename, string fileDirectory, long size, string fileHash, string status = "uploaded", string tenantId = "default")
     {
         try
         {
@@ -131,17 +139,17 @@ public class FileStorageService(
                 UploadedAt = DateTime.UtcNow,
                 Status = status,
                 FileHash = fileHash,
-                SourceType = "upload"
+                SourceType = "upload",
+                TenantId = tenantId
             };
 
             _context.Datasources.Add(fileMetadata);
             await _context.SaveChangesAsync();
-            await CheckpointDatabaseAsync();
 
             if (_logger.IsEnabled(LogLevel.Information))
             {
-                _logger.LogInformation("Added file metadata to database: {FileName}, Size: {Size}, Hash: {Hash}, Status: {Status}",
-                    fileName, size, fileHash, status);
+                _logger.LogInformation("Added file metadata to database: {FileName}, Size: {Size}, Hash: {Hash}, Status: {Status}, Tenant: {TenantId}",
+                    fileName, size, fileHash, status, tenantId);
             }
 
             return fileMetadata;
@@ -192,7 +200,6 @@ public class FileStorageService(
             }
 
             await _context.SaveChangesAsync();
-            await CheckpointDatabaseAsync();
 
             if (_logger.IsEnabled(LogLevel.Information))
             {
@@ -227,7 +234,6 @@ public class FileStorageService(
 
             file.FileHash = fileHash;
             await _context.SaveChangesAsync();
-            await CheckpointDatabaseAsync();
 
             if (_logger.IsEnabled(LogLevel.Information))
             {
@@ -245,7 +251,10 @@ public class FileStorageService(
         }
     }
 
-    public async Task<List<FileMetadata>> GetAllFilesAsync()
+    /// <summary>
+    /// Gets all files for the specified tenant, or all files if no tenant specified.
+    /// </summary>
+    public async Task<List<FileMetadata>> GetAllFilesAsync(string? tenantId = null)
     {
         try
         {
@@ -260,7 +269,15 @@ public class FileStorageService(
                 return [];
             }
 
-            return await _context.Datasources.OrderByDescending(f => f.UploadedAt).ToListAsync();
+            var query = _context.Datasources.AsQueryable();
+            
+            // Filter by tenant if specified
+            if (!string.IsNullOrWhiteSpace(tenantId))
+            {
+                query = query.Where(f => f.TenantId == tenantId);
+            }
+
+            return await query.OrderByDescending(f => f.UploadedAt).ToListAsync();
         }
         catch (Exception ex)
         {
@@ -273,14 +290,22 @@ public class FileStorageService(
         }
     }
 
-    public async Task<bool> DeleteFileAsync(int id)
+    public async Task<bool> DeleteFileAsync(int id, string? tenantId = null)
     {
         try
         {
             // Ensure database is initialized before deleting
             await EnsureInitializedAsync();
 
-            var file = await _context.Datasources.FindAsync(id);
+            var query = _context.Datasources
+                .Where(file => file.Id == id);
+
+            if (!string.IsNullOrWhiteSpace(tenantId))
+            {
+                query = query.Where(file => file.TenantId == tenantId);
+            }
+
+            var file = await query.SingleOrDefaultAsync();
             if (file == null)
             {
                 return false;
@@ -292,7 +317,6 @@ public class FileStorageService(
             // EF Core will cascade delete related datasource_pages records
             _context.Datasources.Remove(file);
             await _context.SaveChangesAsync();
-            await CheckpointDatabaseAsync();
 
             if (_logger.IsEnabled(LogLevel.Information))
             {
@@ -338,13 +362,20 @@ public class FileStorageService(
     /// <summary>
     /// Checks if a URL already exists in the datasources
     /// </summary>
-    public async Task<FileMetadata?> FindDuplicateByUrlAsync(string sourceUrl)
+    public async Task<FileMetadata?> FindDuplicateByUrlAsync(string sourceUrl, string? tenantId = null)
     {
         try
         {
             await EnsureInitializedAsync();
-            return await _context.Datasources
-                .FirstOrDefaultAsync(f => f.SourceUrl == sourceUrl && f.SourceType == "url");
+            var query = _context.Datasources
+                .Where(f => f.SourceUrl == sourceUrl && f.SourceType == "url");
+
+            if (!string.IsNullOrWhiteSpace(tenantId))
+            {
+                query = query.Where(f => f.TenantId == tenantId);
+            }
+
+            return await query.FirstOrDefaultAsync();
         }
         catch (Exception ex)
         {
@@ -359,7 +390,7 @@ public class FileStorageService(
     /// <summary>
     /// Adds a URL datasource entry with hash generation for consistent duplicate detection
     /// </summary>
-    public async Task<FileMetadata> AddUrlAsync(string sourceName, string sourceUrl, string status = "uploaded")
+    public async Task<FileMetadata> AddUrlAsync(string sourceName, string sourceUrl, string status = "uploaded", string tenantId = "default")
     {
         try
         {
@@ -380,17 +411,17 @@ public class FileStorageService(
                 FileHash = urlHash, // Store URL hash for duplicate detection
                 SourceType = "url",
                 SourceUrl = sourceUrl,
-                MimeType = "text/html" // Default to HTML for web pages
+                MimeType = "text/html", // Default to HTML for web pages
+                TenantId = tenantId
             };
 
             _context.Datasources.Add(fileMetadata);
             await _context.SaveChangesAsync();
-            await CheckpointDatabaseAsync();
 
             if (_logger.IsEnabled(LogLevel.Information))
             {
-                _logger.LogInformation("Added URL metadata to database: {SourceName}, URL: {Url}, Hash: {Hash}, Status: {Status}",
-                    sourceName, sourceUrl, urlHash, status);
+                _logger.LogInformation("Added URL metadata to database: {SourceName}, URL: {Url}, Hash: {Hash}, Status: {Status}, Tenant: {TenantId}",
+                    sourceName, sourceUrl, urlHash, status, tenantId);
             }
 
             return fileMetadata;
@@ -405,33 +436,4 @@ public class FileStorageService(
         }
     }
 
-    private async Task CheckpointDatabaseAsync()
-    {
-        try
-        {
-            var connectionString = _context.Database.GetDbConnection().ConnectionString;
-            await using var checkpointConnection = new SqliteConnection(connectionString);
-            await checkpointConnection.OpenAsync();
-
-            await using var journalModeCommand = checkpointConnection.CreateCommand();
-            journalModeCommand.CommandText = "PRAGMA journal_mode;";
-            var journalMode = (await journalModeCommand.ExecuteScalarAsync())?.ToString();
-            if (!string.Equals(journalMode, "wal", StringComparison.OrdinalIgnoreCase))
-            {
-                return;
-            }
-
-            await using var checkpointCommand = checkpointConnection.CreateCommand();
-            checkpointCommand.CommandText = "PRAGMA wal_checkpoint(PASSIVE);";
-            await checkpointCommand.ExecuteNonQueryAsync();
-        }
-        catch (Exception ex) when (ex is SqliteException or InvalidOperationException)
-        {
-            if (_logger.IsEnabled(LogLevel.Warning))
-            {
-                _logger.LogWarning(ex,
-                    "Skipped SQLite WAL checkpoint after updating file metadata because the shared database is in use.");
-            }
-        }
-    }
 }

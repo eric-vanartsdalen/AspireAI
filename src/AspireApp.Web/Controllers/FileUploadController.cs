@@ -1,3 +1,4 @@
+using AspireApp.Web.Services;
 using AspireApp.Web.Shared;
 using Microsoft.AspNetCore.Mvc;
 using System.ComponentModel.DataAnnotations;
@@ -8,10 +9,12 @@ namespace AspireApp.Web.Controllers;
 [Route("api/[controller]")]
 public class FileUploadController(
     FileStorageService fileStorageService,
+    TenantManagementService tenantManagementService,
     ILogger<FileUploadController> logger,
     IConfiguration configuration) : ControllerBase
 {
     private readonly FileStorageService _fileStorageService = fileStorageService;
+    private readonly TenantManagementService _tenantManagementService = tenantManagementService;
     private readonly ILogger<FileUploadController> _logger = logger;
     private readonly IConfiguration _configuration = configuration;
 
@@ -23,10 +26,18 @@ public class FileUploadController(
 
     [HttpPost]
     [RequestSizeLimit(104857600)] // 100MB request size limit
-    public async Task<IActionResult> UploadFile(IFormFile file)
+    public async Task<IActionResult> UploadFile(IFormFile file, CancellationToken cancellationToken)
     {
         try
         {
+            var tenantResolution = await ResolveTenantContextAsync(cancellationToken);
+            if (tenantResolution.ErrorResult is not null)
+            {
+                return tenantResolution.ErrorResult;
+            }
+
+            var tenantId = tenantResolution.TenantId!;
+
             if (file == null || file.Length == 0)
             {
                 return BadRequest(new { success = false, error = "No file uploaded." });
@@ -77,7 +88,7 @@ public class FileUploadController(
             }
 
             // Check for duplicate files based on hash
-            var existingFile = await _fileStorageService.FindDuplicateByHashAsync(fileHash);
+            var existingFile = await _fileStorageService.FindDuplicateByHashAsync(fileHash, tenantId);
             if (existingFile != null)
             {
                 if (_logger.IsEnabled(LogLevel.Information))
@@ -120,12 +131,13 @@ public class FileUploadController(
                 dataDirectory,
                 file.Length,
                 fileHash,
-                "uploaded");
+                "uploaded",
+                tenantId);
 
             if (_logger.IsEnabled(LogLevel.Information))
             {
-                _logger.LogInformation("File uploaded successfully: {FileName} -> {FilePath}, Size: {Size} bytes, Hash: {Hash}",
-                    file.FileName, filePath, file.Length, fileHash);
+                _logger.LogInformation("File uploaded successfully: {FileName} -> {FilePath}, Size: {Size} bytes, Hash: {Hash}, Tenant: {TenantId}",
+                    file.FileName, filePath, file.Length, fileHash, tenantId);
             }
 
             return Ok(new
@@ -157,10 +169,18 @@ public class FileUploadController(
     }
 
     [HttpPost("url")]
-    public async Task<IActionResult> UploadUrl([FromBody] UrlUploadRequest request)
+    public async Task<IActionResult> UploadUrl([FromBody] UrlUploadRequest request, CancellationToken cancellationToken)
     {
         try
         {
+            var tenantResolution = await ResolveTenantContextAsync(cancellationToken);
+            if (tenantResolution.ErrorResult is not null)
+            {
+                return tenantResolution.ErrorResult;
+            }
+
+            var tenantId = tenantResolution.TenantId!;
+
             if (request == null || string.IsNullOrWhiteSpace(request.Url))
             {
                 return BadRequest(new { success = false, error = "No URL provided." });
@@ -193,7 +213,7 @@ public class FileUploadController(
             }
 
             // Check for duplicate URLs based on hash (more reliable than URL comparison)
-            var existingUrl = await _fileStorageService.FindDuplicateByHashAsync(urlHash);
+            var existingUrl = await _fileStorageService.FindDuplicateByHashAsync(urlHash, tenantId);
             if (existingUrl != null)
             {
                 if (_logger.IsEnabled(LogLevel.Information))
@@ -222,12 +242,13 @@ public class FileUploadController(
             var fileMetadata = await _fileStorageService.AddUrlAsync(
                 fileName,
                 request.Url,
-                "uploaded");
+                "uploaded",
+                tenantId);
 
             if (_logger.IsEnabled(LogLevel.Information))
             {
-                _logger.LogInformation("Website URL added successfully: {Url}, ID: {Id}, Hash: {Hash}",
-                    request.Url, fileMetadata.Id, urlHash);
+                _logger.LogInformation("Website URL added successfully: {Url}, ID: {Id}, Hash: {Hash}, Tenant: {TenantId}",
+                    request.Url, fileMetadata.Id, urlHash, tenantId);
             }
 
             return Ok(new
@@ -258,11 +279,18 @@ public class FileUploadController(
     }
 
     [HttpGet]
-    public async Task<IActionResult> GetUploadedFiles()
+    public async Task<IActionResult> GetUploadedFiles(CancellationToken cancellationToken)
     {
         try
         {
-            var files = await _fileStorageService.GetAllFilesAsync();
+            var tenantResolution = await ResolveTenantContextAsync(cancellationToken);
+            if (tenantResolution.ErrorResult is not null)
+            {
+                return tenantResolution.ErrorResult;
+            }
+
+            var tenantId = tenantResolution.TenantId!;
+            var files = await _fileStorageService.GetAllFilesAsync(tenantId);
             return Ok(new { success = true, files });
         }
         catch (Exception ex)
@@ -280,11 +308,17 @@ public class FileUploadController(
     }
 
     [HttpDelete("{id}")]
-    public async Task<IActionResult> DeleteFile(int id)
+    public async Task<IActionResult> DeleteFile(int id, CancellationToken cancellationToken)
     {
         try
         {
-            var success = await _fileStorageService.DeleteFileAsync(id);
+            var tenantResolution = await ResolveTenantContextAsync(cancellationToken);
+            if (tenantResolution.ErrorResult is not null)
+            {
+                return tenantResolution.ErrorResult;
+            }
+
+            var success = await _fileStorageService.DeleteFileAsync(id, tenantResolution.TenantId);
             if (success)
             {
                 return Ok(new { success = true, message = "File deleted successfully." });
@@ -306,6 +340,53 @@ public class FileUploadController(
                 error = $"An error occurred while deleting the file: {ex.Message}"
             });
         }
+    }
+
+    private async Task<TenantResolutionResult> ResolveTenantContextAsync(CancellationToken cancellationToken)
+    {
+        var authenticatedUser = AuthenticatedUserClaims.BuildUser(User);
+        if (authenticatedUser is null)
+        {
+            return new TenantResolutionResult(null, Unauthorized(new
+            {
+                success = false,
+                error = "Authentication is required."
+            }));
+        }
+
+        var tenantSnapshot = await _tenantManagementService.EnsureTenantAccessAsync(
+            new TenantUserDescriptor(authenticatedUser.UserId, authenticatedUser.DisplayName, authenticatedUser.Email),
+            cancellationToken);
+
+        var requestedTenantId = Request.Headers.TryGetValue("X-Tenant-Id", out var tenantIdHeader)
+            ? tenantIdHeader.ToString().Trim()
+            : string.Empty;
+
+        var tenantId = string.IsNullOrWhiteSpace(requestedTenantId)
+            ? tenantSnapshot.DefaultTenantId
+            : requestedTenantId;
+
+        var isMember = tenantSnapshot.Tenants.Any(tenant =>
+            tenant.TenantId.Equals(tenantId, StringComparison.OrdinalIgnoreCase));
+
+        if (isMember)
+        {
+            return new TenantResolutionResult(tenantId, null);
+        }
+
+        if (_logger.IsEnabled(LogLevel.Warning))
+        {
+            _logger.LogWarning(
+                "Rejected tenant {TenantId} for authenticated user {UserId}",
+                tenantId,
+                authenticatedUser.UserId);
+        }
+
+        return new TenantResolutionResult(null, StatusCode(StatusCodes.Status403Forbidden, new
+        {
+            success = false,
+            error = "The requested tenant is not available for the current user."
+        }));
     }
 
     private static string GenerateUniqueFileName(string originalFileName)
@@ -355,3 +436,5 @@ public class UrlUploadRequest
 {
     public string Url { get; set; } = string.Empty;
 }
+
+internal sealed record TenantResolutionResult(string? TenantId, IActionResult? ErrorResult);

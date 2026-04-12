@@ -1,0 +1,284 @@
+@using Microsoft.AspNetCore.Components.Forms
+@inject IAuthService AuthService
+@inject NavigationManager NavigationManager
+
+@if (!string.IsNullOrWhiteSpace(_errorMessage))
+{
+    <div class="alert alert-danger" role="alert">
+        @_errorMessage
+    </div>
+}
+
+<div id="mock-auth" data-testid="auth-sign-in-surface">
+    @if (_providers.Count == 0)
+    {
+        <div class="alert alert-warning" role="alert">
+            No sign-in providers are available. Check the authentication configuration and, for Microsoft, ensure the local client settings are present.
+        </div>
+    }
+    else
+    {
+        <div class="row g-4 mb-4" data-testid="auth-provider-list">
+            @foreach (var provider in _providers)
+            {
+                <div class="col-xl-4 col-lg-6">
+                    <section class="card h-100 shadow-sm border-0 @provider.AccentCssClass">
+                        <div class="card-body d-flex flex-column">
+                            <div class="d-flex justify-content-between align-items-start gap-3 mb-3">
+                                <div>
+                                    <h2 class="h4 mb-2">@provider.DisplayName</h2>
+                                    <p class="text-muted mb-0">@provider.Description</p>
+                                </div>
+                                <span class="badge text-bg-light">@GetProviderModeLabel(provider)</span>
+                            </div>
+
+                            @if (provider.RequiresUserSelection)
+                            {
+                                <button class="btn btn-light mt-auto"
+                                        type="button"
+                                        data-testid="@GetProviderTestId(provider.Id)"
+                                        @onclick="() => OnProviderSelectedAsync(provider.Id)">
+                                    Choose a demo account
+                                </button>
+                            }
+                            else if (provider.RequiresCredentials)
+                            {
+                                <button class="btn btn-primary mt-auto"
+                                        type="button"
+                                        data-testid="@GetProviderTestId(provider.Id)"
+                                        @onclick="() => OnProviderSelectedAsync(provider.Id)">
+                                    Use username and password
+                                </button>
+                            }
+                            else
+                            {
+                                <a class="btn btn-primary mt-auto"
+                                   data-testid="@GetProviderTestId(provider.Id)"
+                                   href="@BuildProviderSignInHref(provider)">
+                                    Continue to hosted sign-in
+                                </a>
+                            }
+                        </div>
+                    </section>
+                </div>
+            }
+        </div>
+
+        @if (SelectedProvider?.RequiresUserSelection == true)
+        {
+            <div class="card shadow-sm">
+                <div class="card-body">
+                    <h3 class="h5 mb-3">Choose a demo account for @SelectedProvider.DisplayName</h3>
+                    <p class="text-muted">
+                        Demo accounts stay inside AspireAI for local UX checks. Hosted providers redirect you to the real identity provider instead.
+                    </p>
+
+                    <div class="row g-3 align-items-end">
+                        <div class="col-lg-6">
+                            <label class="form-label" for="mock-user">Demo user</label>
+                            <select id="mock-user"
+                                    name="mock-user"
+                                    class="form-select"
+                                    data-testid="auth-user-select"
+                                    @bind="_selectedUserId">
+                                @foreach (var user in SelectedUsers)
+                                {
+                                    <option value="@user.UserId">@user.DisplayName (@user.Email)</option>
+                                }
+                            </select>
+                        </div>
+
+                        <div class="col-lg-6">
+                            <button class="btn btn-primary w-100"
+                                    data-testid="auth-submit-sign-in"
+                                    @onclick="SignInAsync">
+                                Sign in
+                            </button>
+                        </div>
+                    </div>
+
+                </div>
+            </div>
+        }
+        else if (SelectedProvider?.RequiresCredentials == true)
+        {
+            <div class="card shadow-sm">
+                <div class="card-body">
+                    <h3 class="h5 mb-3">Sign in with @SelectedProvider.DisplayName</h3>
+                    <p class="text-muted">
+                        Managed credentials are submitted directly to the server, not through the interactive Blazor callback. When enabled for local development, first-time usernames can register on sign-in.
+                    </p>
+
+                    <form method="post"
+                          action="@BuildCredentialSignInAction(SelectedProvider)"
+                          data-testid="auth-credentials-form">
+                        <AntiforgeryToken />
+                        <input type="hidden" name="returnUrl" value="@NormalizeLocalPath(RedirectUri)" />
+
+                        <div class="row g-3">
+                            <div class="col-lg-6">
+                                <label class="form-label" for="auth-identifier">Username or email</label>
+                                <input id="auth-identifier"
+                                       name="identifier"
+                                       class="form-control"
+                                       data-testid="auth-identifier"
+                                       autocomplete="username"
+                                       required />
+                            </div>
+
+                             <div class="col-lg-6">
+                                 <label class="form-label" for="auth-password">Password</label>
+                                 <input id="auth-password"
+                                        type="password"
+                                        name="password"
+                                        class="form-control"
+                                        data-testid="auth-password"
+                                        autocomplete="current-password"
+                                        minlength="@LocalAuthenticationOptions.MinimumPasswordLength"
+                                        required />
+                                 <div class="form-text" data-testid="auth-password-hint">
+                                     Local passwords need to be @LocalAuthenticationOptions.MinimumPasswordLength characters or more.
+                                 </div>
+                             </div>
+
+                            <div class="col-12">
+                                <button type="submit"
+                                        class="btn btn-primary"
+                                        data-testid="auth-submit-sign-in">
+                                    Sign in
+                                </button>
+                            </div>
+                        </div>
+                    </form>
+                </div>
+            </div>
+        }
+    }
+</div>
+
+@code {
+    [Parameter]
+    public string RedirectUri { get; set; } = "/";
+
+    private IReadOnlyList<AuthProviderOption> _providers = [];
+    private string? _selectedProviderId;
+    private string? _selectedUserId;
+    private string? _errorMessage;
+    private string? _preferredProviderId;
+
+    private AuthProviderOption? SelectedProvider =>
+        _providers.FirstOrDefault(provider => string.Equals(provider.Id, _selectedProviderId, StringComparison.OrdinalIgnoreCase));
+
+    private IReadOnlyList<AuthenticatedUser> SelectedUsers =>
+        string.IsNullOrWhiteSpace(_selectedProviderId)
+            ? []
+            : AuthService.GetUsers(_selectedProviderId);
+
+    private AuthenticatedUser? SelectedUser =>
+        SelectedUsers.FirstOrDefault(user => string.Equals(user.UserId, _selectedUserId, StringComparison.OrdinalIgnoreCase));
+
+    protected override void OnInitialized()
+    {
+        LoadStateFromQueryString();
+        _providers = AuthService.GetProviders();
+        SelectProvider(_preferredProviderId ?? _providers.FirstOrDefault()?.Id);
+    }
+
+    private async Task OnProviderSelectedAsync(string providerId)
+    {
+        _errorMessage = null;
+        SelectProvider(providerId);
+
+        await Task.CompletedTask;
+    }
+
+    private void SelectProvider(string? providerId)
+    {
+        var resolvedProvider = _providers.FirstOrDefault(provider =>
+            string.Equals(provider.Id, providerId, StringComparison.OrdinalIgnoreCase))
+            ?? _providers.FirstOrDefault();
+
+        _selectedProviderId = resolvedProvider?.Id;
+        _selectedUserId = SelectedUsers.FirstOrDefault()?.UserId;
+    }
+
+    private async Task SignInAsync()
+    {
+        _errorMessage = null;
+
+        if (string.IsNullOrWhiteSpace(_selectedProviderId))
+        {
+            _errorMessage = "Choose a provider before signing in.";
+            return;
+        }
+
+        try
+        {
+            await AuthService.SignInAsync(_selectedProviderId, _selectedUserId, RedirectUri);
+        }
+        catch (Exception ex) when (ex is not NavigationException)
+        {
+            _errorMessage = ex.Message;
+            return;
+        }
+    }
+
+    private static string GetProviderTestId(string providerId) => providerId switch
+    {
+        AuthenticationOptions.LocalService => "auth-provider-local",
+        "microsoft-entra" => "auth-provider-microsoft-entra",
+        "microsoft" => "auth-provider-mock-microsoft",
+        "google" => "auth-provider-mock-google",
+        "demo" => "auth-provider-demo",
+        _ => $"auth-provider-{providerId}"
+    };
+
+    private static string GetProviderModeLabel(AuthProviderOption provider) => provider switch
+    {
+        { RequiresUserSelection: true } => "Demo",
+        { RequiresCredentials: true } => "Managed",
+        _ => "Hosted"
+    };
+
+    private string BuildProviderSignInHref(AuthProviderOption provider)
+    {
+        var returnUrl = NormalizeLocalPath(RedirectUri);
+
+        return string.IsNullOrWhiteSpace(provider.SignInPath)
+            ? returnUrl
+            : $"{provider.SignInPath}?returnUrl={Uri.EscapeDataString(returnUrl)}";
+    }
+
+    private static string BuildCredentialSignInAction(AuthProviderOption provider) =>
+        provider.SignInPath ?? $"/auth/{provider.Id}/signin";
+
+    private void LoadStateFromQueryString()
+    {
+        var uri = new Uri(NavigationManager.Uri);
+        var query = Microsoft.AspNetCore.WebUtilities.QueryHelpers.ParseQuery(uri.Query);
+
+        if (query.TryGetValue("provider", out var providerId) &&
+            !string.IsNullOrWhiteSpace(providerId))
+        {
+            _preferredProviderId = providerId.ToString();
+        }
+
+        if (query.TryGetValue("error", out var errorCode) &&
+            string.Equals(errorCode.ToString(), LocalAuthService.InvalidCredentialErrorCode, StringComparison.OrdinalIgnoreCase))
+        {
+            _errorMessage = "We couldn't sign you in with those credentials.";
+        }
+    }
+
+    private static string NormalizeLocalPath(string? path)
+    {
+        if (string.IsNullOrWhiteSpace(path))
+        {
+            return "/";
+        }
+
+        return path.StartsWith("/", StringComparison.Ordinal) && !path.StartsWith("//", StringComparison.Ordinal)
+            ? path
+            : "/";
+    }
+}

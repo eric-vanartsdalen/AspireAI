@@ -8,12 +8,15 @@
   </PropertyGroup>
 
   <ItemGroup>
+    <PackageReference Include="bunit" Version="2.7.2" />
     <PackageReference Include="coverlet.collector" Version="8.0.1">
       <PrivateAssets>all</PrivateAssets>
       <IncludeAssets>runtime; build; native; contentfiles; analyzers; buildtransitive</IncludeAssets>
     </PackageReference>
     <PackageReference Include="Microsoft.Extensions.Hosting" Version="10.0.5" />
     <PackageReference Include="Microsoft.NET.Test.Sdk" Version="18.3.0" />
+    <PackageReference Include="Microsoft.EntityFrameworkCore.InMemory" Version="10.0.5" />
+    <PackageReference Include="Npgsql" Version="10.0.2" />
     <PackageReference Include="xunit.runner.visualstudio" Version="3.1.5">
       <PrivateAssets>all</PrivateAssets>
       <IncludeAssets>runtime; build; native; contentfiles; analyzers; buildtransitive</IncludeAssets>
@@ -26,6 +29,7 @@
   </ItemGroup>
 
   <ItemGroup>
+    <ProjectReference Include="..\AspireApp.Web\AspireApp.Web.csproj" Aliases="web" />
     <ProjectReference Include="..\AspireApp.AppHost\AspireApp.AppHost.csproj" />
   </ItemGroup>
 

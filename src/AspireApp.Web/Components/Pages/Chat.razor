@@ -1,7 +1,9 @@
 @page "/chat"
 @rendermode InteractiveServer
 @attribute [StreamRendering]
+@attribute [Authorize]
 @inject IConfiguration Configuration
+@inject AuthenticationContext AuthenticationContext
 
 @using AspireApp.Web.Components.Shared
 
@@ -10,418 +12,721 @@
 <link href="~/css/speech.css" rel="stylesheet" />
 
 <style>
-	:root {
-		--main-bg-color: #2C1050;
-		--main-text-color: #f5f5f0;
-	}
-
-	body {
-		background-color: var(--main-bg-color);
-		color: var(--main-text-color);
-	}
-
-	.loading-container {
-		display: inline-flex;
-		align-items: center;
-		gap: 0.5rem;
-	}
-
-	.loading-text {
-		margin: 0;
-	}
-
-	.stop-button {
-		background-color: #dc3545;
-		color: white;
-		margin-left: 8px;
-	}
-
-	.chat-container {
-		max-height: 60vh;
-		overflow-y: auto;
-		border: 1px solid rgba(255, 255, 255, 0.2);
-		border-radius: 0.375rem;
-		margin-bottom: 1rem;
-		background-color: var(--main-bg-color);
-	}
-
-	.table {
-		color: var(--main-text-color);
-		background-color: rgba(255, 255, 255, 0.05);
-		border: 1px solid rgba(255, 255, 255, 0.2);
-		margin-bottom: 0;
-	}
-
-	.table th {
-		background-color: #1a0a30;
-		color: var(--main-text-color);
-		border-color: #4a4a4a;
-		border-width: 2px;
-		font-weight: 600;
-		position: sticky;
-		top: 0;
-		z-index: 1;
-			border-bottom: 2px solid rgba(255, 255, 255, 0.3);
-	}
-
-	.table td {
-		background-color: rgba(255, 255, 255, 0.03);
-		color: var(--main-text-color);
-		border-color: rgba(255, 255, 255, 0.1);
-		border-width: 1px;
-		vertical-align: top;
-		padding: 12px;
-	}
-
-	.table tbody tr:hover {
-		background-color: #3a1550;
-	}
-
-	.table tbody tr:hover td {
-		background-color: #3a1550;
-	}
-
-	.user-column {
-		width: 100px;
-		min-width: 100px;
-		max-width: 100px;
-		font-weight: 600;
-	}
-
-	.message-column {
-		word-wrap: break-word;
-		word-break: break-word;
-	}
-
-	#ai-request {
-		color: var(--main-text-color);
-		background-color: rgba(255, 255, 255, 0.05);
-		border: 1px solid rgba(255, 255, 255, 0.2);
-		width: 100%;
-		margin-bottom: 1rem;
-	}
-
-	#ai-request td {
-			background-color: rgba(255, 255, 255, 0.03);
-		color: var(--main-text-color);
-		border-color: rgba(255, 255, 255, 0.1);
-		border-width: 1px;
-		padding: 8px 12px;
-	}
-
-	.form-control {
-		background-color: #3a1550;
-		color: var(--main-text-color);
-		border: 2px solid #4a4a4a;
-	}
-
-		.form-control::placeholder {
-			color: rgba(255, 255, 255, 0.6);
-		}
-
-		.form-control:focus {
-			background-color: #4a1560;
-			color: var(--main-text-color);
-			border-color: #6a6a6a;
-		}
-
-		/* Style for disabled input */
-		.form-control:disabled {
-			background-color: #1a0a30;
-			color: rgba(245, 245, 240, 0.7);
-			border-color: #4a4a4a;
-			cursor: not-allowed;
-		}
-
-	/* Scroll bar styling for webkit browsers */
-	.chat-container::-webkit-scrollbar {
-		width: 8px;
-	}
-
-	.chat-container::-webkit-scrollbar-track {
-		background: #4a4a4a;
-		border-radius: 4px;
-	}
-
-	.chat-container::-webkit-scrollbar-thumb {
-		background: #6a6a6a;
-		border-radius: 4px;
-	}
-
-	.chat-container::-webkit-scrollbar-thumb:hover {
-		background: #8a8a8a;
-	}
-
-	/* Speech button image styling */
-	.speech-button img {
-		width: 24px;
-		height: 24px;
-		object-fit: contain;
-	}
-
-	.tts-message-button img {
-		width: 16px;
-		height: 16px;
-		object-fit: contain;
-	}
-
-	/* Speech controls layout fixes */
-	.speech-controls-container {
-		margin-bottom: 1rem;
-		clear: both;
-		position: relative;
-		z-index: 5;
-	}
-
-	.input-container {
-		position: relative;
-		z-index: 1;
-		margin-top: 0.5rem;
-	}
-
-	.speech-status {
-		margin-left: 1rem;
-		display: inline-flex;
-		align-items: center;
-		gap: 0.25rem;
-		font-size: 0.9rem;
-		min-height: 50px;
-		vertical-align: middle;
-	}
-
-	/* Speech button dark theme overrides with higher specificity */
-	#mic-button.speech-button.mic-button {
-		background-color: #483D8B !important;
-		color: #f5f5f0 !important;
-		border: 2px solid #28a745 !important;
-		border-radius: 50%;
-		width: 50px;
-		height: 50px;
-		padding: 8px;
-		transition: all 0.3s ease;
-	}
-
-	#mic-button.speech-button.mic-button:hover {
-		background-color: #2a1540 !important;
-		border-color: #34ce57 !important;
-		transform: scale(1.05);
-	}
-
-	#mic-button.speech-button.mic-button.listening {
-		background-color: #2a1540 !important;
-		border-color: #dc3545 !important;
-		animation: pulse 1s infinite;
-	}
-
-	.speech-button.tts-button {
-		background-color: #483D8B !important;
-		color: #f5f5f0 !important;
-		border: 2px solid #17a2b8 !important;
-		border-radius: 50%;
-		width: 50px;
-		height: 50px;
-		padding: 8px;
-		transition: all 0.3s ease;
-	}
-
-	.speech-button.tts-button:hover {
-		background-color: #2a1540 !important;
-		border-color: #20c5db !important;
-		transform: scale(1.05);
-	}
-
-	.speech-button.tts-button.speaking {
-		background-color: #2a1540 !important;
-		border-color: #ffc107 !important;
-		animation: pulse 1s infinite;
-	}
-
-	.speech-button.tts-button:disabled {
-		background-color: #0f0520 !important;
-		border-color: #4a4a4a !important;
-		cursor: not-allowed;
-		transform: none;
-		opacity: 0.6;
-	}
-
-	/* Message TTS button overrides */
-	.btn.tts-message-button {
-		background-color: #483D8B !important;
-		border-color: rgba(255, 255, 255, 0.3) !important;
-		color: #f5f5f0 !important;
-	}
-
-	.btn.tts-message-button:hover {
-		background-color: rgba(42, 21, 64, 0.9) !important;
-		border-color: rgba(23, 162, 184, 0.5) !important;
-		color: #f5f5f0 !important;
-	}
-
-	.btn.tts-message-button:disabled {
-		background-color: rgba(15, 5, 32, 0.6) !important;
-		border-color: rgba(255, 255, 255, 0.2) !important;
-		color: rgba(245, 245, 240, 0.5) !important;
-	}
-
-	/* Pulse animation is defined in external css/speech.css */
-
-</style>
-
-<h1>AI Chatbot</h1>
-
-@* Speech support status *@
-@if (!string.IsNullOrEmpty(SpeechStatusMessage))
-{
-	<div class="alert alert-warning" role="alert">
-		@SpeechStatusMessage
-	</div>
+:root {
+--main-bg-color: #2C1050;
+--main-text-color: #f5f5f0;
 }
 
-@if (IsNotFirstTimeLoading && AiInfoState.EndPointAvailable)
+body {
+background-color: var(--main-bg-color);
+color: var(--main-text-color);
+}
+
+.loading-container {
+display: inline-flex;
+align-items: center;
+gap: 0.5rem;
+}
+
+.loading-text {
+margin: 0;
+}
+
+.stop-button {
+background-color: #dc3545;
+color: white;
+margin-left: 8px;
+}
+
+.chat-shell {
+display: flex;
+gap: 1rem;
+align-items: stretch;
+flex-wrap: wrap;
+}
+
+.conversation-sidebar {
+flex: 0 0 320px;
+max-width: 320px;
+border: 1px solid rgba(255, 255, 255, 0.2);
+border-radius: 0.75rem;
+padding: 1rem;
+background-color: rgba(255, 255, 255, 0.05);
+}
+
+.conversation-sidebar-header {
+display: flex;
+justify-content: space-between;
+align-items: flex-start;
+gap: 1rem;
+margin-bottom: 1rem;
+}
+
+.conversation-sidebar-caption {
+margin: 0.5rem 0 0;
+font-size: 0.85rem;
+opacity: 0.8;
+}
+
+.conversation-list {
+list-style: none;
+padding: 0;
+margin: 0;
+display: flex;
+flex-direction: column;
+gap: 0.75rem;
+max-height: 70vh;
+overflow-y: auto;
+}
+
+.conversation-card {
+border: 1px solid rgba(255, 255, 255, 0.12);
+border-radius: 0.75rem;
+padding: 0.75rem;
+background-color: rgba(255, 255, 255, 0.04);
+}
+
+.conversation-card.active {
+border-color: rgba(13, 110, 253, 0.8);
+box-shadow: 0 0 0 1px rgba(13, 110, 253, 0.35);
+}
+
+.conversation-select {
+width: 100%;
+padding: 0;
+border: 0;
+background: transparent;
+color: inherit;
+text-align: left;
+}
+
+.conversation-select:disabled {
+opacity: 0.65;
+}
+
+.conversation-title {
+display: block;
+font-weight: 600;
+margin-bottom: 0.25rem;
+}
+
+.conversation-preview {
+display: block;
+font-size: 0.9rem;
+opacity: 0.85;
+margin-bottom: 0.35rem;
+}
+
+.conversation-meta {
+display: block;
+font-size: 0.8rem;
+opacity: 0.7;
+}
+
+.conversation-actions {
+display: flex;
+gap: 0.5rem;
+margin-top: 0.75rem;
+}
+
+	.conversation-actions .btn {
+		flex: 1 1 0;
+	}
+
+	.conversation-header .conversation-actions {
+		margin-top: 0;
+		flex-wrap: wrap;
+	}
+
+.chat-main {
+flex: 1 1 640px;
+min-width: 0;
+}
+
+.conversation-header {
+display: flex;
+justify-content: space-between;
+align-items: flex-start;
+gap: 1rem;
+margin-bottom: 1rem;
+}
+
+.conversation-label {
+margin: 0 0 0.35rem;
+font-size: 0.85rem;
+opacity: 0.8;
+text-transform: uppercase;
+letter-spacing: 0.05em;
+}
+
+.conversation-heading {
+margin: 0;
+}
+
+.conversation-title-editor {
+display: flex;
+align-items: center;
+gap: 0.5rem;
+flex-wrap: wrap;
+}
+
+.conversation-title-editor .form-control {
+min-width: min(100%, 18rem);
+}
+
+.chat-status {
+margin-bottom: 1rem;
+}
+
+.empty-sidebar-state,
+.empty-chat-state {
+border: 1px dashed rgba(255, 255, 255, 0.2);
+border-radius: 0.75rem;
+padding: 1rem;
+background-color: rgba(255, 255, 255, 0.03);
+}
+
+.empty-chat-state {
+margin-bottom: 1rem;
+}
+
+.chat-container {
+max-height: 60vh;
+overflow-y: auto;
+border: 1px solid rgba(255, 255, 255, 0.2);
+border-radius: 0.375rem;
+margin-bottom: 1rem;
+background-color: var(--main-bg-color);
+}
+
+.table {
+color: var(--main-text-color);
+background-color: rgba(255, 255, 255, 0.05);
+border: 1px solid rgba(255, 255, 255, 0.2);
+margin-bottom: 0;
+}
+
+.table th {
+background-color: #1a0a30;
+color: var(--main-text-color);
+border-color: #4a4a4a;
+border-width: 2px;
+font-weight: 600;
+position: sticky;
+top: 0;
+z-index: 1;
+border-bottom: 2px solid rgba(255, 255, 255, 0.3);
+}
+
+.table td {
+background-color: rgba(255, 255, 255, 0.03);
+color: var(--main-text-color);
+border-color: rgba(255, 255, 255, 0.1);
+border-width: 1px;
+vertical-align: top;
+padding: 12px;
+}
+
+.table tbody tr:hover {
+background-color: #3a1550;
+}
+
+.table tbody tr:hover td {
+background-color: #3a1550;
+}
+
+.user-column {
+width: 100px;
+min-width: 100px;
+max-width: 100px;
+font-weight: 600;
+}
+
+.message-column {
+word-wrap: break-word;
+word-break: break-word;
+}
+
+#ai-request {
+color: var(--main-text-color);
+background-color: rgba(255, 255, 255, 0.05);
+border: 1px solid rgba(255, 255, 255, 0.2);
+width: 100%;
+margin-bottom: 1rem;
+}
+
+#ai-request td {
+background-color: rgba(255, 255, 255, 0.03);
+color: var(--main-text-color);
+border-color: rgba(255, 255, 255, 0.1);
+border-width: 1px;
+padding: 8px 12px;
+}
+
+.form-control {
+background-color: #3a1550;
+color: var(--main-text-color);
+border: 2px solid #4a4a4a;
+}
+
+.form-control::placeholder {
+color: rgba(255, 255, 255, 0.6);
+}
+
+.form-control:focus {
+background-color: #4a1560;
+color: var(--main-text-color);
+border-color: #6a6a6a;
+}
+
+.form-control:disabled {
+background-color: #1a0a30;
+color: rgba(245, 245, 240, 0.7);
+border-color: #4a4a4a;
+cursor: not-allowed;
+}
+
+.chat-container::-webkit-scrollbar,
+.conversation-list::-webkit-scrollbar {
+width: 8px;
+}
+
+.chat-container::-webkit-scrollbar-track,
+.conversation-list::-webkit-scrollbar-track {
+background: #4a4a4a;
+border-radius: 4px;
+}
+
+.chat-container::-webkit-scrollbar-thumb,
+.conversation-list::-webkit-scrollbar-thumb {
+background: #6a6a6a;
+border-radius: 4px;
+}
+
+.chat-container::-webkit-scrollbar-thumb:hover,
+.conversation-list::-webkit-scrollbar-thumb:hover {
+background: #8a8a8a;
+}
+
+.speech-button img {
+width: 24px;
+height: 24px;
+object-fit: contain;
+}
+
+.tts-message-button img {
+width: 16px;
+height: 16px;
+object-fit: contain;
+}
+
+.speech-controls-container {
+margin-bottom: 1rem;
+clear: both;
+position: relative;
+z-index: 5;
+}
+
+.input-container {
+position: relative;
+z-index: 1;
+margin-top: 0.5rem;
+}
+
+.speech-status {
+margin-left: 1rem;
+display: inline-flex;
+align-items: center;
+gap: 0.25rem;
+font-size: 0.9rem;
+min-height: 50px;
+vertical-align: middle;
+}
+
+#mic-button.speech-button.mic-button {
+background-color: #483D8B !important;
+color: #f5f5f0 !important;
+border: 2px solid #28a745 !important;
+border-radius: 50%;
+width: 50px;
+height: 50px;
+padding: 8px;
+transition: all 0.3s ease;
+}
+
+#mic-button.speech-button.mic-button:hover {
+background-color: #2a1540 !important;
+border-color: #34ce57 !important;
+transform: scale(1.05);
+}
+
+#mic-button.speech-button.mic-button.listening {
+background-color: #2a1540 !important;
+border-color: #dc3545 !important;
+animation: pulse 1s infinite;
+}
+
+.speech-button.tts-button {
+background-color: #483D8B !important;
+color: #f5f5f0 !important;
+border: 2px solid #17a2b8 !important;
+border-radius: 50%;
+width: 50px;
+height: 50px;
+padding: 8px;
+transition: all 0.3s ease;
+}
+
+.speech-button.tts-button:hover {
+background-color: #2a1540 !important;
+border-color: #20c5db !important;
+transform: scale(1.05);
+}
+
+.speech-button.tts-button.speaking {
+background-color: #2a1540 !important;
+border-color: #ffc107 !important;
+animation: pulse 1s infinite;
+}
+
+.speech-button.tts-button:disabled {
+background-color: #0f0520 !important;
+border-color: #4a4a4a !important;
+cursor: not-allowed;
+transform: none;
+opacity: 0.6;
+}
+
+.btn.tts-message-button {
+background-color: #483D8B !important;
+border-color: rgba(255, 255, 255, 0.3) !important;
+color: #f5f5f0 !important;
+}
+
+.btn.tts-message-button:hover {
+background-color: rgba(42, 21, 64, 0.9) !important;
+border-color: rgba(23, 162, 184, 0.5) !important;
+color: #f5f5f0 !important;
+}
+
+.btn.tts-message-button:disabled {
+background-color: rgba(15, 5, 32, 0.6) !important;
+border-color: rgba(255, 255, 255, 0.2) !important;
+color: rgba(245, 245, 240, 0.5) !important;
+}
+
+@@media (max-width: 992px) {
+.chat-shell {
+flex-direction: column;
+}
+
+.conversation-sidebar {
+max-width: none;
+flex: 1 1 auto;
+}
+
+.conversation-sidebar-header,
+.conversation-header {
+flex-direction: column;
+}
+}
+</style>
+
+@if (!AuthenticationContext.IsAuthenticated)
 {
-	<div id="chat-messages-container" class="chat-container">
-		<table id="chathistory" class="table">
-			<thead>
-				<tr>
-					<th class="user-column">User</th>
-					<th class="message-column">Messages</th>
-				</tr>
-			</thead>
-			<tbody>
-				@foreach (var message in ChatHistoryService.GetFormattedMessages(_chatHistory))
-				{
-					<tr>
-						<td class="user-column"><span>@message.User</span></td>
-						<td class="message-column">
-							<span>@ConvertToMarkup(message.Message)</span>
-							@if (message.User == "Assistant" && SpeechSupport?.TextToSpeech == true)
-							{
-								<button class="btn btn-sm btn-outline-info ms-2 tts-message-button"
-									@onclick="() => SpeakMessage(message.Message)"
-									disabled="@IsTtsMessageButtonDisabled(message.Message)"
-									title="@(IsMessageBeingSpoken(message.Message) ? "Stop speaking" : "Read message aloud")">
-									<img src="/images/@(IsMessageBeingSpoken(message.Message) ? "stop.png" : "playback.png")"
-										 alt="@(IsMessageBeingSpoken(message.Message) ? "Stop" : "Play")" />
-								</button>
-							}
-						</td>
-					</tr>
-				}
-			</tbody>
-		</table>
-	</div>
-
-	@if (IsAIResponsing == true)
-	{
-		<table id="ai-request">
-			<tr>
-				<td class="user-column">AI in Action&nbsp;&nbsp;</td>
-				<td class="message-column">
-					@if (string.IsNullOrEmpty(AIResponse))
-					{
-						<div class="loading-container">
-							<div class="spinner-border spinner-border-sm text-primary" role="status">
-								<span class="visually-hidden">Loading...</span>
-							</div>
-							<p class="loading-text">&nbsp;Thinking...</p>
-						</div>
-					}
-					else
-					{
-						@ConvertToMarkup(AIResponse)
-					}
-				</td>
-			</tr>
-		</table>
-	}
-
-	@* Speech controls - properly positioned above input *@
-	@if (SpeechSupport != null && (SpeechSupport.SpeechRecognition || SpeechSupport.TextToSpeech))
-	{
-		<div class="speech-controls-container">
-			<div class="speech-controls">
-				@if (SpeechSupport.SpeechRecognition)
-				{
-					<button id="mic-button"
-						class="speech-button mic-button @(IsListening ? "listening" : "")"
-						@onclick="ToggleMicrophone"
-						disabled="@IsAIResponsing"
-						title="@(IsListening ? "Stop listening" : "Start voice input")">
-						<img src="/images/@(IsListening ? "stop.png" : "record.png")" alt="@(IsListening ? "Stop Recording" : "Start Recording")" />
-					</button>
-				}
-				&nbsp;
-				@if (SpeechSupport.TextToSpeech && !string.IsNullOrEmpty(AIResponse))
-				{
-					<button class="speech-button tts-button"
-						@onclick="ToggleTextToSpeech"
-						disabled="@IsTtsButtonDisabled()"
-						title="@(IsMessageBeingSpoken(AIResponse) ? "Stop speaking" : "Read AI response aloud")">
-						<img src="/images/@(IsMessageBeingSpoken(AIResponse) ? "stop.png" : "playback.png")" alt="@(IsMessageBeingSpoken(AIResponse) ? "Stop Speaking" : "Play Audio")" />
-					</button>
-				}
-
-				<div class="speech-status">
-					@if (IsListening)
-					{
-						<span class="text-danger"><img src="/images/record.png" style="width: 16px; height: 16px;" alt="Recording" /> Listening...</span>
-					}
-					else if (IsSpeaking)
-					{
-						<span class="text-info">Speaking...</span>
-					}
-					else if (!string.IsNullOrEmpty(SpeechStatusText))
-					{
-						<span>@SpeechStatusText</span>
-					}
-				</div>
-			</div>
-		</div>
-	}
-
-	@* Input area with speech transcript overlay *@
-	<div class="input-container">
-		<div class="input-group">
-			<input @bind="Question"
-			       @bind:event="oninput"
-			       @onkeydown="@(async (e) => { if (e.Key == "Enter" && !IsAIResponsing) { if (IsListening) await StopListening(); await QueryAIChat(); } })"
-			       type="text"
-			       class="form-control"
-			       placeholder="Enter your question or use voice input"
-			       disabled="@IsAIResponsing"
-			       @ref="questionInput" />
-		</div>
-	</div>
-	
-	<br />
-	<div class="d-flex">
-		<button class="btn btn-primary"
-				@onclick="QueryAIChat"
-				disabled="@IsAIResponsing">
-			@(IsAIResponsing ? "Processing..." : "Send Query")
-		</button>
-		@if (IsAIResponsing)
-		{
-			<button class="btn stop-button"
-					@onclick="StopAIResponse"
-					title="Stop response (Ctrl+C)">
-				Stop Response
-			</button>
-		}
-	</div>
-	<br />
-	<div><span>Elapsed time: @ElapsedTimeMessage</span></div>
-	<br />
-	<br />
+    <RedirectToSignIn />
 }
 else
 {
-	@if (IsNotFirstTimeLoading)
-	{
-		<p><div><span style="background-color:darkred; color:antiquewhite; padding: 1em;"><strong>Chat Endpoint AI Service URI unavailable!</strong></span></div></p>
-	}
-	else
-	{
-		<p><div><span style="background-color: darkslateblue; color:yellowgreen; padding: 1em;"><strong>Chat AI Service loading...</strong></span></div></p>
-	}
+    <h1>AI Chatbot</h1>
+
+    @if (!string.IsNullOrEmpty(SpeechStatusMessage))
+{
+<div class="alert alert-warning" role="alert">
+@SpeechStatusMessage
+</div>
+}
+
+    @if (!string.IsNullOrEmpty(ConversationStatusMessage))
+    {
+        <div class="@ConversationStatusCssClass chat-status" role="alert" data-testid="chat-conversation-status">
+            @ConversationStatusMessage
+        </div>
+    }
+
+    @if (!IsNotFirstTimeLoading)
+    {
+        <div class="alert alert-info" role="alert">
+            Chat AI service loading...
+        </div>
+    }
+    else if (!AiInfoState.EndPointAvailable)
+    {
+        <div class="alert alert-warning" role="alert" data-testid="chat-ai-unavailable-banner">
+            Chat AI service is unavailable right now. Your saved conversations are still available.
+        </div>
+    }
+
+    <div class="chat-shell" data-testid="chat-conversations-shell">
+        <aside class="conversation-sidebar" data-testid="chat-conversation-sidebar">
+            <div class="conversation-sidebar-header">
+                <div>
+                    <h2 class="h4 mb-0">Conversations</h2>
+                    <p class="conversation-sidebar-caption">Saved per user. Only you can access your history.</p>
+                </div>
+                <button class="btn btn-primary"
+                        @onclick="StartNewConversationAsync"
+                        disabled="@IsAIResponsing"
+                        data-testid="chat-new-conversation">
+                    New conversation
+                </button>
+            </div>
+
+            @if (Conversations.Count == 0)
+            {
+                <div class="empty-sidebar-state" data-testid="chat-empty-conversations">
+                    No saved conversations yet.
+                </div>
+            }
+            else
+            {
+                <ul class="conversation-list" data-testid="chat-conversation-list">
+                    @foreach (var conversation in Conversations)
+                    {
+                        var isActive = ActiveConversationId == conversation.ConversationId;
+                        <li class="conversation-card @(isActive ? "active" : string.Empty)"
+                            data-testid="chat-conversation-item"
+                            @onclick="() => SelectConversationAsync(conversation.ConversationId)">
+                            <button class="conversation-select"
+                                    @onclick="() => SelectConversationAsync(conversation.ConversationId)"
+                                    @onclick:stopPropagation="true"
+                                    disabled="@IsAIResponsing"
+                                    data-testid="chat-conversation-select">
+                                <span class="conversation-title">@conversation.Title</span>
+                                <span class="conversation-preview">@conversation.Preview</span>
+                                <span class="conversation-meta">
+                                    @conversation.UpdatedAt.ToLocalTime().ToString("g") • @conversation.MessageCount message@(conversation.MessageCount == 1 ? string.Empty : "s")
+                                </span>
+                            </button>
+                            <div class="conversation-actions">
+                                <button class="btn btn-sm btn-outline-light"
+                                        @onclick="() => SelectConversationAsync(conversation.ConversationId)"
+                                        @onclick:stopPropagation="true"
+                                        disabled="@IsAIResponsing"
+                                        data-testid="chat-open-conversation-button">
+                                    Open
+                                </button>
+                                <button class="btn btn-sm btn-outline-danger"
+                                        @onclick="() => DeleteConversationAsync(conversation.ConversationId)"
+                                        @onclick:stopPropagation="true"
+                                        disabled="@IsAIResponsing"
+                                        data-testid="chat-delete-conversation-button">
+                                    Delete
+                                </button>
+                            </div>
+                        </li>
+                    }
+                </ul>
+            }
+        </aside>
+
+        <section class="chat-main">
+            <div class="conversation-header">
+                <div>
+                    <p class="conversation-label">Current conversation</p>
+                    @if (HasActiveConversation && IsEditingConversationTitle)
+                    {
+                        <div class="conversation-title-editor">
+                            <input @bind="ConversationTitleDraft"
+                                   @bind:event="oninput"
+                                   class="form-control"
+                                   maxlength="200"
+                                   data-testid="chat-conversation-title-input"
+                                   @ref="conversationTitleInput" />
+                            <button class="btn btn-primary"
+                                    @onclick="SaveConversationTitleAsync"
+                                    disabled="@IsAIResponsing"
+                                    data-testid="chat-conversation-save-title">
+                                Save
+                            </button>
+                            <button class="btn btn-outline-light"
+                                    @onclick="CancelConversationTitleEdit"
+                                    disabled="@IsAIResponsing"
+                                    data-testid="chat-title-cancel-button">
+                                Cancel
+                            </button>
+                        </div>
+                    }
+                    else
+                    {
+                        <h2 class="conversation-heading" data-testid="chat-current-conversation-title">@ConversationHeading</h2>
+                    }
+                </div>
+
+                @if (HasActiveConversation && !IsEditingConversationTitle)
+                {
+                    <div class="conversation-actions">
+                        <button class="btn btn-outline-light"
+                                @onclick="BeginConversationTitleEdit"
+                                disabled="@IsAIResponsing"
+                                data-testid="chat-conversation-rename">
+                            Rename
+                        </button>
+                        <button class="btn btn-outline-danger"
+                                @onclick="() => DeleteConversationAsync(ActiveConversationId!.Value)"
+                                disabled="@IsAIResponsing"
+                                data-testid="chat-conversation-delete">
+                            Delete
+                        </button>
+                    </div>
+                }
+            </div>
+
+            @if (_chatHistory.Count == 0 && !IsAIResponsing)
+            {
+                <div class="empty-chat-state" data-testid="chat-empty-state">
+                    Start a new conversation or open one from the list to continue where you left off.
+                </div>
+            }
+
+            @if (_chatHistory.Count > 0)
+            {
+                <div id="chat-messages-container" class="chat-container" data-testid="chat-thread">
+                    <table id="chathistory" class="table">
+                        <thead>
+                            <tr>
+                                <th class="user-column">User</th>
+                                <th class="message-column">Messages</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            @foreach (var message in ChatHistoryService.GetFormattedMessages(_chatHistory))
+                            {
+                                <tr data-testid="chat-message-row">
+                                    <td class="user-column"><span>@message.User</span></td>
+                                    <td class="message-column">
+                                        <span>@ConvertToMarkup(message.Message)</span>
+                                        @if (message.User == "Assistant" && SpeechSupport?.TextToSpeech == true)
+                                        {
+                                            <button class="btn btn-sm btn-outline-info ms-2 tts-message-button"
+                                                    @onclick="() => SpeakMessage(message.Message)"
+                                                    disabled="@IsTtsMessageButtonDisabled(message.Message)"
+                                                    title="@(IsMessageBeingSpoken(message.Message) ? "Stop speaking" : "Read message aloud")">
+                                                <img src="/images/@(IsMessageBeingSpoken(message.Message) ? "stop.png" : "playback.png")"
+                                                     alt="@(IsMessageBeingSpoken(message.Message) ? "Stop" : "Play")" />
+                                            </button>
+                                        }
+                                    </td>
+                                </tr>
+                            }
+                        </tbody>
+                    </table>
+                </div>
+            }
+
+            @if (IsAIResponsing)
+            {
+                <table id="ai-request">
+                    <tr>
+                        <td class="user-column">AI in Action&nbsp;&nbsp;</td>
+                        <td class="message-column">
+                            @if (string.IsNullOrEmpty(AIResponse))
+                            {
+                                <div class="loading-container">
+                                    <div class="spinner-border spinner-border-sm text-primary" role="status">
+                                        <span class="visually-hidden">Loading...</span>
+                                    </div>
+                                    <p class="loading-text">&nbsp;Thinking...</p>
+                                </div>
+                            }
+                            else
+                            {
+                                @ConvertToMarkup(AIResponse)
+                            }
+                        </td>
+                    </tr>
+                </table>
+            }
+
+            @if (SpeechSupport != null && (SpeechSupport.SpeechRecognition || SpeechSupport.TextToSpeech))
+            {
+                <div class="speech-controls-container">
+                    <div class="speech-controls">
+                        @if (SpeechSupport.SpeechRecognition)
+                        {
+                            <button id="mic-button"
+                                    class="speech-button mic-button @(IsListening ? "listening" : string.Empty)"
+                                    @onclick="ToggleMicrophone"
+                                    disabled="@(!AiInfoState.EndPointAvailable || IsAIResponsing)"
+                                    title="@(IsListening ? "Stop listening" : "Start voice input")">
+                                <img src="/images/@(IsListening ? "stop.png" : "record.png")" alt="@(IsListening ? "Stop Recording" : "Start Recording")" />
+                            </button>
+                        }
+                        &nbsp;
+                        @if (SpeechSupport.TextToSpeech && !string.IsNullOrEmpty(AIResponse))
+                        {
+                            <button class="speech-button tts-button"
+                                    @onclick="ToggleTextToSpeech"
+                                    disabled="@IsTtsButtonDisabled()"
+                                    title="@(IsMessageBeingSpoken(AIResponse) ? "Stop speaking" : "Read AI response aloud")">
+                                <img src="/images/@(IsMessageBeingSpoken(AIResponse) ? "stop.png" : "playback.png")" alt="@(IsMessageBeingSpoken(AIResponse) ? "Stop Speaking" : "Play Audio")" />
+                            </button>
+                        }
+
+                        <div class="speech-status">
+                            @if (IsListening)
+                            {
+                                <span class="text-danger"><img src="/images/record.png" style="width: 16px; height: 16px;" alt="Recording" /> Listening...</span>
+                            }
+                            else if (IsSpeaking)
+                            {
+                                <span class="text-info">Speaking...</span>
+                            }
+                            else if (!string.IsNullOrEmpty(SpeechStatusText))
+                            {
+                                <span>@SpeechStatusText</span>
+                            }
+                        </div>
+                    </div>
+                </div>
+            }
+
+            <div class="input-container">
+                <div class="input-group">
+                    <input @bind="Question"
+                           @bind:event="oninput"
+                           @onkeydown="@(async (e) => { if (e.Key == "Enter" && !IsAIResponsing && AiInfoState.EndPointAvailable) { if (IsListening) await StopListening(); await QueryAIChat(); } })"
+                           type="text"
+                           class="form-control"
+                           placeholder="@InputPlaceholder"
+                           disabled="@(!IsInteractiveReady || !AiInfoState.EndPointAvailable || IsAIResponsing)"
+                           data-testid="chat-message-input"
+                           @ref="questionInput" />
+                </div>
+            </div>
+
+            <br />
+            <div class="d-flex">
+                <button class="btn btn-primary"
+                        @onclick="QueryAIChat"
+                        disabled="@(!IsInteractiveReady || !AiInfoState.EndPointAvailable || IsAIResponsing)"
+                        data-testid="chat-send">
+                    @(IsAIResponsing ? "Processing..." : "Send Query")
+                </button>
+                @if (IsAIResponsing)
+                {
+                    <button class="btn stop-button"
+                            @onclick="StopAIResponse"
+                            title="Stop response (Ctrl+C)"
+                            data-testid="chat-stop-button">
+                        Stop Response
+                    </button>
+                }
+            </div>
+            <br />
+            <div><span>Elapsed time: @ElapsedTimeMessage</span></div>
+            <br />
+            <br />
+        </section>
+    </div>
 }

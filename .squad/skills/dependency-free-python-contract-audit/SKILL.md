@@ -49,6 +49,14 @@ If an operational script only imports `DatabaseService` through lightweight Pyda
 
 When production code already routes optional dependencies through a factory, point smoke tests at the factory instead of the heavyweight package module. In AspireAI, `app.services.service_factory` is the contract: it returns the full `DoclingService` when `docling` is installed and `docling_service_fallback` otherwise, so the smoke test can prove the active processor boots in both environments.
 
+### Keep Required Drivers Lazy Enough for Fake-Backed Smoke Tests
+
+If a test swaps the live database pool with `fake_postgres.FakeConnectionPool`, the module under test still needs to import cleanly before the patch lands. In AspireAI, `app.services.database_service` should tolerate a missing `psycopg_pool` import at module load and only raise when the real `ConnectionPool` is instantiated.
+
+### Bootstrap `sys.path` Inside Standalone Test Entry Points
+
+Some AspireAI Python checks are still useful as direct `python path\\to\\test_file.py` commands. For those files, add `src\\AspireApp.PythonServices` (and the local `tests` folder when needed) to `sys.path` before importing `app.*` so the same test file works both under `pytest` and as a script.
+
 ## Examples
 
 ```python

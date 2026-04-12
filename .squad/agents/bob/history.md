@@ -15,17 +15,17 @@
 - Stabilization plan: 4 sprints, ~8 days to full unblock of Gates B1/B2
 - Team coordination: Jarvis (Python contracts), Jeff (Web/orchestration), Buster (tests), Bob (architecture decisions)
 
+**Key Architectural Decisions (Feb-Apr 2026):**
+- **SQLite → Postgres migration:** Eliminate ~400 lines of bind-mount boilerplate (path resolution, journal-mode hacks, WAL checkpointing). Aspire already manages Postgres. Both services get clean database connections via pooling.
+- **Shared schema stability:** Keep `files` + `document_pages` unchanged during provider migration. Column names, types, FKs all match across Web (EF Core) and Python (psycopg2).
+- **BRAIN pivot direction:** Postgres is foundational infrastructure. BRAIN requires service decomposition (Ingestion/Knowledge/Validation), new Validation Layer (zero today), explicit reasoning orchestration (Semantic Kernel agents).
+- **Contract-driven testing:** Regression tests derive infrastructure names from AppHost (single source of truth). Prevents false failures on intentional naming changes.
+
 **Key File Paths:**
 - Orchestration: `src/AspireApp.AppHost/AppHost.cs`
-- C# entities: `src/AspireApp.Web/Data/DocumentEntities.cs`
-- C# upload: `src/AspireApp.Web/Controllers/FileUploadController.cs`
-- Python services: `src/AspireApp.PythonServices/app/services/database_service.py`, `/routers/`
-
-**Squad Orchestration Complete (2026-02-22):**
-- All four agents completed independent reviews; findings merged into shared decisions.md
-- Execution plan: Sprint 1 (Gate B1/B2 unblock), Sprint 1.5 (orchestration), Sprint 2 (tests), Sprint 3 (observability)
-- Tracked in decisions.md
-- Consolidated copilot-instructions.md with team personas + operational context (167 lines)
+- C# upload store: `src/AspireApp.Web/Program.cs` (now Npgsql), `src/AspireApp.Web/Shared/UploadDbContext.cs`
+- Python store: `src/AspireApp.PythonServices/app/services/database_service.py` (now psycopg2)
+- Contract audit: `src/AspireApp.PythonServices/tests/test_p0_contract_audit.py`
 
 ---
 
@@ -33,7 +33,97 @@
 
 <!-- Append new learnings below. Each entry is something lasting about the project. -->
 
-### 2026-06-24 — Aspire Dashboard Test Redirect Fix (Revision of Jeff's Rejected Artifact)
+### 2026-04-05 — Mock Auth UX Revision Uses Dedicated Sign-In Route + Framework Redirect
+
+**Scope:** Independent architectural revision of the Blazor mock auth shell after QA rejected the first UX pass.
+
+**Decision:** Keep `/` as the unauthenticated product landing, but redirect unauthorized access to protected routes through Blazor's built-in `AuthorizeRouteView` into a dedicated `/signin?returnUrl=...` page. This preserves the marketing-style landing while making route protection explicit and testable.
+
+**Stable hook contract implemented:**
+- Landing CTA: `auth-sign-in-cta`
+- Provider list/buttons: `auth-provider-list`, `auth-provider-mock-microsoft`, `auth-provider-mock-google`, `auth-provider-demo`
+- Authenticated shell: `auth-user-display`, `auth-sign-out`
+- Tenant visibility/binding: `auth-current-tenant`, `data-auth-tenant`, `#tenant-select`
+
+**Key file paths:**
+- Router redirect seam: `src/AspireApp.Web/Components/Routes.razor`
+- Sign-in page: `src/AspireApp.Web/Components/Pages/SignIn.razor`
+- Redirect component: `src/AspireApp.Web/Components/Shared/RedirectToSignIn.razor`
+- Shared auth surface: `src/AspireApp.Web/Components/Shared/SignInPanel.razor`
+- Shell hooks: `src/AspireApp.Web/Components/Layout/MainLayout.razor`
+
+**Validation note:** `dotnet build src/AspireApp.Web/AspireApp.Web.csproj /p:UseAppHost=false` passes. Focused `AspireApp.WebTest` auth runs still abort in the existing host fixture pipeline before yielding assertions, so infra follow-up remains separate from this UX revision.
+
+### 2026-07-26 — Mock Pluggable Auth Slice Recommended as Next UX Leg
+
+**Scope:** Architecture assessment of next UX stage after tenant-context completion.
+
+**Decision:** Recommended a Mock Pluggable Auth Slice using Blazor's built-in `AuthenticationStateProvider` + `<AuthorizeView>` pattern. This establishes the abstraction that real Microsoft/Google OAuth plugs into at Phase 6.
+
+**Key Architecture:**
+- `IAuthStateProvider` → `MockAuthProvider` (dev) → `OAuthAuthProvider` (Phase 6)
+- `AuthenticatedUser` model: `UserId`, `DisplayName`, `Email`, `AvatarUrl`, `Provider`, `TenantId`
+- Mock login page with provider picker (Microsoft/Google style buttons)
+- Unauthenticated landing page at `/` with sign-in CTA
+- `TenantContextService` auto-selects tenant from `AuthenticatedUser.TenantId`
+- Playwright UI tests for full auth flow
+
+**What this unlocks for Phase 6:** DI swap from MockAuthProvider to real OAuth — zero UI rewrites needed. `AuthenticatedUser.TenantId` becomes the `tenant_id` header on Gateway requests.
+
+**Explicit out-of-scope:** Real OAuth, JWT/tokens, API auth middleware, RBAC, persistent sessions, Python auth.
+
+**Decision recorded:** `.squad/decisions/inbox/bob-mock-auth-slice.md`
+
+**Current state of TenantContextService:** Scoped Blazor service with hardcoded tenant list ("default", "tenant-a", "tenant-b", "demo"). TenantSelector in NavMenu. Chat.razor.cs has TODO comment for Phase 3 injection. FileUploadController reads `X-Tenant-Id` header and propagates to FileStorageService.
+
+**Owner mapping:** Jeff (UI + auth provider), Buster (Playwright + unit tests), Bob (review).
+
+### 2026-07-26 — Postgres Migration Verified & Next UI Objective Scoped
+
+**Scope:** Architecture verification of SQLite → Postgres migration completion; roadmap alignment and next feature scope.
+
+**Outcome:** ✅ Migration is **operationally complete** for the Web ↔ Python contract. Both services connect to the shared Postgres container (`appdb`). Schema is unchanged, tests pass, build clean.
+
+**Evidence:**
+- C# Web: Uses `builder.AddNpgsqlDbContext<UploadDbContext>("appdb")`. All SQLite-specific hacks (DeleteJournalModeInterceptor, CheckpointDatabaseAsync, path resolution) are removed.
+- Python: Uses `psycopg_pool.ConnectionPool`. Environment variables (POSTGRES_HOST/PORT/DATABASE/USER/PASSWORD) are read; fallbacks exist for backward compat.
+- AppHost: Postgres container registered, `uploadStore` database created, services reference it and wait for it.
+- Tests: `OperationalUploadStoreTests` uses NpgsqlConnection and verifies Postgres storage.
+
+**Minor Gap:** `docs/CROSS_SERVICE_CONTRACT.md` still says "SQLite" in the preamble (column schema is accurate). One-line doc update needed, not blocking.
+
+**Next Objective Identified:** "Persist Chat Messages & Retrieval on Reload." This is the foundation for BRAIN Phase 1 (Core Contracts). Smallest slice:
+- Add `Conversation` and `Message` EF entities + DbSets to UploadDbContext
+- Create ConversationService (C#) to manage lifecycle
+- Add one Python endpoint: `POST /chat/message`
+- Modify chat component to call ConversationService on each exchange
+- On page load, hydrate chat history from Postgres
+
+**Recommended owners:** Jeff (C# Blazor) + Jarvis (Python endpoint). Bob to review schema.
+
+**Decision recorded:** `.squad/decisions/inbox/bob-postgres-ui-handoff.md` — approved for immediate implementation.
+
+**Key pattern from this session:** The Postgres migration was clean because (1) we kept the schema unchanged, (2) we used Aspire's `WithReference()` to wire connection strings, (3) both C# and Python respected environment variable naming conventions. Future migrations should follow this pattern: change infrastructure, keep contracts stable, use Aspire to wire parameters.
+
+### 2026-04-05 — Tenant-Context UI Slice - Architectural Revision
+
+**Status:** ✅ COMPLETE (Revision 2)
+
+**Scope:** Jeff's initial tenant-context UI implementation was rejected by Buster for API coherence. Bob took revision ownership to align FileUploadController signature changes with FileStorageService updates.
+
+**Outcome:**
+- `FileStorageService.GetAllFilesAsync()` now accepts optional `tenantId` parameter with backward-compatible null filtering
+- `FileUploadController.GetUploadedFiles()` calls `GetTenantId()` helper and passes tenant to service layer
+- Chat.razor.cs build errors fixed (removed duplicate property declarations)
+- Tenant filtering works end-to-end: upload (X-Tenant-Id header) → FileStorageService → schema → retrieval
+
+**Build Status:** ✅ `dotnet build src/AspireApp.Web/AspireApp.Web.csproj` passes
+
+**Architectural Pattern:** Tenant isolation is tenant_id column concern. Query filtering is optional (null = all tenants, for backward compat). API layer reads header once via `GetTenantId()` and propagates consistently.
+
+**Next:** Data layer now ready for Jarvis (Python schema) and Buster (QA validation) to close schema alignment and contract audit gaps.
+
+### 2026-04-05 — BRAIN Pivot Architectural Assessment Complete
 
 **Scope:** Bob took revision ownership after Buster rejected Jeff's `AspireDashboardLoads` test.
 
@@ -286,3 +376,134 @@ The entire codebase has a gap between C# upload and Python processing:
 **Roadmap Updated:** Added "Ingestion Trigger" P1 section with three options. Updated test tasks. Added CRITICAL challenge.
 
 **Key Files:** FileUploadController.cs, processing.py, database_service.py, docling_service.py, lightrag_handoff_service.py, fastapi.py, AppHost.cs, BasicAspireAppHostTests.cs
+
+### 2026-07-26 — SQLite-to-Postgres Migration Architecture Decision
+
+**Scope:** Replace shared SQLite file with Postgres for operational data (`files` + `document_pages`).
+
+**Key Findings:**
+- Postgres already provisioned in AppHost (`AddPostgres("postgres")`, `appdb` database, pgWeb, bind mount)
+- Both services already `WaitFor(postgres)` and receive `POSTGRES_USER`/`POSTGRES_PASSWORD` env vars
+- Neither service actually connects to Postgres yet — all operational data still flows through SQLite bind-mounted file
+- ~400+ lines of SQLite workarounds exist across both services (WAL/DELETE journal mode, fresh connection fallbacks, multi-candidate path resolution, checkpoint calls)
+
+**Decision Summary:**
+1. Keep same `files` + `document_pages` schema — stable and well-documented
+2. Jeff: NuGet swap (`Sqlite` → `Npgsql`), `AddNpgsqlDbContext<UploadDbContext>("appdb")`, remove `DeleteJournalModeInterceptor`, remove `CheckpointDatabaseAsync`
+3. Jarvis: `psycopg2-binary`, replace `ConnectionPool` + SQLite pragmas with psycopg2 pool, remove path resolution
+4. AppHost: Wire Postgres host/port/db to Python, `.WithReference(postgres)` to Web, remove SQLite file setup block
+5. Deferred: Legacy entity removal, EF Migrations, diagnostic scripts, test updates (Buster's scope)
+
+**Decision Written:** `.squad/decisions/inbox/bob-postgres-cutover.md`
+
+**Key Files Affected:**
+- `src/AspireApp.AppHost/AppHost.cs` — Remove SQLite plumbing, wire Postgres refs
+- `src/AspireApp.Web/Program.cs` — Provider swap, remove SQLite helpers
+- `src/AspireApp.Web/AspireApp.Web.csproj` — NuGet swap
+- `src/AspireApp.Web/Shared/FileStorageService.cs` — Remove CheckpointDatabaseAsync
+- `src/AspireApp.PythonServices/app/services/database_service.py` — Backend swap (~400 lines removed)
+- `src/AspireApp.PythonServices/requirements.txt` — Add psycopg2-binary
+- `docs/CROSS_SERVICE_CONTRACT.md` — SQLite → PostgreSQL header update
+### 2025-02-01 — Tenant Context UI Slice Revision (Buster Rejection Recovery)
+
+**Scope:** Took over tenant-context implementation after Buster rejected Jeff's first pass. FileUploadController was passing tenantId but FileStorageService/schema/UI were incomplete.
+
+**Root Cause:** Merge conflict in Chat.razor.cs created duplicate property declarations, breaking build. Service layer didn't filter by tenant. GetAllFilesAsync() signature mismatch.
+
+**Resolution:**
+1. **Fixed Chat.razor.cs build errors** - Removed duplicate AiInfoState, CurrentlySpeakingMessage declarations; added missing ElementReference questionInput
+2. **Updated FileStorageService** - Made GetAllFilesAsync(string? tenantId = null) backward-compatible; added .Where(f => f.TenantId == tenantId) filter
+3. **Updated FileUploadController** - GetUploadedFiles() now calls GetTenantId() and filters results
+4. **Verified UI plumbing** - TenantSelector component + CSS present, NavMenu includes tenant context section
+
+**Build Status:** ✅ Clean build, no new warnings, one pre-existing test failure (unrelated EF Core issue)
+
+**Key Lesson:** When implementing cross-cutting features (like tenant context):
+- Start with contracts first (service signatures, DTOs)
+- Wire end-to-end before considering "done" (controller → service → query)
+- Test build after each layer to catch signature mismatches early
+- Duplicate declarations from merge conflicts block compilation - PowerShell file reconstruction can fix when edit tool struggles
+
+**Not Included (Out of Scope):**
+- Chat tenant filtering (Phase 3 TODO remains)
+- Python service tenant filtering
+- Full authentication/authorization
+- Migration script for existing tenant-less data
+
+**Files Changed:**
+- Chat.razor.cs - Fixed duplicates
+- FileStorageService.cs - Added tenant parameter + filtering
+- FileUploadController.cs - Tenant-aware GET endpoint
+
+**Follow-Up:**
+- Add integration test for tenant-filtered retrieval
+- Document tenant flow in architecture guide
+- Chat.razor integration in Phase 3
+
+
+
+### 2026-04-05 — Mock Pluggable Auth Slice Recommended (Cross-Agent Consensus)
+
+**Agent Assessment:** Bob recommended mock pluggable auth as next UX leg.  
+**Cross-Agent Inputs:** Jeff (concrete UX/service design), Buster (acceptance gates).  
+
+**Key Points:**
+- **Jeff alignment:** Blazor AuthenticationContext + MockAuthProvider mirrors existing TenantContextService pattern ✅
+- **Buster alignment:** 5-layer acceptance gates (UI → Contract) before implementation ✅
+- **Outcome:** Three agents converged on same direction; Eric approval pending
+- **Next:** Sprint assignment for Landing/SignIn/Dashboard + mock auth implementation
+
+**Decision Merged:** .squad/decisions.md — Mock Pluggable Auth Slice section
+
+### 2026-07-29 — Local Username/Password Auth — First Slice Architecture Decision
+
+**Scope:** Eric requested "classic managed basic username and password login." Bob assessed the smallest viable first slice.
+
+**Key Decisions:**
+
+1. **Provider seam fit: YES.** New `LocalAuthService : IAuthService` with `ServiceKey = "local"`, registered via the existing `AddAuthServiceRegistration<>` pattern. Zero teardown of mock or Microsoft auth.
+
+2. **No ASP.NET Core Identity.** It would fight every existing abstraction (`AuthenticatedUser` vs `IdentityUser`, `AppAuthenticationStateProvider` vs Identity's provider, `AuthenticationContext` scoped state). Use standalone `PasswordHasher<T>` or `BCrypt.Net-Next` for hashing only.
+
+3. **Sign-in only, pre-provisioned users.** Users defined in `appsettings.json` under `Authentication:Local:Users`. No self-service registration (email validation, password strength, duplicate detection = massive scope). Registration is a follow-up slice.
+
+4. **Tenant assignment: same as mock.** Each user gets `DefaultTenantId` in config. `TenantContextService.InitializeForUser()` handles hydration. No new mechanism.
+
+5. **Critical implementation risks flagged:**
+   - `CompositeAuthService` must become dynamic (currently hardcodes Mock + Microsoft)
+   - `SignInPanel.razor` needs a credentials form branch (new `RequiresCredentials` on `AuthProviderOption`)
+   - Password form must POST to server endpoint, NOT submit via Blazor interactive (credentials must not travel over SignalR)
+   - No new DbContext for users yet — config-based keeps first slice additive
+
+**Decision recorded:** `.squad/decisions/inbox/bob-local-auth-slice.md`
+
+**Key files for implementation:**
+- Provider seam: `Services/IAuthService.cs`, `Services/AuthServiceFactory.cs`, `Services/AuthServiceRegistration.cs`
+- Composite (needs refactor): `Services/CompositeAuthService.cs`
+- Options pattern: `Services/AuthenticationOptions.cs`
+- Registration: `Services/AuthenticationServiceCollectionExtensions.cs`
+- UI surface: `Components/Shared/SignInPanel.razor`
+- Cookie endpoints: `Program.cs` (lines 144-195 for mock pattern to follow)
+- Config: `appsettings.json` → `Authentication:Local` section
+
+### 2026-04-09 — Tenant Slice Session: Architecture Coordination
+
+**Role:** Lead / Architect (Cross-Service Tenant Model)
+
+**Outcome:** Approved tenant slice foundation; recommended local-auth-slice as next layer.
+
+**What Bob Did:**
+1. Reviewed tenant architecture: persisted model, default-tenant protection, membership enforcement
+2. Approved seam fit: tenant context integrated seamlessly with existing auth provider abstraction
+3. Identified local-auth-slice as natural next step: config-provisioned users + extensible provider pattern
+4. Recommended starting local-auth work after tenant slice complete
+
+**Key Decisions Contributed:**
+- Local Username/Password Auth — First Slice Recommendation — managed credentials, no full Identity import, provider seam extensibility
+
+**Coordination Notes:**
+- Tenant slice unblocks multi-user auth stories
+- Local auth foundation will support tenant per-user provisioning in later phase
+- BRAIN gateway Phase 6 will propagate tenant_id header across services
+
+**Status:** Approved; recommendation ready for implementation

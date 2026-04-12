@@ -1,14 +1,14 @@
 # AspireAI
 
-A modular, Blazor-based chat assistant platform that ingests documents, builds knowledge graphs, and delivers retrieval-augmented answers with source citations — all orchestrated through .NET Aspire.
+A modular, Blazor-based chat assistant platform that ingests documents, builds knowledge graphs, and delivers retrieval-augmented answers with source citations ï¿½ all orchestrated through .NET Aspire.
 
 > **Disclaimer:** This is an experimental learning project. Expect rough edges and areas to improve. Use at your own risk!
 
 ## What It Does
 
-1. **Chat** — Conversational UI powered by local LLMs (Ollama) via Semantic Kernel, with speech-to-text and text-to-speech support.
-2. **Ingest** — Upload documentation - a Python/Docling pipeline extracts page-level content and persists output.
-3. **Retrieve** — LightRAG + Neo4j turn extracted content into a queryable knowledge graph, surfacing cited answers in chat.
+1. **Chat** ï¿½ Conversational UI powered by local LLMs (Ollama) via Semantic Kernel, with speech-to-text and text-to-speech support.
+2. **Ingest** ï¿½ Upload documentation - a Python/Docling pipeline extracts page-level content and persists output.
+3. **Retrieve** ï¿½ LightRAG + Neo4j turn extracted content into a queryable knowledge graph, surfacing cited answers in chat.
 
 ## Technology Stack
 
@@ -24,9 +24,9 @@ A modular, Blazor-based chat assistant platform that ingests documents, builds k
 
 ## Prerequisites
 
-- [.NET 10 SDK](https://dotnet.microsoft.com/en-us/download/dotnet/10.0) — verify with `dotnet --version`
-- [Docker Desktop](https://www.docker.com/products/docker-desktop/) — required for Neo4j, Ollama, and Python containers
-- [Aspire Tooling](https://learn.microsoft.com/en-us/dotnet/aspire/fundamentals/setup-tooling) — workload install via `dotnet workload install aspire`
+- [.NET 10 SDK](https://dotnet.microsoft.com/en-us/download/dotnet/10.0) ï¿½ verify with `dotnet --version`
+- [Docker Desktop](https://www.docker.com/products/docker-desktop/) ï¿½ required for Neo4j, Ollama, and Python containers
+- [Aspire Tooling](https://learn.microsoft.com/en-us/dotnet/aspire/fundamentals/setup-tooling) ï¿½ workload install via `dotnet workload install aspire`
 - Python 3.11+ *(optional, for local Python development outside containers)*
 
 ## Getting Started
@@ -44,7 +44,7 @@ dotnet build
 dotnet run --project src/AspireApp.AppHost
 ```
 
-The Aspire dashboard opens automatically. All services — Web UI, Python processing, Neo4j, Ollama — start and register health checks there.
+The Aspire dashboard opens automatically. All services ï¿½ Web UI, Python processing, Neo4j, Ollama ï¿½ start and register health checks there.
 
 > **Startup project must be `AspireApp.AppHost`.** If the app 404s or services are missing, right-click `AspireApp.AppHost` in Solution Explorer ? *Set as Startup Project*.
 
@@ -52,10 +52,10 @@ The Aspire dashboard opens automatically. All services — Web UI, Python processi
 
 | Path | Purpose |
 |------|---------|
-| `src/AspireApp.AppHost/` | Aspire orchestration — wires all services, containers, and config |
-| `src/AspireApp.Web/` | Blazor UI — chat, file upload, speech I/O |
+| `src/AspireApp.AppHost/` | Aspire orchestration ï¿½ wires all services, containers, and config |
+| `src/AspireApp.Web/` | Blazor UI ï¿½ chat, file upload, speech I/O |
 | `src/AspireApp.ApiService/` | Minimal API (placeholder for future gateway) |
-| `src/AspireApp.PythonServices/` | FastAPI — document processing, RAG retrieval, Neo4j integration |
+| `src/AspireApp.PythonServices/` | FastAPI ï¿½ document processing, RAG retrieval, Neo4j integration |
 | `src/AspireApp.Neo4JService/` | Neo4j Docker build context and config |
 | `src/AspireApp.ServiceDefaults/` | Shared .NET service configuration and health checks |
 | `data/` | Bind-mounted volume for uploaded documents |
@@ -67,7 +67,7 @@ The Aspire dashboard opens automatically. All services — Web UI, Python processi
 |----------|----------|
 | [Architecture](roadmap/Architecture.md) | System design, component map, data schemas, design principles |
 | [Plan](plan.md) | Epics and phased roadmap from foundation through advanced features |
-| [Tasks](roadmap/Tasks.md) | Active work breakdown — stabilization track, checklists, gate criteria |
+| [Tasks](roadmap/Tasks.md) | Active work breakdown ï¿½ stabilization track, checklists, gate criteria |
 
 ## Troubleshooting
 
@@ -78,6 +78,51 @@ The Aspire dashboard opens automatically. All services — Web UI, Python processi
 | Ollama offline | Check container health in dashboard; verify `AI-Endpoint` / `AI-Model` in appsettings |
 | Neo4j / Python errors | Check dashboard logs; ensure ports 7474, 7687, 8000 are free |
 | SDK mismatch | `dotnet --info` must show .NET 10.0; install matching SDK from `global.json` |
+
+## Local Microsoft Sign-In
+
+The web app auto-detects live Microsoft auth when the default `auto` service mode is active. If Microsoft client settings (`ClientId` and `ClientSecret`, plus an optional `TenantId`) are present, the landing and sign-in pages drive the user into the real Microsoft Entra ID hosted flow. If those settings are absent, the UI falls back to the demo providers instead.
+
+### Azure App Registration
+
+Before adding secrets, create an app registration in the [Azure portal](https://portal.azure.com/#view/Microsoft_AAD_RegisteredApps/ApplicationsListBlade):
+
+1. **New registration** â€” give it a name (e.g. `AspireAI Local`), set *Supported account types* to your preference. If you want to sign in with a personal Microsoft account such as `@hotmail.com`, choose an option that includes personal Microsoft accounts.
+2. **Redirect URI** â€” add a *Web* platform URI: `https://localhost:{port}/signin-oidc-microsoft`. Use the HTTPS port from your `webfrontend` launch profile (or the Aspire dashboard URL when running under Aspire).
+3. **Client secret** â€” under *Certificates & secrets*, create a new client secret and copy the value immediately.
+
+### Adding Secrets
+
+Add the registration values to `src\AspireApp.Web` user-secrets:
+
+```powershell
+dotnet user-secrets set "Authentication:Microsoft:ClientId" "<app-registration-client-id>" --project src\AspireApp.Web
+dotnet user-secrets set "Authentication:Microsoft:ClientSecret" "<client-secret-value>" --project src\AspireApp.Web
+```
+
+`TenantId` is optional. Leave it blank to use Microsoft's `common` endpoint, or set it explicitly when you want to target a specific tenant or audience such as `organizations` or `consumers`.
+
+```powershell
+dotnet user-secrets set "Authentication:Microsoft:TenantId" "common" --project src\AspireApp.Web
+```
+
+Optional tenant-mapping seeds:
+
+```powershell
+dotnet user-secrets set "Authentication:Microsoft:DefaultAppTenantId" "default" --project src\AspireApp.Web
+dotnet user-secrets set "Authentication:Microsoft:UserTenantSeeds:your.name@yourdomain.com" "tenant-a" --project src\AspireApp.Web
+```
+
+### Service Modes
+
+| Mode | Behavior |
+|------|----------|
+| `auto` (default) | Uses real Microsoft when configured and falls back to demo providers otherwise. Resolves to `microsoft` or `mock` at runtime. |
+| `combined` | Shows both real Microsoft and clearly labeled demo providers for explicit mixed-mode testing (Microsoft hidden if not configured). |
+| `mock` | Demo providers only â€” real Microsoft button never appears, even if configured. |
+| `microsoft` | Real Microsoft only. Mock endpoints are disabled at the HTTP level to prevent session-cookie bypass. |
+
+To keep live Microsoft available but still expose demos for explicit testing, set `Authentication:Service` to `combined`. To force demo-only mode even when Microsoft settings exist, set `Authentication:Service` to `mock`.
 
 ## Contributing
 

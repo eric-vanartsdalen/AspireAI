@@ -39,17 +39,20 @@ public static class HomeConfigurations
         // How is it best done to get the values across projects?
         ActiveModelController = Environment.GetEnvironmentVariable("AI-Controller-Type")
             ?? "ollama";
-        ActiveModelURL = ServiceDiscoveryUtilities.GetServiceConnectionString("ConnectionStrings__ollama")
-            ?? Environment.GetEnvironmentVariable("AI-Endpoint")
-            ?? "http://localhost:11434";
-        ActiveModel = ServiceDiscoveryUtilities.GetServiceConnectionString("ConnectionStrings__chat")
-            ?? Environment.GetEnvironmentVariable("AI-Model")
-            ?? "phi4-mini:latest";
+        ActiveModelURL = GetConfiguredValue(
+            ServiceDiscoveryUtilities.GetServiceConnectionString("ConnectionStrings__ollama"),
+            Environment.GetEnvironmentVariable("AI-Endpoint"),
+            "http://localhost:11434");
+        ActiveModel = GetConfiguredValue(
+            ServiceDiscoveryUtilities.GetServiceConnectionString("ConnectionStrings__chat"),
+            Environment.GetEnvironmentVariable("AI-Model"),
+            "phi4-mini:latest");
 
         // Aspire connection strings may have extra information
-        if (ActiveModel.StartsWith(ActiveModelURL))
+        if (!string.IsNullOrWhiteSpace(ActiveModelURL) &&
+            ActiveModel.StartsWith(ActiveModelURL, StringComparison.Ordinal))
         {
-            ActiveModel = ActiveModel.Replace(ActiveModelURL,"").Trim(';');
+            ActiveModel = ActiveModel.Replace(ActiveModelURL, string.Empty, StringComparison.Ordinal).Trim(';');
         }
         if (ActiveModel.StartsWith("Model="))
         {
@@ -65,5 +68,18 @@ public static class HomeConfigurations
         Console.WriteLine("Active AI Type set to: " + ActiveModelController);
         Console.WriteLine("Active AI Endpoint set to: " + ActiveModelURL);
         Console.WriteLine("ACtive AI Model set to: " + ActiveModel);
+    }
+
+    private static string GetConfiguredValue(params string?[] candidates)
+    {
+        foreach (var candidate in candidates)
+        {
+            if (!string.IsNullOrWhiteSpace(candidate))
+            {
+                return candidate;
+            }
+        }
+
+        return string.Empty;
     }
 }

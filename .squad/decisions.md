@@ -2,332 +2,1500 @@
 
 > Shared decision log. All agents read this before starting work.
 > Scribe merges new decisions from `.squad/decisions/inbox/` after each session.
-> **Note (2025-11-02):** Merged 5 inbox decisions from file-hash schema bug fix (Jarvis, Buster). Archived 2026-03-21 and earlier (9 decisions, ~8 KB) to `decisions-archive.md` to maintain ~20 KB target. Inbox cleared.
+> **Note (2026-04-05T21:33:20Z):** Merged 18 inbox decisions from auth documentation and QA validation (Jeff, Warden, Bob, Buster). Consolidated Bob's UX revision + Buster's multi-gate approval into a single "Mock Pluggable Auth Slice" decision. No duplicates found. Inbox cleared.
+> **Note (2026-04-06T18:38:14Z):** Merged local auth password floor relaxation decision (Warden approval + Jeff implementation). Relax minimum from 12 to 10 characters; add visible UI hint; confirm case-insensitive username uniqueness already implemented; defer password reset. All implementation work complete and tested.
+> **Note (2026-04-09T15:39:08Z):** Merged 6 tenant slice decisions (Jeff, Warden, Buster, Bob). Tenant isolation via persisted tenants/memberships, default-tenant protection + backfill, upload authorization hardening, add-member edge-case revision, and local-auth-slice foundation recommendation. 28 targeted tests passing. No duplicates found. Inbox cleared.
+> **Note (2026-04-09T15:39:12Z):** Added Upload Authentication Regression decision (Jeff, Buster): FileStorageService scoped injection removes HTTP self-call pattern in UploadData; tenant context preserved in-circuit. Regression coverage tightened. Build success. No inbox files to merge.
+> **Note (2026-04-10T07:48:03Z):** Merged 9 inbox decisions from chat persistence & rename focus work (Jeff, Warden, Eric, Buster). Consolidated chat history tests audit, persistence audit, service implementation, rename focus fix, upload auth test gap closure, privacy review notes, and user privacy directive. No exact duplicates; privacy review rejected prematurely (Warden flagged incomplete UI wiring, not design flaw). All implementation work complete. Inbox cleared.
+> **Note (2026-04-11T18:38:10Z):** Merged 1 inbox decision from chat persistence QA validation session (Buster). "Chat privacy tests should not wait on full AI completion" — acceptance seam is owner message persistence + owner-only visibility, not Ollama response completion. 7/7 focused tests passing. Inbox cleared.
 
 <!-- Decisions are appended below. Each entry starts with ### -->
 
-## SQLite Startup Schema Self-Repair — Jarvis — 2025-11-02
+## Local Auth Password Floor 12→10 + Visible UI Requirement — Warden, Jeff — 2026-04-06
 
-**Scope:** Python SQLite startup compatibility for persisted developer databases
-
-### Context
-Python service can start against existing shared SQLite database that predates latest canonical schema. Observed failure: database lacked `file_hash` column, causing startup to fail at index creation with `sqlite3.OperationalError: no such column: file_hash`.
-
-### Decision
-`DatabaseService._ensure_database_schema()` must self-heal persisted SQLite tables by adding missing canonical columns before creating indexes. Smoke coverage in `test_services.py` should surface database initialization failures directly.
-
-### Rationale
-Repo intentionally shares persisted SQLite file across C# and Python workflows, so stale schemas are normal upgrade condition rather than edge case. Self-healing enables local developer databases to upgrade in place during Python startup without manual cleanup.
-
-### Impact
-- Existing developer databases upgrade in place during Python startup ✅
-- Missing-column failures surface as real smoke-test failures instead of console noise ✅
-- Regression coverage protects `file_hash` column upgrade path ✅
-
----
-
-## SQLite Startup QA Gate — Buster — 2025-11-02
-
-**Scope:** Python `DatabaseService()` startup on local Windows + regression coverage
-
-### Decision: Accept startup fix only if QA conditions hold
-
-1. **Local default path selection prefers repo/cwd database over `/app/...` fallbacks** when not in container and `ASPIRE_DB_PATH` unset
-2. **Startup diagnostics preserve real failure** by naming database path, SQLite error type/cause, and schema mismatch
-3. **Regression tests exercise real path-ordering code and actual startup-failure path** — patching candidate list directly insufficient coverage
-4. **`test_services.py` remains usable smoke harness** by calling current APIs and skipping optional dependencies
-
-### Rationale
-Defect was environment-specific: curated tests passed while manual local run picked wrong SQLite file and crashed on startup. Regression test bypassing path-ordering logic would miss exact bug we need to prevent.
-
-### Verification Status
-- ✅ Local default path resolution tests pass
-- ✅ Startup diagnostics include database path and error details
-- ✅ Regression tests cover real path ordering and startup failure scenarios
-- ✅ `test_services.py` smoke harness validates real startup path
-
----
-
-## Processing Endpoint Proof Surface — Jarvis — 2025-11-02
-
-**Scope:** FastAPI processing endpoints used by `FlowEndToEnd` and WebTest polling
-
-### Decision
-Treat `POST /processing/process-document/{id}` and `POST /processing/process-all` as queue APIs that persist `status='processing'` before returning. Treat `GET /processing/status/{id}` as canonical polling endpoint exposing durable progress data (`processed_pages`, `total_pages`) from SQLite with explicit Swagger response models.
-
-### Rationale
-Without upfront status write, caller can successfully trigger processing and immediately poll the same record yet still observe `uploaded` until background task starts — race condition makes end-to-end proof flaky. Persisted page counts give WebTest stronger HTTP-only proof that document pages were written.
-
-### Impact
-- Jeff/Buster can trigger `POST /processing/process-document/{id}` and poll `GET /processing/status/{id}` immediately without queue-time race ✅
-- Swagger/OpenAPI now documents processing trigger and polling shapes explicitly ✅
-- Recommended WebTest assertions: trigger returns 200 + `message`, poll until `status` is `processed`/`error`, assert `total_pages > 0` and `processed_pages > 0` on success ✅
-
----
-
-## FastAPI Proof Gate — Buster — 2025-11-02
-
-**Scope:** Minimum assertions to credibly prove FastAPI processing endpoints work without regression
+**Authors:** Warden (Security Specialist), Jeff (.NET Dev)  
+**Status:** IMPLEMENTED  
+**Scope:** Local authentication minimum password length, UI hint visibility, case-insensitive username uniqueness confirmation, password-reset deferral.
 
 ### Context
-Eric asked: "Can we add FastAPI processing calls to FlowEndToEnd to prove they work?" Audit revealed endpoints exist and handle errors, but test never invokes them—uploading file succeeds but processing pipeline never verified.
 
-### Decision: Add Four Assertions to FlowEndToEnd
+Eric requested reducing the local auth password minimum from 12 to 10 characters and adding a visible hint on the sign-in form. Warden reviewed the cryptographic implications; Jeff implemented the changes and updated tests/docs.
 
-**#1: Endpoint Reachability**
-```csharp
-var serviceInfoResponse = await pythonClient.GetAsync("/processing/service-info");
-Assert.Equal(200, serviceInfoResponse.StatusCode);
-```
-Verifies Python service online, routes registered.
+### Decision
 
-**#2: POST Accepts Real Work**
-```csharp
-var processResponse = await pythonClient.PostAsync($"/processing/process-document/{documentId}", null);
-Assert.Equal(200, processResponse.StatusCode);
-var responseBody = await processResponse.Content.ReadAsStringAsync();
-Assert.Contains("Processing started", responseBody);
-```
-Proves POST endpoint callable and accepts document ID.
+**Relax local password floor to 10 characters; add visible UI constraint hint; confirm case-insensitive username uniqueness via existing normalized-key path; defer password reset to later phase.**
 
-**#3: Status Reflects Processing Progress**
-```csharp
-var statusResponse = await pythonClient.GetAsync($"/processing/status/{documentId}");
-var status = JsonSerializer.Deserialize<ProcessingStatus>(await statusResponse.Content.ReadAsStringAsync());
-Assert.Equal("processing", status.Status, ignoreCase: true);
+#### Password Minimum: 12 → 10
 
-// Poll until terminal state (10 iterations, 1s delay each)
-for (int i = 0; i < 10; i++) {
-    await Task.Delay(1000);
-    statusResponse = await pythonClient.GetAsync($"/processing/status/{documentId}");
-    status = JsonSerializer.Deserialize<ProcessingStatus>(await statusResponse.Content.ReadAsStringAsync());
-    if (status.Status == "processed" || status.Status == "error") break;
-}
+- **Rationale:** NIST 800-63B recommends floor of 8 characters for memorized secrets. ASP.NET Core `PasswordHasher<T>` on .NET 10 uses PBKDF2-HMAC-SHA512 with 600k iterations, making brute-force infeasible at 10 characters.
+- **Risk Profile:** Acceptable for local-dev/single-operator product stage.
+- **Revisit Trigger:** If auth path becomes production-facing or internet-exposed; conduct entropy/policy review.
+- **Implementation:** `LocalAuthenticationOptions.MinimumPasswordLength` now 10.
 
-Assert.True(status.Status == "processed" || status.Status == "error", 
-    $"Processing did not complete; final status: {status.Status}, error: {status.ErrorMessage}");
-if (status.Status == "processed") {
-    Assert.True(status.TotalPages > 0, "Processed document should have extracted pages");
-}
-```
-Proves background task runs, status transitions, database persists.
+#### Username Case-Insensitive Uniqueness: Already Implemented
 
-**#4: Loud Failure on Contract/Work Break**
-Contract breaks (`JsonSerializationException`), missing endpoints (HTTP 404), background failures (status `error` with message), database crashes (HTTP 500) all fail test explicitly.
+- **Current Path:** `LocalAuthValueNormalizer.Normalize()` applies `ToUpperInvariant()`. The `ux_local_auth_users_normalized_username` unique index enforces uniqueness on normalized column.
+- **Lookup:** `LocalAccountAuthenticator.AuthenticateAsync` queries against `NormalizedUsername`.
+- **Matches:** ASP.NET Identity convention for case-insensitive identity resolution.
+- **Code Change Required:** None. Confirmation only.
 
-### Expected Behavior
+#### UI Constraint Visibility
 
-**Successful Flow:**
-```
-POST /processing/process-document/1 → 200 {"message": "Processing started for document 1"}
-GET /processing/status/1 → 200 {"document_id": 1, "status": "processing", ...}
-[wait] → 200 {"document_id": 1, "status": "processed", "total_pages": 12, ...}
-```
+- **Requirement:** Show 10-character minimum directly in `SignInPanel.razor`.
+- **Implementation:** Added `minlength="10"` to password `<input>` and helper text below: "Password must be at least 10 characters".
+- **Security Note:** Server-side validation remains the authoritative gate; UI hint is UX quality, not security bypass.
 
-**Failure Scenarios:**
-```
-POST invalid ID → 404
-POST already processing → 409
-GET returns 500 → test fails on status code
-Status stuck > 10s → poll timeout, test fails on state check
-```
+#### Password Reset: Deferred
 
-### Impact
-- Test moves from UI-only verification to full pipeline proof ✅
-- Any break in POST, status queries, or background work caught ✅
-- Developers see which stage failed: endpoint, status query, processing, database ✅
-- Eric's concern directly addressed ✅
+- **Status:** Remains in explicit deferral list from self-registration security gate (see "Mock Pluggable Auth Slice" decision).
+- **No Security Gap:** Admin can reset via direct DB update if needed.
+- **Future Work:** Implement password reset workflow in dedicated phase when self-service registration is added.
+
+### Implementation Checklist (Complete)
+
+- [x] Change `MinimumPasswordLength` from `12` to `10` in `LocalAuthenticationOptions.cs`
+- [x] Add `minlength="10"` to password `<input>` in `SignInPanel.razor`
+- [x] Add helper text: "Password must be at least 10 characters"
+- [x] Update tests: 10-char boundary, UI hint validation, mixed-case username handling
+- [x] Update `docs\AUTHENTICATION_SETUP.md` with new floor, uniqueness explanation, password-reset deferral
+
+### Key Paths
+
+- `src\AspireApp.Web\Services\LocalAuthenticationOptions.cs`
+- `src\AspireApp.Web\Components\Shared\SignInPanel.razor`
+- `src\AspireApp.Web\Services\LocalAccountAuthenticator.cs`
+- `src\AspireApp.Web\Services\LocalAuthValueNormalizer.cs`
+- `src\AspireApp.Web\Shared\UploadDbContext.cs`
+- `docs\AUTHENTICATION_SETUP.md`
+
+### Test Results
+
+- ✓ 10-character minimum boundary validated
+- ✓ UI hint displays and functions correctly
+- ✓ Mixed-case username reuse prevented
+- ✓ No duplicate local users created
+- ✓ All regression tests passing
+
+### Relationship to Other Decisions
+
+- **Upstream:** "Mock Pluggable Auth Slice" (2026-04-05) — This work is a targeted refinement within the local auth seam, not affecting mock provider abstraction.
+- **Impact Scope:** Local authentication only. No impact on OAuth placeholder, API auth, or Python service auth (deferred to Phase 6).
+
+### Future: Production Auth Policy
+
+When local auth becomes production-facing:
+1. Revisit password entropy policy (history, expiry, complexity)
+2. Implement password reset workflow
+3. Add rate limiting on failed sign-in attempts
+4. Move to centralized secret storage (Azure Key Vault, etc.)
+
+---
+
+## Mock Pluggable Auth Slice — Unauthenticated Landing + Provider Abstraction — Bob, Jeff, Buster — 2026-04-05
+
+**Authors:** Bob (Lead / Architect), Jeff (.NET Dev), Buster (QA / Tester)  
+**Status:** RECOMMENDED — Pending Eric approval  
+**Scope:** Next UX infrastructure leg after tenant-context. Mock authentication with pluggable provider abstraction, unauthenticated landing, protected views, multi-layer test gates.
+
+### Context
+
+Tenant-context UI is complete and passing tests. The TenantSelector dropdown renders but has no user identity behind it — nobody "logs in," so tenant selection is arbitrary and untethered to any user concept. The BRAIN roadmap places real auth at Phase 6, but the UX seams and abstractions need to exist earlier so that:
+
+1. The app feels like a real product (login page, user identity, personalized experience)
+2. Tenant association is driven by user identity, not manual dropdown
+3. Real Microsoft/Google OAuth slots in later without rewriting the UI or service layer
+4. UI tests validate auth-gated flows now, not after the fact
+
+### Decision
+
+**Build a Mock Pluggable Auth Slice as the next UI infrastructure leg.**
+
+This is a UX and abstraction layer — not a security implementation. It establishes the shapes that real auth will fill.
+
+#### Architecture
+
+`
+IAuthenticationStateProvider (abstraction)
+├── MockAuthProvider (development — hardcoded users, provider picker UI)
+└── (future) OAuthAuthProvider (real Microsoft/Google via ASP.NET Identity)
+
+AuthenticatedUser (model)
+├── UserId, DisplayName, Email, AvatarUrl
+├── Provider ("mock-microsoft", "mock-google", etc.)
+└── TenantId (links to TenantContextService)
+`
+
+#### In-Scope (By Layer)
+
+| Layer | Deliverable | Owner | Status |
+|-------|-------------|-------|--------|
+| **UX** | Landing.razor (/) — hero + sign-in CTA | Jeff | Blueprint ready |
+| **UX** | SignIn.razor (/signin) — provider picker | Jeff | Blueprint ready |
+| **UX** | Dashboard.razor (/dashboard) — protected | Jeff | Blueprint ready |
+| **UX** | User display in top-row / nav | Jeff | Blueprint ready |
+| **Service** | IAuthStateProvider interface + MockAuthProvider | Bob, Jeff | Design ready |
+| **Service** | AuthenticatedUser model | Jeff | Defined |
+| **Service** | AuthenticationContext (scoped, mirrors TenantContextService) | Jeff | Blueprint ready |
+| **Logic** | Mock login page (select provider → sign in) | Jeff | Blueprint ready |
+| **Logic** | Mock user profiles (3-4 hardcoded per provider) | Jeff | Blueprint ready |
+| **Logic** | Wire TenantContextService to AuthenticatedUser.TenantId | Jeff | Design ready |
+| **Logic** | <AuthorizeView> gating on main layout | Jeff | Standard Blazor pattern |
+| **Testing** | Playwright UI tests (login flow, tenant auto-select, logout) | Buster | Strategy defined |
+| **Testing** | Unit tests for MockAuthProvider state transitions | Buster | Strategy defined |
+| **Testing** | 5-layer acceptance gates (UI → Component → Integration → Service → Contract) | Buster | Gates defined |
+
+#### Out-of-Scope (Explicitly Deferred)
+
+| Item | Why | Target Phase |
+|------|-----|--------------|
+| Real OAuth (Microsoft Identity, Google) | This slice builds the seam they plug into | Phase 6 |
+| Token management, refresh, JWT | Not needed for mock | Phase 6 |
+| API authorization middleware | Gateway auth is Phase 6 | Phase 6 |
+| Role-based access control (RBAC) | No roles needed yet; user identity is sufficient | Later |
+| Persistent user sessions (DB-backed) | Mock state lives in Blazor circuit memory | Phase 6 |
+| User registration / self-service | Mock users are hardcoded | Phase 6 |
+| Password-based authentication | Mock has no passwords | Phase 6 |
+| Python service auth | Python doesn't need auth awareness until Phase 6 | Phase 6 |
+
+### Acceptance Gates (5 Required)
+
+| Gate | Criteria | Validation |
+|------|----------|-----------|
+| **AUTH-A** | Unauthenticated user sees landing page with sign-in CTA at / | LandingPageTests.cs — HTTP 200, sign-in buttons visible |
+| **AUTH-B** | Clicking a provider button on /login signs in and redirects to Home | AuthFlowE2ETests.cs — Playwright E2E flow |
+| **AUTH-C** | Authenticated user sees their name/avatar in the top bar | AuthFlowE2ETests.cs — Element inspection |
+| **AUTH-D** | Tenant auto-selects to the signed-in user's default tenant | AuthFlowE2ETests.cs — Tenant dropdown state |
+| **AUTH-E** | Sign-out returns to landing page; nav links are inaccessible | AuthFlowE2ETests.cs + LandingPageTests.cs — Route protection |
+| **AUTH-F** | Provider pluggability: config-only swap (no code recompile) | AuthProviderFactoryTests.cs — Factory loads provider from config |
+| **AUTH-G** | 5-layer test suite passes (UI → Component → Integration → Service → Contract) | All gate tests pass; cross-service tenant propagation verified |
+
+### What This Unlocks
+
+1. **Real OAuth integration (Phase 6):** Swap MockAuthProvider DI registration for OAuthAuthProvider. Login page adds real redirects. AuthenticatedUser model stays the same. Zero UI component rewrites.
+2. **Tenant-user binding:** Tenant selection becomes meaningful — it's the user's workspace, not an anonymous dropdown.
+3. **BRAIN Gateway auth:** When the Gateway exists (Phase 3+), the AuthenticatedUser.TenantId propagates as the 	enant_id header on Gateway requests.
+4. **Chat history per user:** Conversation persistence gains a real user identity to key on.
+5. **UI test coverage for auth flows:** Playwright tests validate login/logout/redirect patterns that real OAuth will also follow.
 
 ### Implementation Notes
-1. **HttpClient Setup:** Reuse `TestFixture.AppHostMapping.PythonServiceUri`
-2. **Document ID Extraction:** Parse from UI interaction or file table after upload
-3. **Polling:** 10 iterations × 1s = 10s total timeout (sufficient for test PDF)
-4. **Error Context:** Include final `status.ErrorMessage` in assertion failure for debugging
-5. **Async:** Proper `await` for all HTTP calls and delays
+
+- Use Blazor's built-in AuthenticationStateProvider and <AuthorizeView> — this is the framework's supported extensibility point
+- MockAuthProvider returns a ClaimsPrincipal with mock claims, so all downstream [Authorize] attributes and AuthorizeView work correctly
+- Mock login page should visually resemble real OAuth provider buttons for UX fidelity
+- Switching providers on the mock login page signs out the current user and signs in as the new provider's mock user
+- CascadingAuthenticationState wraps the router in Routes.razor
+- AuthenticationContext (scoped) mirrors TenantContextService pattern for consistency
+
+### Risk Assessment
+
+| Risk | Level | Mitigation |
+|------|-------|-----------|
+| Scope creep into real OAuth | Low | Explicit "Out-of-Scope" list + feature-gate config |
+| UX doesn't match real providers later | Low | Mock buttons visually styled like real providers now |
+| Tenant selector regression | Low | Buster regression test validates tenant dropdown still works |
+| Auth state leaks across sessions | Low | Mock state dies with Blazor circuit (intended) |
+
+### Relationship to BRAIN Roadmap
+
+This work is **orthogonal to BRAIN phases** — it's UX infrastructure that any product needs. It doesn't block or depend on Phase 0-3. It directly enables Phase 6 (auth enforcement) by establishing the seam.
+
+**Suggested placement:** Pre-Phase 0 UX infrastructure or standalone "UX Foundation" epic.
+
+### Team Responsibilities
+
+| Role | Responsibility |
+|------|-----------------|
+| **Bob (Architect)** | IAuthStateProvider interface design, AuthProviderFactory, DI registration seams |
+| **Jeff (.NET Dev)** | AuthenticationContext, MockAuthProvider, Blazor components (Landing/SignIn/Dashboard), Program.cs wiring |
+| **Buster (QA)** | Acceptance gates (5 tiers), Playwright E2E, regression tests, contract specs |
+| **Jarvis (Python)** | Future: tenant ID propagation in API headers (Phase 6) |
 
 ---
 
-## FlowEndToEnd Uses API-Backed Upload State — Jeff — 2025-11-02
+### Decision Summary (Consolidated)
 
-**Scope:** End-to-end test upload/processing architecture
+**Three agents (Bob, Jeff, Buster) independently audited auth readiness and unanimously recommended:**
 
-### Context
-`UploadData.razor.cs` uploads via `IHttpClientFactory` from Blazor Server code, so browser never issues `/api/FileUpload` POST directly. Playwright cannot capture browser network response for upload.
+1. **Bob's Recommendation** (Architect): Mock pluggable auth slice with provider abstraction, unauthenticated landing, protected views. Real OAuth deferred to Phase 6 via DI swappability. Enables BRAIN gateway integration later.
+
+2. **Jeff's Recommendation** (.NET Dev): Concrete Blazor UX (Landing, SignIn, Dashboard). AuthenticationContext (scoped) + MockAuthProvider (pluggable). Three sign-in options: Mock demo, Microsoft stub, Google stub. Tenant auto-selection on login. Mirror TenantContextService pattern.
+
+3. **Buster's Recommendation** (QA): 5-layer acceptance gates (UI → Contract) before implementation. Multi-tier validation: Unauthenticated landing, mock endpoint contract, cross-service tenant isolation, E2E sign-in flow, provider pluggability via config-only swap. Gates must pass before real OAuth attempted.
+
+**Status:** All three recommendations converge on same direction. Awaiting Eric approval for sprint assignment.
+
+
+
+---
+
+## Mock Auth Route Foundation — Bob — 2026-04-05
+
+**Author:** Bob (Lead / Architect)
+**Status:** IMPLEMENTED
+**Scope:** Auth routing and foundation for Blazor implementation
 
 ### Decision
-Resolve uploaded document from API-backed Web state after UI upload instead of waiting on Playwright response. Call Python processing endpoint directly with resolved document ID and poll Python status endpoint for completion.
 
-### Rationale
-- Matches actual runtime architecture (browser upload → Blazor → HTTP → API)
-- Gives deterministic document-id capture for follow-up processing calls
-- Surfaces real cross-service failures (e.g., Python returning 404 for uploaded ID) instead of hiding behind UI-only pass
+Build the mock auth UX using Blazor's built-in route authorization flow:
 
-### Impact
-- `BasicAspireAppHostTests.FlowEndToEnd` can now prove whether FastAPI processing works from harness ✅
-- Live validation exposed Python integration bug: Web API sees uploaded row but `POST /processing/process-document/{id}` returns 404 ✅
-- Test now exercises full upload → trigger → process → retrieve pipeline ✅
+1. Keep / public as the unauthenticated landing page
+2. Redirect anonymous access to [Authorize] routes through AuthorizeRouteView into /signin?returnUrl=...
+3. Keep the mock provider picker in a reusable shared component so both landing page and /signin use the same auth seam
+
+### Why
+
+- Landing page and protected-route experience serve different jobs; collapsing them muddies both
+- QA needs deterministic redirect behavior after sign-out and direct navigation to protected routes
+- Framework primitives (AuthenticationStateProvider, AuthorizeRouteView, AuthorizeView) keep auth within standard patterns
+
+### Consequences
+
+- Stable test hooks live on reusable sign-in surface and authenticated shell
+- Real OAuth later swaps auth service/provider registration, not route structure
+- Post-logout UX becomes predictable: / for explicit sign-out, /signin for protected-route interception
 
 ---
 
-## Python Service Startup Path Resolution — Jarvis — 2026-03-27
+## Auth UI Test Hooks — Buster — 2026-04-05
 
-**Scope:** Python SQLite database path resolution and startup diagnostics
+**Author:** Buster (QA / Tester)
+**Status:** IMPLEMENTED
+**Scope:** Playwright acceptance gates for mock auth UX
+
+### Decision
+
+The mock auth UX slice exposes stable Playwright hooks on the Blazor shell instead of forcing brittle text-only selectors.
+
+### Required Hooks
+
+- data-testid="auth-landing" — Unauthenticated landing container
+- data-testid="auth-sign-in-cta" — Landing sign-in call-to-action
+- data-testid="auth-provider-*" — Provider choices (e.g., uth-provider-mock-microsoft)
+- data-testid="auth-user-select" — Account picker before sign-in completes (if needed)
+- data-testid="auth-submit-sign-in" — Second-step sign-in submit (if needed)
+- data-testid="auth-user-display" — Signed-in identity surface
+- data-testid="auth-sign-out" — Sign-out control
+- data-testid="auth-current-tenant" or data-auth-tenant="{tenantId}" — Signed-in tenant display
+
+### Why
+
+src\AspireApp.WebTest\Fixtures\TestFixture.cs is the correct Aspire/AppHost test bed. These hooks let QA bind Playwright to stable UX seams while Jeff adjusts wording, layout, and route polish without breaking acceptance tests.
+
+---
+
+## Auth QA Rejection: Incomplete Closure — Buster — 2026-04-05
+
+**Author:** Buster (QA / Tester)
+**Status:** REJECTED for approval (Warden revision owner)
+**Scope:** Mock auth UX revision review after Bob's independent pass
+
+### Decision
+
+Reject this revision for approval. The auth shell now exists in Blazor UI, but implementation misses required closure on agreed acceptance gates.
+
+### Why (Incomplete Gates)
+
+1. **AUTH-F incomplete** — Program.cs only resolves MockAuthService and throws for non-mock modes. Not the config-swappable provider abstraction agreed by team.
+2. **AUTH-G incomplete** — Only Playwright-style auth flow exists. Promised service/factory/contract tiers not present.
+3. **Automation not clean** — Focused WebTest execution during review did not produce clean auth run. Broader browser suite regresses in BasicAspireAppHostTests.FlowEndToEnd.
+
+### Enforcement
+
+- Next revision owner must not be Bob (independent follow-up pass already attempted)
+- Route to different owner with explicit focus on AUTH-F/AUTH-G completion and clean automation
+
+---
+
+## Auth UX Revision: Post-Logout Route Protection — Buster — 2026-04-05
+
+**Author:** Buster (QA / Tester)
+**Status:** REJECTED for approval
+**Scope:** Warden auth UX revision
+
+### Decision
+
+Do not approve Warden's auth UX slice. Next revision owner must be someone other than Warden.
+
+### Why
+
+1. **Focused gate not closed:** AuthUxFoundationTests.SignOutReturnsToLandingAndReprotectsAppAreas fails. Direct navigation to /chat remains reachable after sign-out instead of redirecting to sign-in.
+2. **Critical regression dirty:** BasicAspireAppHostTests.FlowEndToEnd fails. UI upload path never surfaces processing-smoke.pdf in API-backed upload state after sign-in.
+
+### Required for Next Owner
+
+- Fix post-logout route protection for direct visits to [Authorize] pages
+- Re-run focused auth set (AuthServiceFactoryTests, MockAuthServiceTests, AuthUxFoundationTests) clean
+- Re-run BasicAspireAppHostTests.FlowEndToEnd clean before requesting approval
+
+---
+
+## Auto-Select Live Microsoft When Configured — Jeff — 2026-04-05
+
+**Author:** Jeff (.NET Dev)
+**Status:** IMPLEMENTED
+**Scope:** Web auth seam default behavior
+
+### Decision
+
+Web auth seam defaults to Authentication:Service = auto and resolves to live Microsoft-only mode whenever Microsoft client settings are present. combined remains available as explicit mixed-mode choice for local testing.
+
+### Why
+
+Previous shape allowed valid Microsoft OIDC configuration to exist while UI still rendered only mock providers (because auth service pinned to mock). Made real login journey feel broken even though OIDC handler and challenge endpoint were wired correctly.
+
+### Outcome
+
+- Landing/sign-in expose real Microsoft path automatically when configured
+- Clicking Microsoft card starts hosted Microsoft login immediately with no demo-user picker
+- Demo/mock providers remain available only when live config absent or Authentication:Service explicitly set to mock/combined
+
+---
+
+## Authentication Setup Guide — Jeff — 2026-04-05
+
+**Author:** Jeff (.NET Dev)
+**Status:** COMPLETE
+**Scope:** Developer documentation for local auth testing
+
+### Summary
+
+Created docs/AUTHENTICATION_SETUP.md — comprehensive guide for:
+1. Microsoft Entra ID consumer authentication (implemented, working)
+2. Google OAuth setup (credentials prep for future implementation)
+3. Local user-secrets configuration and troubleshooting
+
+### Key Design Decisions
+
+- **Explicit current state:** ✅ Microsoft ready, ❌ Google future work (prevents confusion)
+- **User secrets as primary config** — Matches .NET conventions, prevents secret commits
+- **Dynamic port guidance** — Check Aspire dashboard for actual webfrontend port
+- **Smoke test checklist** — Actionable manual steps covering success and error scenarios
+- **Troubleshooting section** — Common issues with concrete fixes
+
+### Files Updated
+
+- **Created:** docs/AUTHENTICATION_SETUP.md (20 KB, ~650 lines)
+
+---
+
+## Microsoft Entra Auth Uses Existing IAuthService Seam — Jeff — 2026-04-05
+
+**Author:** Jeff (.NET Dev)
+**Status:** IMPLEMENTED
+**Scope:** Blazor Web auth integration
+
+### Decision
+
+Keep existing IAuthService abstraction as only UI-facing auth seam. Plug real Microsoft Entra ID in behind it with provider-specific implementation plus optional combined provider service.
+
+### Why
+
+- Preserves working mock/demo regression surface
+- Lets Eric manually test live Microsoft sign-in without deleting local demo flows
+- Keeps cookie/OIDC responsibilities in ASP.NET Core middleware instead of bespoke token code
+
+### Implementation Notes
+
+- MicrosoftEntraAuthService issues challenge through /auth/microsoft/signin
+- CompositeAuthService exposes live Microsoft + mock providers in one picker when Authentication:Service=combined
+- Program.cs owns provider-aware sign-out so both mock and OIDC sessions leave shell coherently
+
+---
+
+## Microsoft Sign-In as Hosted Redirect — Jeff — 2026-04-05
+
+**Author:** Jeff (.NET Dev)
+**Status:** IMPLEMENTED
+**Scope:** Sign-in UX and Microsoft auth activation
+
+### Decision
+
+Treat live Microsoft sign-in as direct hosted redirect from sign-in page. Reserve dropdown chooser exclusively for explicitly labeled demo providers.
+
+### Why
+
+- Users landed on Microsoft-looking demo picker instead of exercising real OIDC challenge
+- Personal Microsoft accounts (@hotmail.com) don't always have tenant-specific values, so requiring TenantId was unnecessarily blocking
+- Plain link to /auth/microsoft/signin is more reliable than interactive Blazor button before external auth
+
+### Implementation Notes
+
+- Live Microsoft activates when ClientId and ClientSecret present; blank TenantId uses existing common authority fallback
+- SignInPanel.razor renders hosted providers as direct links; keeps demo providers on in-app chooser
+- Demo provider labels renamed to Microsoft demo / Google demo to avoid mixed-mode ambiguity
+
+---
+
+## Mock Auth Shell Uses Blazor Auth Primitives — Jeff — 2026-04-05
+
+**Author:** Jeff (.NET Dev)
+**Status:** PROPOSED
+**Scope:** Auth foundation for Web app
+
+### Decision
+
+Use scoped AuthenticationContext plus AppAuthenticationStateProvider as Web app's auth foundation. Keep provider behavior behind IAuthService.
+
+### Why
+
+- Blazor already gives us AuthorizeRouteView, AuthorizeView, CascadingAuthenticationState; using them keeps shell aligned with real ASP.NET Core auth later
+- DI seam (IAuthService) lets current mock Microsoft/Google/demo experience be replaced without rewriting page/layout code
+- Tenant remains separate from identity, but sign-in can initialize TenantContextService from selected user's default tenant
+
+### Consequences
+
+- Protected pages use framework auth attributes instead of custom route logic
+- Auth UX components preserve stable data-testid hooks (existing WebTest suite depends on them)
+- Real OAuth later swaps service implementation and reuses same shell/layout surfaces
+
+---
+
+## Configurable Auth Provider Factory — Warden — 2026-04-05
+
+**Author:** Warden (Security Specialist)
+**Status:** IMPLEMENTED
+**Scope:** Mock auth UX foundation
+
+### Decision
+
+Use config-driven AuthServiceFactory behind AddAspireAppAuthentication(...) so active auth implementation selected by configuration, while implementations explicitly registered in DI.
+
+### Why
+
+- Removes hardwired mock branch from Program.cs
+- Keeps provider selection on allowlisted registration path
+- Gives later Microsoft/Google work registration-plus-config swap instead of UI rewrite
+
+---
+
+## Microsoft Entra ID OIDC Security Defaults — Warden — 2026-04-05
+
+**Author:** Warden (Security Specialist)
+**Status:** IMPLEMENTED
+**Scope:** Secure defaults for Microsoft Entra ID integration
+
+### Decisions
+
+1. **OIDC scheme registered conditionally** — Only when Authentication:Microsoft:TenantId, ClientId, ClientSecret all present. In mock-only mode: no OIDC handler, no callback paths exposed, no metadata retrieval.
+
+2. **PKCE enabled** — UsePkce = true on OIDC handler as defense-in-depth for auth code interception.
+
+3. **Cookie hardened** — SecurePolicy = SameAsRequest, ExpireTimeSpan = 8 hours, SlidingExpiration = true.
+
+4. **Proper error handling** — context.Fail() over 	hrow in OnTokenValidated so OIDC handler returns proper error.
+
+5. **Endpoint guards** — /auth/microsoft/signin only mapped when OIDC scheme registered. /auth/signout clears cookie first, then attempts federated sign-out only if scheme exists.
+
+6. **No secrets in committed config** — ClientSecret removed from ppsettings.json. Secrets live in dotnet user-secrets only.
+
+7. **Sign-out via \<a href>\** — MainLayout sign-out uses link (not \<button @onclick>\) so sign-out works when Blazor SignalR circuit degraded.
+
+8. **Tenant trust boundary** — Entra 	id claim is Azure AD tenant, NOT app tenant. External identities mapped to app tenants via UserTenantSeeds/DomainTenantSeeds config, defaulting to "default". This mapping must be explicit — never auto-trust external tenant claims.
+
+### Rationale
+
+These defaults reduce attack surface in mock-only deployments, harden cookie for live deployments, prevent information leakage from misconfigured OIDC endpoints. Existing mock regression suite (5 unit tests) passes unchanged.
+
+---
+
+## Mock Auth Endpoint Trust-Boundary Gate — Warden — 2026-04-05
+
+**Author:** Warden (Security Specialist)
+**Status:** IMPLEMENTED
+**Scope:** Authentication endpoint security
+
+### Context
+
+/auth/mock/signin, /auth/mock/session (POST/DELETE), and /auth/mock/signout HTTP endpoints were unconditionally registered in Program.cs. When Authentication:Service = "microsoft", these endpoints remained reachable, allowing anyone to mint valid session cookie as any mock user — completely bypassing Microsoft Entra ID.
+
+### Decision
+
+Mock auth HTTP endpoints now conditionally registered. They are blocked when Authentication:Service = "microsoft" and available in all other modes (mock, combined, uto). Gate reads config value at startup and skips pp.Map* registration when Microsoft-only mode active.
+
+### Impact
+
+- **Program.cs** — Mock endpoint block wrapped in if (mockEndpointsEnabled)
+- **All modes except microsoft** — No behavior change; mock endpoints work as before
+- **microsoft mode** — Mock endpoints not registered; direct HTTP requests to /auth/mock/* return 404
+- **Tests** — Existing mock auth tests only run in mock/combined modes, unaffected
+
+---
+
+## Authentication Setup Guide — Security-Sensitive Corrections — Warden — 2026-04-05
+
+**Author:** Warden (Security Specialist)
+**Status:** COMPLETED
+**Scope:** docs/AUTHENTICATION_SETUP.md accuracy corrections
+
+### Corrections Made
+
+1. **Dynamic ports, not hardcoded** — Guide used fabricated port numbers (7123/5123) that don't match configuration. Aspire assigns webfrontend ports dynamically. Updated to instruct users to check Aspire dashboard for actual ports.
+
+2. **Google+ API removed** — Guide instructed enabling Google+ API (shut down 2019). Caused confusion during setup. Replaced with current OAuth consent screen workflow.
+
+3. **JavaScript origins removed** — Removed "Authorized JavaScript origins" from Google setup (only needed for client-side flows, not server-side OIDC).
+
+### Why This Matters
+
+Incorrect redirect URIs are the #1 cause of "it doesn't work" OAuth setup failures. Telling users to register wrong ports would waste hours of debugging and might lead to insecure workarounds.
+
+---
+
+## User Directive: No Live Microsoft Test Automation — Eric — 2026-04-05T19:49:26Z
+
+**Author:** Eric VanArtsdalen (via Copilot)
+**Status:** ACKNOWLEDGED
+**Scope:** Testing strategy
+
+### What
+
+Do not spend effort automating live Microsoft-user authentication with real accounts. User will manually validate real login flow. Automated coverage should stay focused on non-live regression behavior.
+
+### Why
+
+User request — captured for team memory.
+
+---
+
+## Tenant Isolation, Default-Tenant Protection & Add-Member Security Requirements — Warden — 2025-07-25
+
+**Author:** Warden (Security Specialist)  
+**Status:** IMPLEMENTED  
+**Scope:** Per-user tenant ownership, protected default tenants, tenant CRUD authorization, username-based add-member flow, tenant isolation enforcement.
+
+### Context
+
+Current tenant model is a hardcoded static array in `TenantContextService`. Every authenticated user sees every tenant. There is no database-backed tenant entity, no user-to-tenant membership, no ownership, and no authorization boundary.
+
+### Security Requirements (Implemented)
+
+**SR-1: Database-Backed Tenant Entity** — `tenants` table with id, display_name, owner_user_id, is_default, created_at, updated_at. Unique index on (owner_user_id, display_name).
+
+**SR-2: Tenant Membership Table** — `tenant_memberships` junction with id, tenant_id, user_id, role ('owner'/'member'), created_at. Composite unique index on (tenant_id, user_id).
+
+**SR-3: Auto-Provisioned Default Tenant** — New user creation atomically creates persisted tenant with is_default=true, owner is the new user, membership role is 'owner'.
+
+**SR-4: Default Tenant Undeletable** — is_default flag immutable after creation; delete operations reject when is_default=true. Server-side enforcement only.
+
+**SR-5: Tenant CRUD Authorization** — Create (any authenticated user), Read (user's memberships only), Update (owner only), Delete (owner + non-default only).
+
+**SR-6: Tenant-Scoped Data Access** — Every query validates user membership before returning data. FileUploadController validates X-Tenant-Id header against memberships; rejects 403.
+
+**SR-7: Username-Based Add-Member Anti-Enumeration** — Accept username, normalize, lookup privately. Uniform success/failure response. No user-list or search endpoint. Rate limiting logged.
+
+**SR-8: Prevent Self-Addition** — Self-add silently rejected same as other failures.
+
+**SR-9: Migration from Hardcoded Tenants** — Existing FileMetadata rows and LocalAuthUser records migrate to per-user tenants or orphan handling.
+
+**SR-10: Tenant Deletion Cascade** — Tenant_memberships cascade-deleted; FileMetadata handled (migrate to default or block). Member's DefaultTenantId reassigned if points to deleted tenant.
+
+### Implementation Complete
+
+- [x] Tenants and tenant_memberships tables created
+- [x] Unique constraints enforced
+- [x] Auto-provisioning in LocalAccountAuthenticator.TryCreateUserAsync
+- [x] Upload authorization validation in FileUploadController
+- [x] TenantContextService returns user-scoped tenants only
+- [x] Add-member endpoint with anti-enumeration
+
+---
+
+## Tenant Core Implementation — Jeff — 2026-04-09
+
+**Author:** Jeff (.NET Dev)  
+**Status:** IMPLEMENTED  
+**Scope:** Persisted tenant model, default-tenant backfill, upload authorization.
+
+### Decision
+
+Persisted `tenants` and `tenant_memberships` tables remain source of truth. `LocalAuthUser.DefaultTenantId` treated as cached pointer, backfilled from persisted memberships on login/bootstrap. Upload authorization scoped by membership.
+
+### Implementation
+
+1. **Persisted Model** — Tenants table with owner_user_id FK, is_default boolean, display_name. TenantMemberships table with tenant_id/user_id FKs, role column.
+
+2. **Default Tenant Creation** — On first login, `TenantManagementService.EnsureTenantAccessAsync` atomically creates protected default tenant if user has no memberships. Backfill migration handles legacy users.
+
+3. **Upload Authorization** — `FileUploadController` validates X-Tenant-Id header against current user's tenant_memberships. Rejects 403 Forbidden if no membership found. Duplicate detection and file deletion scoped to resolved tenant.
+
+4. **Idempotent Recovery** — EnsureTenantAccessAsync handles multiple defaults, missing memberships, and transient failures gracefully.
+
+### Key Paths
+
+- `src/AspireApp.Web/Services/TenantManagementService.cs`
+- `src/AspireApp.Web/Data/Tenant.cs`, `TenantMembership.cs`
+- `src/AspireApp.Web/Controllers/FileUploadController.cs`
+
+---
+
+## Tenant UI Implementation — Jeff — 2026-04-09
+
+**Author:** Jeff (.NET Dev)  
+**Status:** IMPLEMENTED  
+**Scope:** Tenant management page, TenantSelector binding, add-member flow.
+
+### Decision
+
+Single protected `/tenants` page linked from sidebar, home, and tenant selector. Original default tenant shown with protected badge; delete unavailable. Add-member by username with generic success/failure response.
+
+### Implementation
+
+1. **Tenant Management Page** — `/tenants` lists user's tenants, shows protected badge for original, enables rename for owned, enables delete for non-protected non-default.
+
+2. **TenantSelector Binding** — Renders only user's actual memberships, not hardcoded list. Defaults to user's default tenant on login.
+
+3. **Add-Member Form** — Username input only (no autocomplete, no suggestions). Returns generic success/failure; no username hints. Self-add and already-member collapse to failure.
+
+### Key Paths
+
+- `src/AspireApp.Web/Components/Pages/Tenants.razor`
+- `src/AspireApp.Web/Components/Shared/TenantSelector.razor`
+
+---
+
+## Tenant Edge-Case Revision — Warden — 2026-04-07
+
+**Author:** Warden (Security Specialist)  
+**Status:** IMPLEMENTED  
+**Scope:** Add-member exception handling, direct recovery test coverage.
+
+### Decision
+
+Broaden save-failure catch in `AddMemberByUsernameAsync` to `Exception` (excluding `OperationCanceledException`) so all failures collapse to return false. Add six direct tests for `EnsureTenantAccessAsync` recovery paths.
+
+### Rationale
+
+Original code only caught `DbUpdateException`. Transient failures (e.g., `InvalidOperationException`) would bubble unhandled, leaking implementation details. Direct recovery tests prove idempotence and multiple-default resolution.
+
+### Implementation
+
+1. **Exception Catch Broadening** — Wrap SaveChangesAsync in broader catch; log warning; return false.
+2. **Direct Tests** — No memberships → create default; multiple defaults → resolve; save failure → return false; etc.
+
+### No Schema Changes
+
+Test coverage only; all logic changes backward-compatible.
+
+---
+
+## Tenant Upload Authorization Enforcement — Jeff — 2026-04-07
+
+**Author:** Jeff (.NET Dev)  
+**Status:** IMPLEMENTED  
+**Scope:** X-Tenant-Id header validation, file-operation scoping.
+
+### Decision
+
+Upload endpoints validate X-Tenant-Id header against authenticated user's tenant_memberships. Rejects 403 Forbidden for unmembered tenants. Duplicate detection and deletion scoped to resolved tenant.
+
+### Rationale
+
+Prevents malicious or confused users from exfiltrating data by spoofing X-Tenant-Id header. Tenant isolation is meaningless without enforcement on every operation.
+
+### Key Paths
+
+- `src/AspireApp.Web/Controllers/FileUploadController.cs`
+- `src/AspireApp.Web/Services/FileStorageService.cs`
+
+---
+
+## Local Username/Password Auth — First Slice Recommendation — Bob — 2026-07-29
+
+**Author:** Bob (Lead / Architect)  
+**Status:** RECOMMENDED — Approved for implementation  
+**Scope:** Managed local username/password authentication within existing pluggable auth architecture.
+
+### Decision
+
+Add `LocalAuthService : IAuthService` to validate username/password credentials against config-provisioned users. Issue same ASP.NET Core cookie ticket as mock/Microsoft providers. Stay on custom auth seam; do not import ASP.NET Core Identity.
+
+### Why
+
+- Provider seam already exists; local auth fits cleanly
+- No self-service registration (pre-provisioned users only)
+- Credential validation in server-side endpoint, not Blazor interactive
+- Foundation for DB-backed user management in later phase
+
+### Implementation Outline
+
+1. `LocalAuthenticationOptions` — options class with Users list, MinimumPasswordLength
+2. `LocalAuthService : IAuthService` — returns AuthProviderOption with RequiresCredentials=true
+3. `AuthProviderOption` — add RequiresCredentials property
+4. `CompositeAuthService` — refactor to accept providers dynamically
+5. `SignInPanel.razor` — new branch for credentials-form rendering
+6. `POST /auth/local/signin` — validate credentials → hash check → issue cookie
+7. Config — Authentication:Local section with pre-provisioned users (hashed passwords)
+8. Offline hash tool — generate BCrypt hashes for initial provisioning
+
+### Red Flags Mitigated
+
+- Don't import full ASP.NET Core Identity (use standalone PasswordHasher<T>)
+- Don't add new DbContext yet (config-based users keep slice additive)
+- Don't modify IAuthService interface (password validation server-side)
+- SignInPanel needs RequiresCredentials flag for form rendering
+- CompositeAuthService must be dynamic, not hardcoded providers
+- Password hashes acceptable in config for first slice (mark secret in Aspire)
+
+### What This Unlocks
+
+- Real credential-based login alongside mock and Microsoft auth
+- Proves provider seam is genuinely extensible
+- Foundation for DB-backed users and self-service registration later
+
+---
+
+
+
+**Author:** Warden (Security Specialist)
+**Status:** APPROVED
+**Severity:** N/A (Approved)
+
+### Executive Summary
+
+No security vulnerabilities detected. The authentication system is functioning exactly as designed.
+
+### Context
+
+User reported: "UI only allows 2 users to login, so it seems like it's still using the Mock — please allow the UI to do a real authentication flow."
+
+Verified: dotnet user-secrets list is empty; ppsettings.json Microsoft section has empty strings. This is **correct behavior** because no Microsoft credentials are configured.
+
+### Root Cause (Correct)
+
+1. Configuration state: Authentication:Service = "auto", Microsoft section has empty values
+2. Factory resolution: AuthServiceFactory.ResolveServiceKey() correctly returns MockService when MicrosoftEntraAuthenticationOptions.IsConfigured = false
+3. Result: UI shows only mock providers (2 demo users) — this is safe defensive programming
+
+### Security Assessment: APPROVED
+
+✅ OIDC conditional registration — Only registered when credentials exist (prevents runtime errors)
+✅ Factory resolution — uto mode safely falls back to mock when Microsoft not configured
+✅ Mock endpoint gating — Mock routes disabled when service mode is explicitly microsoft
+✅ Composite service delegation — Routes to appropriate provider based on providerId
+✅ No session bypass — Mock endpoints disabled when real auth is only configured option
+
+**No code changes required.** System is working as designed.
+
+### Required User Action
+
+To enable real Microsoft authentication:
+
+1. Create Azure App Registration with redirect URI: https://localhost:{port}/signin-oidc-microsoft
+2. Create client secret
+3. Configure via dotnet user-secrets:
+   ```powershell
+   dotnet user-secrets set "Authentication:Microsoft:TenantId" "<your-tenant-id>"
+   dotnet user-secrets set "Authentication:Microsoft:ClientId" "<your-client-id>"
+   dotnet user-secrets set "Authentication:Microsoft:ClientSecret" "<your-client-secret>"
+   ```
+4. Restart application
+5. Verify Microsoft button appears on /signin
+
+---
+## Upload Authentication Regression: FileStorageService Scoped Injection — Jeff, Buster — 2026-04-09
+
+**Authors:** Jeff (.NET Dev), Buster (QA / Tester)  
+**Status:** IMPLEMENTED  
+**Scope:** UploadData component circuit isolation, tenant context preservation, authenticated file storage, regression coverage hardening
+
+### Context
+
+After tenant hardening (tenant_id persisted, indexed, validated across Web↔Python boundary), the UploadData component was still making direct HTTP calls to `/api/FileUpload` via `HttpClient`, crossing the authenticated Blazor circuit boundary and losing tenant context. This created an authentication regression where uploads could not access the scoped tenant information needed for proper authorization.
+
+### Decision
+
+**Remove UploadData's HTTP self-call pattern; inject `FileStorageService` directly as a scoped dependency in the authenticated Blazor circuit. Tenant context is naturally preserved within the circuit without HTTP boundary crossing.**
+
+### Implementation
+
+#### UploadData.razor.cs Changes
+
+- **Removed:** Direct `HttpClient` dependency and self-HTTP POST to `/api/FileUpload`
+- **Added:** `FileStorageService` injected directly (scoped to Blazor circuit)
+- **Result:** Upload and URL add now execute in-circuit, preserving authenticated tenant context
+
+#### FileStorageService Wiring
+
+- **Scope:** Registered as scoped service in DI (tied to Blazor circuit lifetime)
+- **Tenant Access:** Accesses tenant context from authenticated circuit without explicit parameter passing
+- **Authorization:** Tenant context implicitly available to FileStorageService methods
+
+#### Test Hardening
+
+- **AuthenticatedUploadUxTests:** Updated to verify backend persistence via authenticated API client; tenant_id alignment confirmed
+- **OperationalUploadStoreTests:** Authenticates first and uses user's default tenant instead of hardcoded demo tenant
+- **Coverage:** Regression tests now enforce authenticated upload path with proper tenant scoping
+
+### Key Paths
+
+- `src\AspireApp.Web\Components\Pages\UploadData.razor.cs` — Removed HTTP self-call; scoped FileStorageService injection
+- `src\AspireApp.Web\Components\Pages\UploadData.razor` — Updated markup (no change to event handlers)
+- `src\AspireApp.Web\Shared\FileStorageService.cs` — Scoped service, tenant context access
+- `src\AspireApp.Web\Controllers\FileUploadController.cs` — No changes (remains as REST endpoint for direct API usage)
+- `src\AspireApp.WebTest\Tests\AuthenticatedUploadUxTests.cs` — Hardened regression coverage
+- `src\AspireApp.WebTest\Tests\OperationalUploadStoreTests.cs` — Updated tenant context validation
+
+### Test Results
+
+- ✓ UploadData upload and URL add succeed without HTTP boundary crossing
+- ✓ Tenant context persisted throughout upload pipeline
+- ✓ AuthenticatedUploadUxTests verify backend persistence via authenticated client
+- ✓ OperationalUploadStoreTests confirm tenant_id alignment
+- ✓ WebTest project builds and tests pass without errors
+
+### Relationship to Other Decisions
+
+- **Upstream:** "Tenant-context data layer hardening" (2026-04-09) — This fix realizes tenant context preservation in UI workflows
+- **Pattern Alignment:** Scoped service injection follows authenticated circuit architecture patterns established for other file operations
+- **Impact Scope:** Upload path only. No impact on API FileUploadController (remains public-facing REST endpoint for direct file operations).
+
+### Validation Checklist (Complete)
+
+- [x] UploadData injects FileStorageService as scoped dependency
+- [x] HTTP self-call removed; no cross-circuit boundary crossing
+- [x] Tenant context available to FileStorageService within circuit
+- [x] AuthenticatedUploadUxTests verify backend persistence
+- [x] OperationalUploadStoreTests confirm tenant_id alignment
+- [x] Build succeeds (WebTest project)
+- [x] Regression coverage tightened for authenticated upload path
+
+### Regression Prevention
+
+Going forward:
+1. New file operations in authenticated circuits should follow this pattern (scoped service injection, in-circuit execution)
+2. Any HTTP self-call patterns across authenticated boundaries should be reviewed for tenant context loss
+3. Upload tests should always verify tenant_id persistence end-to-end
+
+---
+
+
+## User-Owned Chat Conversation Persistence Layer — Jeff — 2026-04-10
+
+**Author:** Jeff (.NET Dev)  
+**Status:** IMPLEMENTED  
+**Scope:** Saved chat conversations, auto-generated titles, owner-only access via user ID
+
+### Context
+
+Eric requested persisted chat history for conversations. Prior to this decision, chat was in-memory only. The audit recommended tenant scoping; however, Eric explicitly required that conversations be private to owning user only, never shared within tenants even if users share a tenant.
+
+### Decision
+
+**Persist chat history in EF Core using \chat_conversations\ + \chat_messages\, key all reads/writes on \owner_user_id\. Tenant ID is metadata only, never a visibility gate. User ID is the sole authorization boundary.**
+
+### Why
+
+- Eric explicitly required user-owned privacy boundary (not tenant-shared)
+- Operational EF store already exists; extending with new tables is safer than separate persistence
+- Blazor Server scoped-service pattern enables direct user-context access
+- \EnsureCreated\ doesn't evolve existing Postgres schemas; dedicated bootstrapper required for rollout
+
+### Implementation
+
+**New Entities:**
+- \ChatConversation\: \id, owner_user_id, tenant_id (metadata), title, summary, created_at, updated_at, is_archived\
+- \ChatMessage\: \id, conversation_id, author (user|assistant), content, created_at\
+
+**New Service:**
+- \ChatConversationService\: CRUD ops, title generation, message append, all gates on \owner_user_id\
+
+**Chat.razor Integration:**
+- On init: create new conversation or load from URL parameter
+- After user message: append to conversation, call AI, persist response
+- Auto-title on first AI response; support manual rename
+
+**Key Implementation Files:**
+- \src\AspireApp.Web\Data\ChatConversationEntities.cs\ — Entity models
+- \src\AspireApp.Web\Services\ChatConversationService.cs\ — Service CRUD + auth
+- \src\AspireApp.Web\Services\ChatTitleGenerator.cs\ — Auto-generate title
+- \src\AspireApp.Web\Services\ChatConversationStoreBootstrapper.cs\ — Schema setup
+- \src\AspireApp.Web\Components\Pages\Chat.razor.cs\ — Integration
+
+### Validation
+
+✓ Build succeeds without warnings  
+✓ ChatConversationServiceTests cover owner-only access within shared tenant  
+✓ Service rejects \AddMessageAsync\ from other users (unit test: \OtherUserCannotAddMessageToOwnerConversation\)  
+✓ End-to-end acceptance tests (ChatConversationPersistenceTests) skip gracefully until rename UI wiring complete
+
+### Privacy Boundary (Hard Rule)
+
+**User ID, not tenant ID, determines visibility.** A conversation is visible **only** to the user who owns it. Even if two users share a tenant:
+- User A cannot see User B's conversations
+- User A cannot resume User B's conversations
+- User A cannot append messages to User B's conversations
+- Backend API enforces \WHERE owner_user_id = ? AND conversation_id = ?\
+
+### Consequences
+
+- Conversation list always filters by \(owner_user_id, conversation_id)\ pair
+- Rename/delete/resume ops validate owner boundary before any mutation
+- Tenant metadata is stored but never part of the authorization query
+- If future feature requires sharing, implement via new \ConversationShare\ entity + separate visibility gate
+
+### Future Work (Out of Scope)
+
+- Conversation list UI with pagination, sorting, search
+- Manual title editing dialog
+- Export/archive features
+- Vector search via Neo4j (optional Phase 4)
+
+### Related Decisions
+
+- Chat Persistence Audit (2026-04-10, Jeff) — Schema analysis and phased roadmap
+- Chat Conversation Service Tests Audit (Buster, 2026-04-10) — Identifies test slices for acceptance validation
+
+---
+
+## Chat History Acceptance Tests Audit — Buster — 2026-04-10
+
+**Author:** Buster (QA / Tester)  
+**Status:** AUDIT COMPLETE — Ready for Implementation  
+**Scope:** Test infrastructure, data-testid contract, acceptance test slices for chat persistence
+
+### Current State
+
+Chat persistence is not yet exposed in the UI. The \ChatConversationService\ is implemented and tested at service level, but Chat.razor does not yet invoke saved-conversation shells or \data-testid\ hooks. This means:
+- Service-level tests (ChatConversationServiceTests) prove backend isolation ✓
+- End-to-end acceptance tests (ChatConversationPersistenceTests) exist but skip until UI is wired
+
+### Gap Analysis
+
+**Missing UI Hooks:**
+- \data-testid='chat-session-list'\ — Conversation list container
+- \data-testid='chat-resume-session-{sessionId}'\ — Resume button
+- \data-testid='chat-current-conversation-title'\ — Title display
+- \data-testid='chat-conversation-rename'\ — Rename button/input
+- \data-testid='chat-conversation-delete'\ — Delete button
+- \data-testid='chat-message-list'\ — Message container
+
+**Missing Backend API:**
+- \GET /api/chat/sessions\ — List user's conversations
+- \GET /api/chat/sessions/{id}\ — Load conversation
+- \POST /api/chat/sessions\ — Create new session
+- \PATCH /api/chat/sessions/{id}\ — Rename
+- \DELETE /api/chat/sessions/{id}\ — Delete/archive
+
+### Proposed Test Slices (Priority Order)
+
+1. **Save Single Conversation** — User sends message, closes tab, reopens chat, message persists
+2. **Tenant Isolation (Security Gate)** — User B in same tenant cannot see User A's conversation
+3. **Resume Named Conversation** — User creates conversation, renames, returns later, resumes
+4. **Rename Conversation** — Title persists across reload
+5. **Delete Conversation** — Removed from list, returns 404 from API
+
+### Test Pattern (Reusable)
+
+From existing \AuthenticatedUploadUxTests\ + \BasicAspireAppHostTests\:
+- Create authenticated HttpClient with session cookies
+- Resolve user's default tenant ID from Postgres
+- Add \X-Tenant-Id\ header to API requests
+- UI action → wait for completion → verify via API call
+- Assert file has valid state and correct tenant_id
+
+### New Helpers Needed
+
+\\\csharp
+private async Task<string> SendChatMessageAndWaitAsync(IPage page, string message) { }
+private async Task<List<ConversationSummary>> GetSessionsFromApiAsync(HttpClient client) { }
+private async Task RenameConversationAsync(IPage page, string sessionId, string newTitle) { }
+\\\
+
+### No Changes Required for This Audit
+
+- Chat.razor remains unchanged (decision is data model, not presentation)
+- AuthUxFoundationTests patterns are ready to extend
+- TestFixture supports all required test scenarios
+
+### Next Steps (Out of Scope)
+
+1. Wire Chat.razor to saved-conversation shell with stable \data-testid\ hooks
+2. Implement acceptance test slices following this audit
+3. Add direct service test: \OtherUserCannotAddMessage\ on rename boundary
+
+---
+
+## Chat Rename Input Focus Fix — Jeff — 2026-04-10
+
+**Author:** Jeff (.NET Dev)  
+**Status:** IMPLEMENTED  
+**Scope:** Focus regression in chat header conversation-title rename mode
+
+### Problem
+
+After chat persistence landed, rename mode was added to allow users to edit conversation titles. However, the \OnAfterRenderAsync\ focus logic was unconditionally re-focusing the main question input on every render. When a user typed in the rename input, each keystroke triggered a re-render, which stole focus back to the question input, making rename input completely unusable.
+
+### Root Cause
+
+In \Chat.razor.cs\, the post-render focus path didn't check whether rename mode was active:
+\\\csharp
+protected override async Task OnAfterRenderAsync(bool firstRender)
+{
+    // WRONG: Runs unconditionally on every render
+    await JS.InvokeVoidAsync("setFocus", QuestionInput);
+}
+\\\
+
+This is correct for normal chat input, but breaks when rename textbox is active and firing \oninput\ events.
+
+### Decision
+
+**Separate focus paths in \OnAfterRenderAsync\: when rename mode is active, suppress the generic question-input focus and only refocus the rename textbox when rename mode explicitly requests it.**
+
+### Implementation
+
+\\\csharp
+protected override async Task OnAfterRenderAsync(bool firstRender)
+{
+    if (IsRenameMode)
+    {
+        // In rename mode: only refocus if explicitly requested
+        if (_shouldRefocusRenameInput)
+        {
+            await JS.InvokeVoidAsync("setFocus", RenameInput);
+            _shouldRefocusRenameInput = false;
+        }
+        return; // Don't refocus question input
+    }
+    
+    // Normal chat input focus (not in rename mode)
+    await JS.InvokeVoidAsync("setFocus", QuestionInput);
+}
+\\\
+
+### Regression Tests Added
+
+**ChatFocusTests.cs** (3 focused tests):
+
+1. \RenameMode_SuppressesQuestionInputRefocus\  
+   - Assert: While rename active, question input is not focused on re-render
+
+2. \RenameMode_ExplicitTitleFocus\  
+   - Assert: Rename textbox is focused when rename mode explicitly requests it
+
+3. \QuestionInput_FocusPath_PreservedOutsideRenameMode\  
+   - Assert: Normal chat input focus works correctly when rename is off
+
+### Validation
+
+✓ All 3 focused regression tests pass  
+✓ Build clean; no warnings  
+✓ Component renders correctly  
+✓ Rename input accepts text without focus stealing  
+✓ Normal chat flow unchanged
+
+### Key Paths
+
+- \src\AspireApp.Web\Components\Pages\Chat.razor.cs\ — Focus logic separated
+- \src\AspireApp.WebTest\Tests\ChatFocusTests.cs\ — Focused regression suite
+
+### Related Decisions
+
+- Chat Persistence Layer (2026-04-10, Jeff) — Enabled rename mode feature
+- Chat Privacy Review (2026-04-10, Warden) — Identified missing rename UI but not this focus bug
+
+### Future Regression Prevention
+
+When adding similar focused UI controls in Blazor components:
+1. Test focus behavior explicitly for each mode (active/inactive)
+2. Use \_shouldRefocus*\ flags to control when to apply focus
+3. Separate focus paths in \OnAfterRenderAsync\ by logical mode
+4. Add regression tests before shipping new interact modes
+
+---
+
+## Upload Authentication Test Coverage Gap Closed — Jeff, Buster — 2026-04-10
+
+**Authors:** Jeff (.NET Dev), Buster (QA / Tester)  
+**Status:** IMPLEMENTED  
+**Scope:** Authenticated upload regression test validation
+
+### Problem
+
+After tenant hardening landed, the \AuthenticatedUploadUxTests\ test class failed to catch a real authentication regression where signed-in users got errors uploading documents. Root cause: the test only validated UI state (checking if a row appeared in the upload table) without confirming persistence via backend API call.
+
+### Gap
+
+- Blazor Server upload bypasses controller; uses scoped services directly
+- Controller-based upload requires explicit authentication headers
+- Test only exercised Blazor path, never hit auth-gated API endpoint
+- Without backend verification, test was blind to API auth failures
+
+### Decision
+
+**Update \AuthenticatedUploadUxTests.SignedInTenantScopedUserCanUploadDocumentWithoutAuthenticationError\ to verify end-to-end: UI upload → backend persistence → tenant-scoped retrieval via authenticated API.**
+
+### Implementation
+
+1. Create authenticated HttpClient from session cookies (mock sign-in)
+2. Resolve user's default tenant ID from Postgres
+3. Add \X-Tenant-Id\ header to all API requests
+4. After UI upload completes, query \GET /api/FileUpload\ to verify backend state
+5. Assert uploaded file has valid ID, filename, status, and correct tenant_id
+6. Clean up via authenticated DELETE calls
+
+### Pattern
+
+Aligns with smoke-test pattern in \BasicAspireAppHostTests\ and \OperationalUploadStoreTests\:
+- Browser tests must verify via API: UI state alone is insufficient
+- Validates full contract: UI → backend → tenant-scoped retrieval
+- Catches real regressions (controller auth, tenant resolution, scoping)
+
+### Validation
+
+✓ Test now catches tenant-scoped upload authentication regressions  
+✓ Build passes; all auth tests green  
+✓ Upload controller still works for direct API access  
+✓ Regression coverage tightened for authenticated upload path
+
+### Key Paths
+
+- \src\AspireApp.WebTest\Tests\AuthenticatedUploadUxTests.cs\ — Updated with API verification
+
+### Regression Prevention
+
+1. New file operations in authenticated circuits must verify backend persistence
+2. HTTP self-call patterns in authenticated circuits should be reviewed for tenant context loss
+3. Browser tests should always include API verification layer
+
+---
+
+## Chat Privacy Review — Warden — 2026-04-10
+
+**Author:** Warden (Security Specialist)  
+**Status:** REJECTED (Incomplete UI Wiring)  
+**Scope:** User-owned conversation access control verification
+
+### Review Scope
+
+Validate that chat persistence slice enforces hard rule: a conversation must remain accessible only to its owning user, never to another user, even users who share the same tenant.
 
 ### Findings
 
-#### Database Path Resolution Strategy
-Python service uses ordered candidate list:
-1. Explicit `db_path` parameter (if provided)
-2. `ASPIRE_DB_PATH` environment variable (if set)
-3. Platform-specific defaults:
-   - **Container:** `/app/docs-database/` → `/app/database/` → repo/database → cwd/database
-   - **Local (Windows):** repo/database → cwd/database → `/app/docs-database/` → `/app/database/`
+✓ **Service Layer Correct**: \ChatConversationService\ applies owner filter on list, load, append, rename, delete  
+✓ **Owner Filter In Place**: All ops validate \owner_user_id == CurrentUser.Id\ before any mutation  
+✓ **Tenant Metadata Only**: Tenant ID is stored but never part of authorization query  
 
-Service tries each candidate in order until initialization succeeds. Path source is logged and stored in `db_path_source` attribute.
-
-#### Startup Error Diagnostics
-When database initialization fails, `_format_initialization_failure()` generates comprehensive diagnostic message:
-- Database path attempted
-- Path source (e.g., "ASPIRE_DB_PATH", "repository", "cwd")
-- Exception type and message
-- Schema diagnostics via `_collect_schema_diagnostics()`: existing tables, `files` column names, missing canonical columns, "incompatible legacy schema" label
-
-#### "Legacy Schema" Concept
-- No separate "legacy path" detection—all paths treated equally
-- "Legacy" refers to schema shape, not file location
-- `_collect_schema_diagnostics()` reports "incompatible legacy schema" when required columns missing from `files` table
-- Self-healing via `_ensure_required_columns()` adds missing columns at startup
+❌ **UI Shell Missing**: Chat.razor does not yet expose saved-conversation shell or invoke \ChatConversationService\  
+❌ **Resume/Rename/Delete Unproven**: Privacy gates work at service level but not yet tested in actual product surface users touch  
+❌ **OtherUserAddMessage Untested**: No direct test proving \AddMessageAsync\ returns null for non-owner User B  
 
 ### Decision
-**Affirm test scenario:** `test_legacy_schema_startup_failure_reports_path_and_cause` validates edge case diagnostics when self-healing is unavailable. Test should remain active to ensure startup failures provide actionable debugging information (path, source, schema details, SQLite error).
 
-### Rationale
-- Production code self-heals missing columns in normal operation
-- Test validates fallback diagnostic path when self-healing fails
-- Comprehensive error reporting enables faster debugging of schema incompatibilities
-- Database path and schema details are essential for multi-environment troubleshooting
+**Do not approve yet. Rejection is not a design flaw—it's incomplete UI wiring.**
 
-### Impact
-- Test remains in test suite as regression protection for startup diagnostics ✅
-- No code changes required to DatabaseService ✅
-- Buster can assess test coverage confidence knowing current behavior ✅
+### Required Follow-Up (For Next Session)
+
+1. Wire Chat.razor to owner-scoped conversation store with stable \data-testid\ hooks
+2. Add direct service test: \OtherUserId\ gets null from \AddMessageAsync\ on owner's conversation
+3. Confirm privacy contract remains user-owned, never tenant-shared (tenant membership may label metadata, never widens visibility)
+
+### Pattern for Future Reviews
+
+Privacy reviews should verify both:
+- **Service layer**: Authorization gates implemented correctly
+- **Product surface**: UI flows invoke gates correctly (or skip if incomplete)
+
+If UI is incomplete, rejection is expected—don't ship until both layers proven.
 
 ---
 
-## Legacy Schema Test Update — Buster — 2026-03-27
+## User Privacy Directive — Eric VanArtsdalen — 2026-04-10
 
-**Scope:** Python `DatabaseStartupPathAuditTests.test_legacy_schema_startup_failure_reports_path_and_cause`
+**Author:** Eric VanArtsdalen  
+**Date:** 2026-04-10T06:22:48Z  
+**Status:** CLARIFICATION — Incorporated into Chat Privacy boundary  
+**Scope:** Chat conversation visibility scope
+
+### Directive
+
+**Chat conversations must only ever be accessible by the owning user. They are not shared with any other user, even within shared tenants.**
 
 ### Context
-Test was failing after multi-candidate database initialization refactor. Service works correctly in manual testing, but test needed assessment to determine if it should be updated or removed.
+
+Clarified the required privacy boundary for saved chat history when multiple users share a tenant. Conversations are private to their creator, not workspace-shared.
+
+### Incorporation
+
+This directive is now the hard rule enforced in \ChatConversationService\: all read/write ops filter by \owner_user_id\, and tenant ID is metadata only, never a visibility gate.
+
+### Related Decisions
+
+- Chat User-Owned Conversation Persistence (2026-04-10, Jeff) — Implements this directive
+- Chat Privacy Review (2026-04-10, Warden) — Validates directive implementation
+
+---
+
+> **Note (2026-04-11T17:53:25Z):** Merged 3 auth/upload test regression decisions from security audit, test diagnostics, and app fixes (Warden, Buster, Jeff). Identified security posture: all gates intact, test failures are integration/Aspire orchestration issues. Documented shared fixture storage corruption as root cause. Applied 3 app-level fixes: auth-state hydration, mock-auth tenant fallback, upload control readiness. All 13 originally failing tests now passing. No duplicates found. Updated coordinator notes on fixture isolation and 5-minute UI test runs. Inbox cleared.
+
+## Auth/Upload Test Failures — Security Verdict APPROVED — Warden — 2026-04-11
+
+**Author:** Warden (Security Specialist)  
+**Status:** APPROVED — No Code Changes Required for Security  
+**Scope:** Security assessment of failing test classes and approved fix direction
+
+### Context
+
+User reported three failing test classes: `AuthenticatedUploadUxTests`, `AuthUxFoundationTests`, and `CompositeAuthServiceTests`. Warden conducted a security-focused code review to identify whether unsafe shortcuts are being introduced to fix the tests and to verify all security controls remain properly in place.
+
+### Verdict
+
+✅ **All security controls are properly in place. Test failures are integration/timing issues, not auth vulnerabilities. Do NOT bypass security gates to fix tests.**
+
+### Current Security Posture (Verified)
+
+1. **Mock Endpoint Gating** (Program.cs, lines 147–150)
+   - `/auth/mock/*` endpoints only register when `effectiveAuthService != microsoft`
+   - Prevents session-cookie bypass when live Microsoft auth is configured
+   - ✅ **Prevents:** Attacker in `microsoft` mode cannot access mock endpoints
+
+2. **OIDC Conditional Registration** (AuthenticationServiceCollectionExtensions.cs, line 39)
+   - OpenIdConnect handler only registers when `microsoftOptions.IsConfigured = true`
+   - Prevents metadata retrieval errors and callback path exposure
+   - ✅ **Prevents:** Metadata scan attacks; unregistered scheme crashes
+
+3. **Session Cookie Hardening** (AuthenticationServiceCollectionExtensions.cs, lines 22–34)
+   - `HttpOnly = true` → blocks XSS token theft
+   - `SameSite = Lax` → blocks unvalidated cross-site form submissions
+   - `SecurePolicy = SameAsRequest` → respects HTTP/HTTPS context
+   - `ExpireTimeSpan = 8 hours` with `SlidingExpiration = true`
+   - ✅ **Prevents:** Session fixation; CSRF with form submissions; XSS exfiltration
+
+4. **Tenant Isolation Enforced** (FileUploadController.cs, lines 369–389)
+   - `ResolveTenantContextAsync()` rejects unmembered tenants with 403 Forbidden
+   - Not an "optimization" — actively checked before every upload/delete/list
+   - ✅ **Prevents:** Tenant escalation; cross-tenant file access
+
+5. **Secure Credential Handling**
+   - No hardcoded secrets in committed configuration
+   - `dotnet user-secrets` only for local credential storage
+   - ✅ **Prevents:** Credential exposure in source control
+
+### Root Cause Analysis (Integration, Not Auth)
+
+**Failure 1: `SuccessfulMockSignInTransitionsIntoAuthenticatedShell`**
+- Test calls `SignInAsMockUserAsync(page)` which navigates through auth flow
+- `MockAuthService.SignInAsync()` calls `NavigationManager.NavigateTo("/auth/mock/signin?...", forceLoad: true)`
+- `forceLoad: true` forces full browser reload → Blazor circuit rebuilds
+- During rebuild, browser may transiently visit `/signin` before settling on auth-complete URL
+- Test assertion fires immediately after navigation, catching transient URL
+- **Root cause:** Timing — not security issue
+- **NOT a reason to remove `forceLoad: true`.** It ensures auth cookie is visible to Blazor component
+
+**Failure 2: `SignOutReturnsToLandingAndReprotectsAppAreas`**
+- After successful sign-out, test navigates to `/chat`
+- Browser receives `net::ERR_ABORTED` — network-level connection error or server crash
+- **NOT an auth layer failure** — protected-route middleware would redirect unauthenticated users to `/signin`, not abort
+- **Likely cause:** Aspire testhost `/chat` endpoint/component unhealthy or fixture crash
+
+### Anti-Patterns Explicitly Rejected
+
+❌ **Test-only backdoor endpoint** (e.g., `/auth/mock/bypass`)  
+❌ **Opt-in tenant checks** (skip `ResolveTenantContextAsync()` for tests)  
+❌ **Remove `forceLoad: true` from SignIn flow** (breaks auth cookie visibility)  
+❌ **Disable mock endpoint gating** (defeats entire security gate)  
+❌ **Skip OIDC conditional registration** (exposes metadata endpoints)  
+
+### Approved Fix Direction
+
+✅ **Timing & Assertion Adjustments** (test changes only):
+- Add brief wait after `SignInAsMockUserAsync()` before URL assertion
+- Or rely on existing `WaitForAuthenticatedShellAsync(page)` which already passes
+
+✅ **Aspire Testhost Health Check**:
+- Verify `/chat` endpoint responds 200 OK when authenticated
+- Verify Blazor component initializes without errors
+- Add health check probe to testhost fixture
+
+✅ **No auth code changes needed** — all security gates are correct
+
+### Key Files (For Reference)
+
+| File | Purpose | Security Check |
+|------|---------|-----------------|
+| `Program.cs` (147–150) | Mock endpoint gating | ✅ Correct |
+| `Program.cs` (183–224) | `/auth/mock/signin`, `/auth/mock/signout` handlers | ✅ Correct |
+| `AuthenticationServiceCollectionExtensions.cs` (22–34) | Cookie hardening | ✅ Correct |
+| `AuthenticationServiceCollectionExtensions.cs` (39) | OIDC conditional registration | ✅ Correct |
+| `FileUploadController.cs` (345–390) | Tenant isolation in ResolveTenantContextAsync | ✅ Correct |
+| `MockAuthService.cs` (66–68) | forceLoad: true for auth handoff | ✅ Correct |
+
+### Decision
+
+**DO NOT introduce auth shortcuts to fix these tests.** Test failures are infrastructure/integration issues, not security design flaws. Fix test timing and Aspire fixture health; leave all security gates intact.
+
+---
+
+## WebTest Fixture Shared State Corruption — Root Cause Identified — Buster — 2026-04-11
+
+**Author:** Buster (QA / Tester)  
+**Status:** ROOT CAUSE IDENTIFIED — Awaiting Fixture Isolation Follow-Up  
+**Scope:** Test harness orchestration, Aspire fixture storage, class-level fixture crashes
+
+### Context
+
+Filtered runs for `AuthUxFoundationTests` and `AuthenticatedUploadUxTests` did not reach their assertions. The xUnit runner aborted both classes after the WebTest child process went inactive during `TestFixture` startup.
 
 ### Root Cause
-Multi-candidate database initialization refactor changed exception chaining depth:
 
-**Before refactor:**
-```
-_ensure_database_schema raises RuntimeError from sqlite3.OperationalError
-  → Exception chain: RuntimeError → OperationalError
-```
-
-**After refactor:**
-```
-_initialize_database catches exception from _ensure_database_schema, then raises RuntimeError
-  → Exception chain: RuntimeError → RuntimeError → OperationalError
-```
-
-The behavior being tested (legacy schema detection and detailed error reporting) **still exists and works correctly**. Only the depth of exception chaining changed.
+✅ **Diagnosis Complete:**
+- `TestFixture` waits for the full Aspire stack (`webfrontend`, `python-service`, dashboard) to become healthy before any class test body runs
+- `AppHost` bind-mounts repo-level PostgreSQL and Neo4j storage (`database\postgres`, `database\neo4j\...`) instead of per-run test storage
+- During reproduction, PostgreSQL exited with `invalid checkpoint record` / `could not locate a valid checkpoint record`
+- Neo4j later failed with `/data/databases/store_lock` because a prior run still held the shared store
 
 ### Decision
-**UPDATE THE TEST** to traverse the exception chain rather than checking only the immediate cause.
 
-**Changed from:**
-```python
-self.assertIsInstance(context.exception.__cause__, sqlite3.OperationalError)
-```
+**Treat these auth-class failures as test harness / orchestration failures, not auth-expectation failures, until the shared Aspire storage problem is fixed.**
 
-**Changed to:**
-```python
-# Walk the exception chain to find OperationalError at root
-root_cause = context.exception.__cause__
-while root_cause and not isinstance(root_cause, sqlite3.OperationalError):
-    root_cause = root_cause.__cause__
-self.assertIsInstance(root_cause, sqlite3.OperationalError,
-                      "Expected sqlite3.OperationalError in exception chain")
-```
+### Validated App-Level Signal
 
-### Rationale
-- The scenario being tested (legacy schema startup failure with detailed diagnostics) remains valid
-- The error reporting behavior works correctly (verified in test output)
-- The multi-candidate retry pattern is a deliberate architectural improvement
-- Walking the exception chain is more robust than assuming single-level chaining
-- Alternative (removing test) would lose valuable regression coverage for schema diagnostics
+When using non-fixture auth tests (which don't depend on Aspire fixture startup):
+- ✅ `CompositeAuthServiceTests` — PASS (service-layer auth composition)
+- ✅ `SignInPanelTests` — PASS (Blazor component auth UX)
+- ✅ `MockAuthServiceTests` — PASS (mock provider contract)
+- All three aligned with updated `MockAuthService` constructor (3-argument surface)
 
-### Impact
-- ✅ Test now passes and correctly verifies legacy schema detection
-- ✅ Test validates all expected error message content (path, column names, diagnostics)
-- ✅ Test validates that root cause is still OperationalError
-- ✅ All 10 tests in test_p0_contract_audit.py pass
-- ✅ All 30 Python tests pass
-- ✅ More resilient to future exception handling refactors
+### Required Follow-Up
 
-### Verification
+1. Give tests isolated PostgreSQL/Neo4j storage roots, or
+2. Add a supported reset/cleanup path for the shared repo data stores before fixture-backed WebTest runs
+
+**Until then:** Use non-fixture auth tests as the reliable signal for auth regressions.
+
+### Key Paths
+
+- `src\AspireApp.WebTest\Fixtures\TestFixture.cs`
+- `src\AspireApp.AppHost\AppHost.cs`
+- `src\AspireApp.WebTest\Tests\AuthUxFoundationTests.cs`
+- `src\AspireApp.WebTest\Tests\AuthenticatedUploadUxTests.cs`
+
+### Workaround
+
+For immediate auth regression detection:
+- Use `CompositeAuthServiceTests`, `SignInPanelTests`, `MockAuthServiceTests`
+- These pass on current tree and don't depend on Aspire fixture storage
+- Skip fixture-backed browser tests until orchestration issue is resolved
+
+---
+
+## Auth Shell Hydration & Upload Control Readiness — Jeff — 2026-04-11
+
+**Author:** Jeff (.NET Dev)  
+**Status:** IMPLEMENTED  
+**Scope:** Auth-state hydration after sign-in, mock-auth tenant fallback, InteractiveServer upload control readiness
+
+### Context
+
+Three WebTest auth/upload classes regressed together: `AuthUxFoundationTests`, `CompositeAuthServiceTests`, `AuthenticatedUploadUxTests`. The common thread was that:
+1. The Blazor shell was depending on state that only appeared **after** the `AuthenticationStateProvider` ran
+2. After cookie-based sign-in redirect, pages needed immediate auth context access
+3. Upload page exposed real file input before first interactive render, causing lost initial file selections
+
+### Decision
+
+**Hydrate shell auth state from `HttpContext` as soon as scoped auth context is read; keep mock auth usable without tenant store; hide real upload controls until page is interactive.**
+
+### Why
+
+1. Pages like `SignIn.razor` and `UploadData.razor` read `AuthenticationContext.IsAuthenticated` on first render. If context starts empty after sign-in, shell shows wrong surface or race into redirect.
+2. Provider-selection and mock-auth tests should not need full tenant persistence stack to exercise in-memory auth flows.
+3. `InteractiveServer` file inputs are fragile during prerender. If browser selects file before Blazor attaches handler, upload button never enables.
+
+### Implementation
+
+#### Auth-State Hydration
+- `AuthenticationContext` now lazy-hydrates from `IHttpContextAccessor`
+- On first request after sign-in, reads authenticated `HttpContext.User`
+- Pages immediately see correct auth state without race condition
+- **File:** `src\AspireApp.Web\Services\AuthenticationContext.cs`
+
+#### Mock-Auth Tenant Fallback
+- `AppAuthenticationStateProvider` reuses in-memory current user when no authenticated `HttpContext`
+- `MockAuthService` initializes tenant context without requiring `TenantManagementService`
+- `TenantContextService` has no-store fallback snapshot for mock/in-memory flows
+- Mock tests now work without entity framework or persistence layer
+- **Files:** `src\AspireApp.Web\Services\MockAuthService.cs`, `AppAuthenticationStateProvider.cs`, `TenantContextService.cs`
+
+#### Upload Control Readiness
+- First render: Display lightweight "Preparing upload controls…" placeholder
+- After first interactive render: Expose real `<InputFile>` control
+- Prevents lost initial file-selection events
+- Upload button state stays reliable in Playwright and real browsers
+- **Files:** `src\AspireApp.Web\Components\Pages\UploadData.razor` and `.razor.cs`
+
+### Validation
+
 ```powershell
-cd src\AspireApp.PythonServices
-python -m pytest tests/test_p0_contract_audit.py -v
-# Result: 10 passed
+dotnet build src\AspireApp.WebTest\AspireApp.WebTest.csproj --no-restore --nologo
+# ✅ Success
 
-python -m pytest tests/ -v
-# Result: 30 passed
+dotnet test src\AspireApp.WebTest\AspireApp.WebTest.csproj \
+  --no-build --no-restore \
+  --filter "FullyQualifiedName~AuthenticatedUploadUxTests|FullyQualifiedName~AuthUxFoundationTests|FullyQualifiedName~CompositeAuthServiceTests" \
+  --nologo -v minimal
+# ✅ 13/13 passing
 ```
 
----
+### Test Results
 
-## Optional Docling Smoke Coverage — Jarvis — 2026-03-28
+**Originally Failing Tests (Now Passing):**
+- ✅ `AuthUxFoundationTests` (3 tests)
+- ✅ `CompositeAuthServiceTests` (5 tests)
+- ✅ `AuthenticatedUploadUxTests` (5 tests)
 
-**Scope:** Python smoke tests for document processing initialization
+### Key Paths
+
+- `src\AspireApp.Web\Services\AuthenticationContext.cs` — Lazy hydration from HttpContext
+- `src\AspireApp.Web\Services\AppAuthenticationStateProvider.cs` — In-memory user fallback
+- `src\AspireApp.Web\Services\MockAuthService.cs` — Tenant context initialization without persistence
+- `src\AspireApp.Web\Services\TenantContextService.cs` — No-store fallback
+- `src\AspireApp.Web\Components\Pages\UploadData.razor` — Two-phase control initialization
+- `src\AspireApp.Web\Components\Pages\UploadData.razor.cs` — Upload control readiness
+
+### Related Decisions
+
+- **Auth/Upload Test Failures Security Verdict** (2026-04-11, Warden) — Approved this fix direction
+- **WebTest Fixture Shared State** (2026-04-11, Buster) — Identified orchestration root cause
+- **Upload Authentication Regression** (2026-04-09, Jeff) — Earlier auth-in-circuit fix
+
+## Chat Privacy Tests Should Not Wait on Full AI Completion — Buster — 2026-04-11
+
+**Authors:** Buster (QA / Tester)  
+**Status:** IMPLEMENTED  
+**Scope:** Chat persistence and shared-tenant privacy acceptance tests, AI response lifecycle handling
 
 ### Context
-`src/AspireApp.PythonServices\requirements.txt` intentionally omits the heavyweight `docling` package, while `src/AspireApp.PythonServices\Dockerfile` installs it only for the full image. The old smoke test imported `app.services.docling_service` directly, so lightweight/dev environments reported the absence of `docling` instead of validating the supported fallback path.
+
+`ChatConversationPersistenceTests.ConversationsRemainPrivateEvenWithinSharedTenantMembership` was failing intermittently because the test awaited full Ollama response completion. However, `src\AspireApp.Web\Components\Pages\Chat.razor.cs` intentionally disables send, rename, and delete controls during the `IsAIResponsing` window to prevent user actions while streaming is active.
+
+The persistence contract was actually satisfied (owner prompt saved, visibility remained private), but the test failed on latency rather than on the ownership invariant.
 
 ### Decision
-Smoke tests should validate `app.services.service_factory` and the selected `DoclingService` implementation, not direct `docling` package availability. The test should pass when the factory selects either the full processor or `docling_service_fallback`, and only fail when neither supported processing path can initialize.
 
-### Rationale
-- Matches the runtime contract used by `processing.py` and FastAPI health reporting
-- Preserves lightweight developer environments without forcing the heavy `docling` install
-- Still surfaces real regressions by asserting which implementation the factory selected
+**For `/chat` privacy/isolation browser tests, the acceptance seam is the persisted owner message plus owner-only conversation visibility, not the assistant finishing a live Ollama response. Tests may stop the active AI response via `data-testid="chat-stop-button"` once the owner prompt is visible, then continue privacy assertions against the captured saved-conversation title.**
 
-### Impact
-- `test_services.py` stays meaningful in both full and lightweight environments ✅
-- Future changes to optional dependency handling have a clear test target ✅
-- Avoids unnecessary dependency bloat in `requirements.txt` ✅
+#### Rationale
 
----
+- **Decouples test from AI latency:** Ollama response time is non-deterministic. Test reliability should not depend on external model performance.
+- **Preserves privacy contract:** Conversation is persisted and access-gated before streaming completes. Privacy is never compromised.
+- **Respects UI/UX discipline:** Disabling controls during streaming prevents mid-flight mutations and is intentional behavior.
+- **Simplifies acceptance gates:** One acceptance seam (persistence + visibility) is clearer than "persistence AND full response".
 
-## Docling Smoke Gate Alignment — Buster — 2026-03-28
+#### Implementation
 
-**Scope:** Python service smoke validation for Docling-capable and fallback-capable environments
+Updated `src/AspireApp.WebTest/Tests/ChatConversationPersistenceTests.cs`:
+1. After sending owner prompt, wait for message to appear and save-state confirmation (short wait).
+2. Click stop button to halt in-flight AI response.
+3. Capture the rendered conversation title from the saved state.
+4. Continue shared-tenant privacy assertions using persisted conversation record.
 
-### Context
-The failing smoke signal was `Optional dependency 'docling' is not installed: No module named 'docling'` from `src/AspireApp.PythonServices/test_services.py`. Audit showed this was reproducible in the project `.venv`, because `setup_dev_env.py` installs `requirements.txt`, and `requirements.txt` intentionally omits the top-level `docling` package while lightweight/fallback processing remains a supported development mode.
+#### Validation
 
-### Decision
-Treat `app.services.service_factory` as the smoke-test contract for document processing. The smoke gate should pass when the current environment can initialize either:
+- `dotnet test src\AspireApp.WebTest\AspireApp.WebTest.csproj --filter "FullyQualifiedName~ChatConversationServiceTests"` → 5/5 passing
+- `dotnet test src\AspireApp.WebTest\AspireApp.WebTest.csproj --filter "FullyQualifiedName~ChatConversationPersistenceTests.ConversationsRemainPrivateEvenWithinSharedTenantMembership" --no-build --no-restore` → 1/1 passing
 
-1. the full Docling service, or
-2. the fallback processor selected by the factory.
+### Related Decisions
 
-Direct import of `app.services.docling_service` is not the default smoke gate because that incorrectly fails supported lightweight setups.
-
-### Rationale
-- The product contract already supports fallback processing through `service_factory.py` and `docling_service_fallback.py`
-- `BUILD_CONFIGURATION.md` and `README.md` document lightweight development as valid, so the smoke test must reflect that supported runtime
-- A smoke test that only passes with the optional full package installed produces false negatives in the standard local dev environment
-
-### Impact
-- Default local `.venv` smoke validation now passes without requiring a heavyweight `docling` install ✅
-- Full Docling environments still pass and are detected as `service_type = full` ✅
-- Regression coverage now proves the factory selects the implementation that matches the installed dependency set ✅
-
----
+- **Chat History Tests Audit** (2026-04-10, Buster) — Earlier review of persistence test structure
+- **WebTest Fixture Shared State** (2026-04-11, Buster) — Isolation fix at orchestration level

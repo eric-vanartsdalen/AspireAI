@@ -17,7 +17,9 @@ public class OllamaWarmupService : IHostedService
 	private readonly object _kernelLock = new object();
 
 	// Warmup settings
-	private const int WARMUP_DELAY_SECONDS = 10; // Wait 10 seconds after startup before warmup
+	private const int WARMUP_DELAY_SECONDS = 1; // Start warming almost immediately after startup
+	private const int OLLAMA_READY_RETRY_DELAY_SECONDS = 5;
+	private const int OLLAMA_READY_MAX_ATTEMPTS = 18;
 	private const int KEEP_ALIVE_INTERVAL_MINUTES = 10; // Send keep-alive every 10 minutes
 	private const string WARMUP_PROMPT = "Hi"; // Minimal prompt for warmup
 
@@ -45,16 +47,17 @@ public class OllamaWarmupService : IHostedService
 		try
 		{
 			// Pull configuration to ensure ActiveModelURL and ActiveModel are set
-			HomeConfigurations.PullConfigure();
+			HomeConfigurations.ForceReconfigure();
 
 			// Wait for the application to fully initialize and Ollama to be ready
 			_logger.LogInformation("⏳ Waiting {Delay} seconds for services to initialize...", WARMUP_DELAY_SECONDS);
 			await Task.Delay(TimeSpan.FromSeconds(WARMUP_DELAY_SECONDS), cancellationToken);
 
-			// Verify Ollama endpoint is available before attempting warmup
-			if (!await IsOllamaAvailableAsync(cancellationToken))
+			// Verify Ollama endpoint is available before attempting warmup.
+			// Cold container starts can report healthy before the model endpoint is ready.
+			if (!await WaitForOllamaAvailabilityAsync(cancellationToken))
 			{
-				_logger.LogWarning("⚠️ Ollama service not available yet. Skipping warmup - will rely on first user request.");
+				_logger.LogWarning("⚠️ Ollama service never became ready during warmup. The first user request will have to initialize the model.");
 				return;
 			}
 
@@ -79,6 +82,32 @@ public class OllamaWarmupService : IHostedService
 		{
 			_logger.LogError(ex, "❌ Error during Ollama warmup");
 		}
+	}
+
+	private async Task<bool> WaitForOllamaAvailabilityAsync(CancellationToken cancellationToken)
+	{
+		for (var attempt = 1; attempt <= OLLAMA_READY_MAX_ATTEMPTS; attempt++)
+		{
+			if (await IsOllamaAvailableAsync(cancellationToken))
+			{
+				return true;
+			}
+
+			if (attempt == OLLAMA_READY_MAX_ATTEMPTS)
+			{
+				break;
+			}
+
+			_logger.LogInformation(
+				"⏳ Ollama not ready yet. Retrying warmup availability check {Attempt}/{MaxAttempts} in {DelaySeconds}s...",
+				attempt,
+				OLLAMA_READY_MAX_ATTEMPTS,
+				OLLAMA_READY_RETRY_DELAY_SECONDS);
+
+			await Task.Delay(TimeSpan.FromSeconds(OLLAMA_READY_RETRY_DELAY_SECONDS), cancellationToken);
+		}
+
+		return false;
 	}
 
 	private async Task<bool> IsOllamaAvailableAsync(CancellationToken cancellationToken)

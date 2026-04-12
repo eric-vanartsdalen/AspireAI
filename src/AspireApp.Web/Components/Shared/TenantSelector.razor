@@ -1,0 +1,77 @@
+@using AspireApp.Web.Services
+@inject TenantContextService TenantContext
+@inject AuthenticationContext AuthenticationContext
+@implements IDisposable
+
+<div class="tenant-selector" data-testid="tenant-selector">
+    <label for="tenant-select" class="tenant-label">
+        <span class="bi bi-building" aria-hidden="true"></span>
+        Workspace tenant:
+    </label>
+    <select id="tenant-select"
+            class="form-select tenant-select"
+            disabled="@(TenantContext.Tenants.Count <= 1)"
+            value="@TenantContext.CurrentTenantId"
+            @onchange="OnTenantChanged">
+        @if (TenantContext.Tenants.Count == 0)
+        {
+            <option value="@TenantContext.CurrentTenantId">Loading tenants...</option>
+        }
+        else
+        {
+            @foreach (var tenant in TenantContext.Tenants)
+            {
+                <option value="@tenant.TenantId">@BuildTenantOptionLabel(tenant)</option>
+            }
+        }
+    </select>
+    @if (AuthenticationContext.CurrentUser is not null)
+    {
+        <div class="tenant-hint" data-testid="auth-current-tenant">
+            Using @TenantContext.CurrentTenantName
+            @if (TenantContext.CurrentTenantIsProtected)
+            {
+                <span> · protected</span>
+            }
+            <span> · </span>
+            <a href="tenants">Manage</a>
+        </div>
+    }
+</div>
+
+@code {
+    protected override async Task OnInitializedAsync()
+    {
+        TenantContext.OnTenantChanged += HandleTenantChanged;
+        TenantContext.OnTenantListChanged += HandleTenantListChanged;
+        await TenantContext.EnsureInitializedAsync();
+    }
+
+    private async Task OnTenantChanged(ChangeEventArgs e)
+    {
+        if (e.Value is string tenantId)
+        {
+            TenantContext.CurrentTenantId = tenantId;
+            await InvokeAsync(StateHasChanged);
+        }
+    }
+
+    private void HandleTenantChanged()
+    {
+        _ = InvokeAsync(StateHasChanged);
+    }
+
+    private void HandleTenantListChanged()
+    {
+        _ = InvokeAsync(StateHasChanged);
+    }
+
+    private static string BuildTenantOptionLabel(TenantSummary tenant) =>
+        tenant.IsProtected ? $"{tenant.Name} (protected)" : tenant.Name;
+
+    public void Dispose()
+    {
+        TenantContext.OnTenantChanged -= HandleTenantChanged;
+        TenantContext.OnTenantListChanged -= HandleTenantListChanged;
+    }
+}

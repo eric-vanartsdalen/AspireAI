@@ -79,6 +79,15 @@ namespace AspireApp.Web.Data
         [Column("neo4j_document_node_id")]
         public string? Neo4jDocumentNodeId { get; set; }
 
+        // ==================== Multi-Tenancy ====================
+        
+        /// <summary>
+        /// Persisted tenant identifier for server-side workspace isolation.
+        /// </summary>
+        [Column("tenant_id")]
+        [MaxLength(100)]
+        public string TenantId { get; set; } = string.Empty;
+
         // ==================== Future Extensibility ====================
         
         /// <summary>

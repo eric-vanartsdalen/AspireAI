@@ -9,6 +9,154 @@
 
 <!-- Append new learnings below. Each entry is something lasting about the project. -->
 
+### 2026-04-05 — Python Test Stability: Dependency-Tolerant Imports & Bootstrap Path Repair
+
+**Completed:**
+- Added try/except fallback in `DatabaseService` for optional Neo4j driver and `psycopg_pool` imports so smoke tests can mock dependencies before they're installed.
+- Repaired test entrypoint path resolution in `test_database_schema.py` and `test_all_builds.py` to resolve repo root correctly via `git rev-parse --show-toplevel`.
+- Updated Python validation guidance in `.github/instructions/python.instructions.md` with async test patterns, error handling, and import robustness best practices.
+- Validated: 14 regression + contract audit tests now collect and pass in Visual Studio Python environment.
+
+**Key pattern:**
+- Treat optional imports (Neo4j, database drivers) as dependency-tolerant to prevent smoke-gate bootstrap failures when packages aren't pre-installed.
+- Test entrypoints must resolve repo root and venv paths dynamically, not assume a fixed working directory.
+- Smoke gate bootstrap (`test_database_schema.py`) and regression paths (`pytest`) must be aligned; both should include psycopg[binary], psycopg-pool, and pytest in the common requirements set.
+
+**Key file paths:**
+- `src/AspireApp.PythonServices/app/services/database_service.py` (dependency-tolerant imports)
+- `test_database_schema.py`, `test_all_builds.py` (path resolution fixes)
+- `.github/instructions/python.instructions.md` (validation guidance)
+
+### 2026-04-05 — Python Validation Must Be Import-Tolerant and Path-Stable
+
+**Completed:**
+- Made `src/AspireApp.PythonServices/app/services/database_service.py` import-tolerant when `psycopg_pool` is missing so smoke tests can patch `ConnectionPool` with `fake_postgres.FakeConnectionPool` before any live Postgres connection is created.
+- Fixed `src/AspireApp.PythonServices/tests/test_p0_contract_audit.py` and `src/AspireApp.PythonServices/tests/test_processing_pipeline_regression.py` to self-bootstrap `src/AspireApp.PythonServices` onto `sys.path`, which lets them run both under `pytest` and as direct `python ...test_*.py` scripts.
+- Updated Python validation guidance to run `python -m pytest -q` from `src/AspireApp.PythonServices`, which exercises smoke, contract, and regression coverage together.
+
+**Key pattern:**
+- Python contract/regression tests in this repo should not depend on global interpreter state. Each standalone test entrypoint should add the Python service root to `sys.path` before importing `app.*`.
+- Database smoke tests that patch the pool should not fail at module import time when `psycopg_pool` is absent. Keep the import lazy enough that fake-pool tests still validate the service API surface.
+- The reliable validation path is the full Python pytest run from `src/AspireApp.PythonServices`, not a single-file smoke invocation.
+
+**Key file paths:**
+- `src/AspireApp.PythonServices/app/services/database_service.py`
+- `src/AspireApp.PythonServices/test_services.py`
+- `src/AspireApp.PythonServices/tests/test_p0_contract_audit.py`
+- `src/AspireApp.PythonServices/tests/test_processing_pipeline_regression.py`
+- `src/AspireApp.PythonServices/README.md`
+- `.github/prompts/python-ingestion-debugging.prompt.md`
+
+### 2026-04-05 — Tenant Schema Alignment: Both Sides Must Include All Contract Columns
+
+**Completed:**
+- Fixed HTTP 500 upload errors caused by Python schema missing the `tenant_id` column that C# FileMetadata was trying to persist.
+- Added `tenant_id TEXT NOT NULL DEFAULT 'default'` to Python's CREATE TABLE and `_files_column_definitions` in `database_service.py`.
+- Added tenant indexes (`idx_files_tenant`, `idx_files_tenant_status`) to match C# UploadDbContext.
+- Verified with Python contract tests (8 pass) and C# integration test (`OperationalUploadStoreTests.UploadApiPersistsMetadataToPostgres` pass).
+
+**Key pattern:**
+- **Cross-service schema parity:** When one side (C# or Python) adds a column to the shared `files` table, the other side MUST include it in schema initialization, even if that side doesn't actively query/filter on it yet. Schema drift causes runtime insert/update failures.
+- **Index alignment:** Both sides should maintain the same index set for query performance parity and to avoid confusion during debugging.
+- **Default values:** Use sensible defaults (`'default'` for tenant_id) so existing rows remain valid after schema evolution.
+- **Migration path:** Python's `_ensure_required_columns()` auto-adds missing columns on startup; indexes are idempotent with `IF NOT EXISTS`.
+
+**Key file paths:**
+- Python schema: `src/AspireApp.PythonServices/app/services/database_service.py` (lines 76-94 column defs, 213-269 CREATE TABLE + indexes)
+- C# entity: `src/AspireApp.Web/Data/DocumentEntities.cs` (line 87 tenant_id)
+- C# context: `src/AspireApp.Web/Shared/UploadDbContext.cs` (lines 60-61 tenant indexes)
+- Decision: `.squad/decisions/inbox/jarvis-tenant-schema-fix.md`
+
+## Core Context
+
+**Key architectural learnings from active development (Feb-Apr 2026):**
+
+- **Postgres cutover pattern (Python side):** Replace `sqlite3` with `psycopg2.pool.ThreadedConnectionPool`. Remove multi-candidate path resolution, fresh-connection workarounds, SQLite pragma logic. Environment-driven config via `POSTGRES_*` vars from AppHost.
+- **Contract audit pattern:** Tests should derive shared database name from AppHost config, not hardcode literals. Prevents false test failures when infrastructure names change for legitimate reasons.
+- **Shared schema stability:** `files` + `document_pages` tables are stable cross-service contract between Web and Python. Keep unchanged during provider migration (SQLite → Postgres). Column names, types, uniqueness constraints all match.
+- **Database schema initialization:** Python uses `CREATE TABLE IF NOT EXISTS` + `CREATE INDEX IF NOT EXISTS` for idempotency. First service to start (Web or Python) creates tables; both sides converge. No legacy schema migrations needed on fresh Postgres.
+- **Optional dependency handling:** Smoke tests should validate the selected service factory implementation, not direct package availability. Allows lightweight development environments without forcing heavy optional packages.
+
+**Current state (as of 2026-04-05):**
+- Python operational store: Postgres (appdb) via psycopg2 ThreadedConnectionPool
+- Connection config: Reads `POSTGRES_HOST`, `POSTGRES_PORT`, `POSTGRES_DB`, `POSTGRES_USER`, `POSTGRES_PASSWORD` from AppHost env vars
+- Shared schema: `files` + `document_pages` (unchanged from SQLite version; column names, types, FKs all match)
+- Processing status: Uses `files.status` lifecycle (`uploaded` → `processing` → `processed` | `error`)
+- Regression coverage: 30 tests pass (contract audit, startup path, processing pipeline, docling factory selection)
+
+**Next phase (BRAIN pivot):**
+- Service decomposition: Extract Ingestion/Knowledge/Validation as internal Python packages initially
+
+### 2026-04-05 — Tenant Schema Fix Validated & Approved
+
+**Status:** ✅ COMPLETE — Schema aligned, tests pass, ready for UI phase
+
+**What Happened:**
+1. After Bob's UI revision, runtime uploads to Python failed (HTTP 500)
+2. Root cause: Python `DatabaseService._ensure_database_schema()` did not include `tenant_id` column
+3. C# `FileMetadata` was trying to persist tenant_id, but INSERT was missing the column
+
+**Jarvis's Fix:**
+- Added `tenant_id TEXT NOT NULL DEFAULT 'default'` to CREATE TABLE statement (line 235)
+- Added `tenant_id` to `_files_column_definitions` for migration/repair (line 88)
+- Added two indexes: `idx_files_tenant`, `idx_files_tenant_status` (lines 263-264)
+- Schema now matches C# UploadDbContext contract exactly
+
+**Validation:**
+- ✅ 8/8 Python contract audit tests pass (schema exists, round-trip works)
+- ✅ 1/1 C# operational test passes (upload persists tenant_id correctly)
+
+**Key Pattern Reaffirmed:** Cross-service schema parity is non-negotiable. When one side adds a column to the shared `files` table, the other side MUST include it in schema initialization, even if not actively querying on it. Schema drift = runtime failures.
+
+**Files Modified:**
+- `src/AspireApp.PythonServices/app/services/database_service.py` — tenant_id column, indexes, column defs
+- Tests: Python contract audit validates round-trip; C# operational test validates persistence
+
+**Next:** Data layer now ready for Kujan's contract audit closure and Buster's final approval.
+
+**Next phase (BRAIN pivot):**
+- Validation Service: New capability; LLM-based claim extraction + confidence scoring  
+- Knowledge Service: Separate Neo4j + vector store integration from Ingestion
+- Vector retrieval: Add (Qdrant recommended) behind `IKnowledgeRetriever` abstraction
+
+---
+
+### 2026-04-05 — Shared Postgres Contract Tests Should Follow AppHost Naming
+
+**Completed:**
+- Reviewed the current AppHost/Web/Python Postgres wiring after Eric's connection-string fix and confirmed the Python runtime contract still matches the shared `files` / `document_pages` operational schema.
+- Updated `src/AspireApp.PythonServices/tests/test_p0_contract_audit.py` so the audit derives the upload-store database name from `src/AspireApp.AppHost/AppHost.cs` instead of hardcoding an older `DefaultConnection` literal.
+- Re-ran Python regression coverage and smoke validation to prove the failure was stale test drift, not Python-side schema drift.
+
+**Key pattern:**
+- Cross-service contract tests should verify that AppHost registration, Python `POSTGRES_DATABASE`, and Web `GetConnectionString(...)` stay aligned, but they should not pin the database name when the product contract is "shared named Postgres store" rather than a specific legacy string.
+- Python remains environment-driven: `DatabaseService` reads `POSTGRES_DATABASE` / `POSTGRES_DB` / `PGDATABASE` and projects the canonical upload lifecycle off the shared `files` and `document_pages` tables.
+
+**Key file paths:**
+- Contract audit: `src/AspireApp.PythonServices/tests/test_p0_contract_audit.py`
+- Python store service: `src/AspireApp.PythonServices/app/services/database_service.py`
+- Aspire wiring: `src/AspireApp.AppHost/AppHost.cs`
+- Web connection string usage: `src/AspireApp.Web/Program.cs`
+
+### 2026-04-05 — Python Operational Store Cutover to Postgres
+
+**Completed:**
+- Replaced Python-side SQLite lifecycle storage with PostgreSQL pooling in `src/AspireApp.PythonServices/app/services/database_service.py`.
+- Kept the shared contract anchored on the existing `files` and `document_pages` tables so uploads from the Web side and Python processing results still project through the same column names.
+- Swapped database scripts and smoke/regression tests to use a Postgres-oriented contract, with fake pooled connections for fast local validation.
+
+**Key contract:**
+- Python now resolves the operational store from `ASPIRE_DB_CONNECTION_STRING`, `POSTGRES_CONNECTION_STRING`, `DATABASE_URL`, or the `POSTGRES_HOST` / `POSTGRES_PORT` / `POSTGRES_DATABASE` / `POSTGRES_USER` / `POSTGRES_PASSWORD` environment set.
+- `files.status` remains the canonical lifecycle field (`uploaded` → `processing` → `processed` | `error`).
+- `document_pages` stays keyed by `(file_id, page_number)` and Python writes page metadata as JSON text to stay aligned with the Web EF model.
+
+**Key file paths:**
+- Python store service: `src/AspireApp.PythonServices/app/services/database_service.py`
+- Python health/startup surface: `src/AspireApp.PythonServices/app/fastapi.py`
+- Python schema utilities: `src/AspireApp.PythonServices/scripts/init_database.py`, `src/AspireApp.PythonServices/scripts/fix_schema.py`, `src/AspireApp.PythonServices/diagnose_database.py`
+- Python regression harness: `src/AspireApp.PythonServices/tests/fake_postgres.py`, `src/AspireApp.PythonServices/tests/test_p0_contract_audit.py`, `src/AspireApp.PythonServices/tests/test_processing_pipeline_regression.py`
+- Aspire wiring: `src/AspireApp.AppHost/AppHost.cs`
+
 ### 2026-03-28 — Optional Docling Smoke Tests: Root Cause Fixed
 
 **Symptom:** `python src\AspireApp.PythonServices\test_services.py` failed with `Optional dependency 'docling' is not installed`.
@@ -407,3 +555,55 @@
 - Test simulates scenario where self-healing is disabled (e.g., insufficient permissions, corrupted database)
 - Error diagnostics are comprehensive: path, source, schema details, specific SQLite error
 
+
+---
+
+### 2026-04-05 — Postgres Cutover Coordination & BRAIN Pivot Context
+
+**Status:** Postgres cutover complete. Joined BRAIN pivot decision consolidation session.
+
+**What Happened:**
+1. **Postgres Upload Store Cutover (completed in parallel with Jeff):**
+   - Python now uses psycopg2.pool.ThreadedConnectionPool instead of sqlite3
+   - Reads POSTGRES_HOST, POSTGRES_PORT, POSTGRES_DB, POSTGRES_USER, POSTGRES_PASSWORD from AppHost env vars
+   - Removed multi-candidate path resolution, fresh-read workarounds, SQLite pragma logic (~150 lines eliminated)
+   - Updated contract audit to derive database name from AppHost instead of hardcoding legacy literals
+   - _ensure_database_schema() updated to use Postgres DDL (SERIAL, NOW(), JSONB for page_metadata)
+   - All 30 Python tests pass
+   
+2. **Contract Test Alignment:**
+   - 	est_p0_contract_audit.py was failing because it hardcoded DefaultConnection instead of dynamic AppHost name
+   - Established new pattern: contract tests derive shared database name from AppHost source
+   - Rationale: durable contract is "all three surfaces use same store," not a specific literal name
+   - Prevents false test failures when store is renamed for infrastructure fixes
+
+3. **BRAIN Pivot Context:**
+   - Kujan review: Python monolith needs decomposition into Ingestion/Knowledge/Validation services
+   - Python decomposition strategy: Internal packages first (pp/brain/ingestion/, etc.), extract to separate services when contracts stabilize
+   - Validation Service: New service needed; LLM-based claim extraction + confidence scoring
+   - Knowledge Service: Extract Neo4j/RAG logic from current monolith
+   - Vector store: Need to add (Qdrant recommended) behind IKnowledgeRetriever abstraction
+   - Verbal strategy: MVP should focus on single evidence-backed agentic slice before scaling
+
+**Key Decisions for Python Work Going Forward:**
+- Postgres is now canonical for operational upload/processing state (no more SQLite path resolution)
+- iles + document_pages schema unchanged; contract remains stable with both Web and Python
+- Next phase: Core BRAIN contracts (CanonicalDocument, KnowledgeResult, ReasonResponse) must be defined before service decomposition
+- LightRAG should be deprecated or moved behind abstraction (Kujan found it architecturally opposed to BRAIN)
+- Validation Layer is now critical path (zero implementation today; required for BRAIN differentiation)
+
+**Contract Alignment:**
+- Postgres ppdb is the shared upload store name
+- Python receives POSTGRES_DATABASE=appdb from AppHost environment
+- Web reads GetConnectionString("appdb") from Aspire injection
+- Test pattern: Derive DB name from AppHost config, verify all three surfaces use it
+
+**Related Agent Work:**
+- **Jeff:** Web Postgres cutover completed in parallel; AppHost wiring is contract source
+- **Buster:** Diagnosed contract audit regression; updated Python test fixture expectations
+- **Kujan:** Architecture review identifies Python decomposition as next major work item
+- **Verbal:** Strategy review recommends MVP on single domain slice before multi-tenancy
+
+**Orchestration Log:** Created for session context at 20260405T143735Z-jarvis.md
+
+---

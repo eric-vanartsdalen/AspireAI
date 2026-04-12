@@ -1,21 +1,88 @@
-﻿@page "/"
+@page "/"
 @rendermode InteractiveServer
 @inject IConfiguration Configuration
+@inject AuthenticationContext AuthenticationContext
 
 <PageTitle>Home</PageTitle>
 
-<h1>Home</h1>
+@if (AuthenticationContext.IsAuthenticated)
+{
+        <div class="py-3">
+            <h1>Welcome back, @AuthenticationContext.CurrentUser?.DisplayName</h1>
+            <p class="lead">
+                You are signed in and ready to work with chat, uploads, and tenant-aware workspaces.
+            </p>
 
-Aspire AI app Home location.
+            <div class="row g-3 mb-4">
+                <div class="col-lg-3 col-md-6">
+                    <a class="btn btn-primary w-100" href="chat">Open chat</a>
+                </div>
+                <div class="col-lg-3 col-md-6">
+                    <a class="btn btn-outline-primary w-100" href="upload">Upload documents</a>
+                </div>
+                <div class="col-lg-3 col-md-6">
+                    <a class="btn btn-outline-primary w-100" href="tenants">Manage tenants</a>
+                </div>
+                <div class="col-lg-3 col-md-6">
+                    <a class="btn btn-outline-primary w-100" href="weather">View weather</a>
+                </div>
+            </div>
 
-<hr />
-<h3>Configuration Values</h3>
+            <p class="text-muted">
+                Need another workspace or want to share one with a teammate? Open tenant management from here or the sidebar.
+            </p>
 
-<ul>
-    <li><b>Type:</b> @HomeConfigurations.ActiveModelController</li>
-    <li><b>Endpoint:</b> @HomeConfigurations.ActiveModelURL</li>
-    <li><b>Model:</b> @HomeConfigurations.ActiveModel</li>
-</ul>
+            <hr />
+            <h3>Configuration Values</h3>
+
+            <ul>
+                <li><b>Type:</b> @HomeConfigurations.ActiveModelController</li>
+                <li><b>Endpoint:</b> @HomeConfigurations.ActiveModelURL</li>
+                <li><b>Model:</b> @HomeConfigurations.ActiveModel</li>
+            </ul>
+        </div>
+}
+else
+{
+        <section class="py-4" data-testid="auth-landing">
+            <div class="mb-4">
+                <h1>Turn documents into a tenant-aware AI workspace</h1>
+                <p class="lead">
+                    Start with the hosted Microsoft sign-in when it is configured locally. If live Microsoft auth is not configured, AspireAI falls back to demo identities for local shell checks.
+                </p>
+                <a class="btn btn-primary mt-2" data-testid="auth-sign-in-cta" href="/signin">Get started</a>
+            </div>
+
+            <div class="row g-4 mb-4">
+                <div class="col-lg-4">
+                    <div class="card h-100 shadow-sm">
+                        <div class="card-body">
+                            <h2 class="h5">Hosted sign-in first</h2>
+                            <p class="mb-0">When Microsoft is configured, the sign-in UI routes you into the standard Microsoft login flow instead of a demo account picker.</p>
+                        </div>
+                    </div>
+                </div>
+                <div class="col-lg-4">
+                    <div class="card h-100 shadow-sm">
+                        <div class="card-body">
+                            <h2 class="h5">Tenant stays separate</h2>
+                            <p class="mb-0">Signing in seeds the tenant selector from the authenticated user while workspace switching remains its own concern.</p>
+                        </div>
+                    </div>
+                </div>
+                <div class="col-lg-4">
+                    <div class="card h-100 shadow-sm">
+                        <div class="card-body">
+                            <h2 class="h5">Demo fallback stays intentional</h2>
+                            <p class="mb-0">Demo identities remain available only when live Microsoft auth is not configured or when you explicitly force a demo-capable auth mode.</p>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <SignInPanel RedirectUri="/" />
+        </section>
+}
 
 
 

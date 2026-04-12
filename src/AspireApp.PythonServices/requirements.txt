@@ -13,6 +13,8 @@ aiofiles
 
 # Database connections
 neo4j
+psycopg[binary]
+psycopg-pool
 
 # Logging and utilities
 python-json-logger

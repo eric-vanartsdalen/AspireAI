@@ -1,4 +1,4 @@
-﻿using AspireApp.Web.Data;
+using AspireApp.Web.Data;
 using AspireApp.Web.Shared;
 using Microsoft.AspNetCore.Components;
 using Microsoft.AspNetCore.Components.Forms;
@@ -19,6 +19,7 @@ public partial class UploadData : ComponentBase, IAsyncDisposable, IDisposable
     protected bool _isUploading = false;
     private int _uploadProgress = 0;
     private readonly List<string> _uploadErrors = [];
+    private bool _uploadControlsReady;
     
     // Duplicate detection tracking
     protected bool _isDuplicate;
@@ -27,12 +28,10 @@ public partial class UploadData : ComponentBase, IAsyncDisposable, IDisposable
 
     // Website URL upload property
     private string _websiteUrl = string.Empty;
+    private static readonly string[] AllowedExtensions = [".pdf", ".docx", ".txt", ".md"];
 
     [Inject]
     public IConfiguration Configuration { get; set; } = default!;
-
-    [Inject]
-    public IHttpClientFactory ClientFactory { get; set; } = default!;
 
     [Inject]
     public ILogger<UploadData> Logger { get; set; } = default!;
@@ -44,7 +43,7 @@ public partial class UploadData : ComponentBase, IAsyncDisposable, IDisposable
     public FileStorageService FileStorageService { get; set; } = default!;
 
     [Inject]
-    public NavigationManager NavigationManager { get; set; } = default!;
+    public AspireApp.Web.Services.TenantContextService TenantContext { get; set; } = default!;
 
     private long MaxFileSize => Configuration.GetValue<long?>("FileUpload:MaxFileSize") ?? 10485760; // 10MB default
 
@@ -68,6 +67,9 @@ public partial class UploadData : ComponentBase, IAsyncDisposable, IDisposable
 
     protected override async Task OnInitializedAsync()
     {
+        TenantContext.OnTenantChanged += HandleTenantChanged;
+        await TenantContext.EnsureInitializedAsync();
+
         if (Logger.IsEnabled(LogLevel.Information))
         {
             Logger.LogInformation("UploadData component initialized");
@@ -106,11 +108,11 @@ public partial class UploadData : ComponentBase, IAsyncDisposable, IDisposable
                 return;
             }
 
-            Files = await FileStorageService.GetAllFilesAsync();
+            Files = await FileStorageService.GetAllFilesAsync(TenantContext.CurrentTenantId);
             if (logger.IsEnabled(LogLevel.Information))
             {
                 var count = Files?.Count ?? 0;
-                logger.LogInformation("Loaded {Count} uploaded files", count);
+                logger.LogInformation("Loaded {Count} uploaded files for tenant {TenantId}", count, TenantContext.CurrentTenantId);
             }
 
             if (Files != null)
@@ -135,11 +137,26 @@ public partial class UploadData : ComponentBase, IAsyncDisposable, IDisposable
         }
     }
 
+    private void HandleTenantChanged()
+    {
+        _ = InvokeAsync(async () =>
+        {
+            await LoadUploadedFiles();
+            StateHasChanged();
+        });
+    }
+
     protected override async Task OnAfterRenderAsync(bool firstRender)
     {
         if (firstRender && Logger.IsEnabled(LogLevel.Information))
         {
             Logger.LogInformation("UploadData component rendered for the first time");
+        }
+
+        if (firstRender)
+        {
+            _uploadControlsReady = true;
+            await InvokeAsync(StateHasChanged);
         }
     }
 
@@ -182,32 +199,10 @@ public partial class UploadData : ComponentBase, IAsyncDisposable, IDisposable
                 await Task.Delay(100);
             }
 
-            using var content = new MultipartFormDataContent();
-            var fileContent = new StreamContent(_selectedBrowserFile.OpenReadStream(MaxFileSize));
-            fileContent.Headers.ContentType = new System.Net.Http.Headers.MediaTypeHeaderValue(_selectedBrowserFile.ContentType);
-            content.Add(content: fileContent, name: "\"file\"", fileName: _selectedBrowserFile.Name);
-
-            var client = ClientFactory.CreateClient();
-            var baseUri = new Uri(NavigationManager.BaseUri);
-            var apiUri = new Uri(baseUri, "/api/FileUpload");
-            var response = await client.PostAsync(apiUri, content);
+            var result = await UploadFileAsync(_selectedBrowserFile);
 
             _uploadProgress = 90;
             StateHasChanged();
-
-            var result = await response.Content.ReadFromJsonAsync<FileUploadResult>();
-
-            if (result == null)
-            {
-                if (Logger.IsEnabled(LogLevel.Error))
-                {
-                    Logger.LogError("Upload returned an empty or invalid response.");
-                }
-                _uploadProgress = 0;
-                _uploadMessage = "Upload failed: invalid server response.";
-                _messageClass = "error";
-                return;
-            }
 
             if (Logger.IsEnabled(LogLevel.Information))
             {
@@ -350,7 +345,7 @@ public partial class UploadData : ComponentBase, IAsyncDisposable, IDisposable
     {
         try
         {
-            var success = await FileStorageService.DeleteFileAsync(id);
+            var success = await FileStorageService.DeleteFileAsync(id, TenantContext.CurrentTenantId);
             if (success)
             {
                 _uploadMessage = "File deleted successfully.";
@@ -419,98 +414,67 @@ public partial class UploadData : ComponentBase, IAsyncDisposable, IDisposable
             _uploadProgress = 30;
             StateHasChanged();
 
-            var client = ClientFactory.CreateClient();
-            var baseUri = new Uri(NavigationManager.BaseUri);
-            var apiUri = new Uri(baseUri, "/api/FileUpload/url");
-            var response = await client.PostAsJsonAsync(apiUri, new { Url = _websiteUrl });
+            var result = await UploadUrlAsync(_websiteUrl);
 
             _uploadProgress = 90;
             StateHasChanged();
 
-            if (response.IsSuccessStatusCode)
+            if (result.Success)
             {
-                var result = await response.Content.ReadFromJsonAsync<UrlUploadResult>();
-                
-                if (result == null)
-                {
-                    if (Logger.IsEnabled(LogLevel.Error))
-                    {
-                        Logger.LogError("URL upload returned an empty or invalid response.");
-                    }
-                    _uploadProgress = 0;
-                    _uploadMessage = "Failed to add website URL: invalid server response.";
-                    _messageClass = "error";
-                    return;
-                }
-
                 _uploadProgress = 100;
 
-                if (result.Success)
+                if (result.IsDuplicate)
                 {
-                    if (result.IsDuplicate)
+                    if (Logger.IsEnabled(LogLevel.Information))
                     {
-                        if (Logger.IsEnabled(LogLevel.Information))
+                        Logger.LogInformation("Duplicate website URL detected - showing toast notification");
+                    }
+                    _isDuplicate = true;
+                    _showDuplicateToast = true;
+                    _duplicateFileInfo = new DuplicateFileInfo
+                    {
+                        FileName = result.ExistingFileName ?? "Unknown",
+                        Size = 0,
+                        UploadedAt = result.ExistingUploadedAt ?? DateTime.Now,
+                        FileHash = string.Empty
+                    };
+
+                    _uploadMessage = $"This website URL already exists and was not added to prevent duplicates.";
+                    _messageClass = "warning";
+
+                    _ = Task.Delay(8000).ContinueWith(_ =>
+                    {
+                        InvokeAsync(() =>
                         {
-                            Logger.LogInformation("Duplicate website URL detected - showing toast notification");
-                        }
-                        _isDuplicate = true;
-                        _showDuplicateToast = true;
-                        _duplicateFileInfo = new DuplicateFileInfo
-                        {
-                            FileName = result.ExistingFileName ?? "Unknown",
-                            Size = 0,
-                            UploadedAt = result.ExistingUploadedAt ?? DateTime.Now,
-                            FileHash = string.Empty
-                        };
-                        
-                        _uploadMessage = $"This website URL already exists and was not added to prevent duplicates.";
-                        _messageClass = "warning";
-                        
-                        _ = Task.Delay(8000).ContinueWith(_ => 
-                        {
-                            InvokeAsync(() =>
-                            {
-                                _showDuplicateToast = false;
-                                StateHasChanged();
-                            });
+                            _showDuplicateToast = false;
+                            StateHasChanged();
                         });
-                    }
-                    else
-                    {
-                        _uploadMessage = result.Message ?? $"Website URL added successfully.";
-                        _messageClass = "success";
-                        if (Logger.IsEnabled(LogLevel.Information))
-                        {
-                            Logger.LogInformation("Website URL added successfully: {Url}", _websiteUrl);
-                        }
-                    }
-
-                    _websiteUrl = string.Empty;
-
-                    if (!result.IsDuplicate)
-                    {
-                        await LoadUploadedFiles();
-                    }
+                    });
                 }
                 else
                 {
-                    _uploadMessage = "Failed to add website URL.";
-                    _messageClass = "error";
-                    if (!string.IsNullOrWhiteSpace(result.Error))
+                    _uploadMessage = result.Message ?? $"Website URL added successfully.";
+                    _messageClass = "success";
+                    if (Logger.IsEnabled(LogLevel.Information))
                     {
-                        _uploadErrors.Add(result.Error);
+                        Logger.LogInformation("Website URL added successfully: {Url}", _websiteUrl);
                     }
+                }
+
+                _websiteUrl = string.Empty;
+
+                if (!result.IsDuplicate)
+                {
+                    await LoadUploadedFiles();
                 }
             }
             else
             {
-                var errorContent = await response.Content.ReadAsStringAsync();
                 _uploadMessage = "Failed to add website URL.";
                 _messageClass = "error";
-                _uploadErrors.Add(errorContent);
-                if (Logger.IsEnabled(LogLevel.Error))
+                if (!string.IsNullOrWhiteSpace(result.Error))
                 {
-                    Logger.LogError("Website URL upload failed with status {StatusCode}: {Error}", response.StatusCode, errorContent);
+                    _uploadErrors.Add(result.Error);
                 }
             }
         }
@@ -547,6 +511,7 @@ public partial class UploadData : ComponentBase, IAsyncDisposable, IDisposable
     {
         try
         {
+            TenantContext.OnTenantChanged -= HandleTenantChanged;
             _objectReference?.Dispose();
             Logger.LogInformation("UploadData component disposing");
         }
@@ -562,6 +527,7 @@ public partial class UploadData : ComponentBase, IAsyncDisposable, IDisposable
     {
         try
         {
+            TenantContext.OnTenantChanged -= HandleTenantChanged;
             _objectReference?.Dispose();
             Logger.LogInformation("UploadData component disposing");
         }
@@ -591,6 +557,205 @@ public partial class UploadData : ComponentBase, IAsyncDisposable, IDisposable
     {
         _showDuplicateToast = false;
         StateHasChanged();
+    }
+
+    // Blazor Server already runs this page on the server for the authenticated circuit.
+    // Going back through our own controller with a fresh HttpClient loses the user's session,
+    // so the interactive upload path writes through the scoped services directly.
+    private async Task<FileUploadResult> UploadFileAsync(IBrowserFile browserFile)
+    {
+        if (browserFile.Size == 0)
+        {
+            return new FileUploadResult
+            {
+                Success = false,
+                Error = "No file uploaded."
+            };
+        }
+
+        if (browserFile.Size > MaxFileSize)
+        {
+            return new FileUploadResult
+            {
+                Success = false,
+                Error = $"File size ({browserFile.Size:N0} bytes) exceeds maximum allowed size ({MaxFileSize:N0} bytes)."
+            };
+        }
+
+        var fileExtension = Path.GetExtension(browserFile.Name).ToLowerInvariant();
+        if (!AllowedExtensions.Contains(fileExtension, StringComparer.OrdinalIgnoreCase))
+        {
+            return new FileUploadResult
+            {
+                Success = false,
+                Error = $"File type '{fileExtension}' is not allowed. Allowed types: {string.Join(", ", AllowedExtensions)}"
+            };
+        }
+        
+        var initialized = await FileStorageService.EnsureInitializedAsync();
+        if (!initialized)
+        {
+            return new FileUploadResult
+            {
+                Success = false,
+                Error = "File storage service initialization failed."
+            };
+        }
+
+        await using var sourceStream = browserFile.OpenReadStream(MaxFileSize);
+        await using var buffer = new MemoryStream();
+        await sourceStream.CopyToAsync(buffer);
+
+        buffer.Position = 0;
+        var fileHash = FileStorageService.CalculateFileHash(buffer);
+        if (Logger.IsEnabled(LogLevel.Information))
+        {
+            Logger.LogInformation("Calculated file hash: {Hash} for file: {FileName}", fileHash, browserFile.Name);
+        }
+
+        var existingFile = await FileStorageService.FindDuplicateByHashAsync(fileHash, TenantContext.CurrentTenantId);
+        if (existingFile is not null)
+        {
+            return new FileUploadResult
+            {
+                Success = true,
+                IsDuplicate = true,
+                FileName = browserFile.Name,
+                Size = browserFile.Size,
+                ExistingFileId = existingFile.Id,
+                ExistingFileName = existingFile.FileName,
+                ExistingUploadedAt = existingFile.UploadedAt,
+                FileHash = fileHash,
+                Message = $"File already exists as '{existingFile.FileName}' (uploaded on {existingFile.UploadedAt:yyyy-MM-dd HH:mm:ss}). Duplicate not saved."
+            };
+        }
+
+        var uniqueFileName = GenerateUniqueFileName(browserFile.Name);
+        var filePath = Path.Combine(FileStorageService.DataDirectory, uniqueFileName);
+
+        buffer.Position = 0;
+        await using (var destinationStream = new FileStream(filePath, FileMode.Create, FileAccess.Write, FileShare.None))
+        {
+            await buffer.CopyToAsync(destinationStream);
+        }
+
+        var fileMetadata = await FileStorageService.AddFileAsync(
+            uniqueFileName,
+            browserFile.Name,
+            FileStorageService.DataDirectory,
+            browserFile.Size,
+            fileHash,
+            "uploaded",
+            TenantContext.CurrentTenantId);
+
+        return new FileUploadResult
+        {
+            Success = true,
+            IsDuplicate = false,
+            FileName = uniqueFileName,
+            Size = browserFile.Size,
+            FileHash = fileHash,
+            Message = "File uploaded successfully.",
+            ExistingFileId = fileMetadata.Id
+        };
+    }
+
+    private async Task<UrlUploadResult> UploadUrlAsync(string websiteUrl)
+    {
+        if (string.IsNullOrWhiteSpace(websiteUrl))
+        {
+            return new UrlUploadResult
+            {
+                Success = false,
+                Error = "No URL provided."
+            };
+        }
+
+        if (!Uri.TryCreate(websiteUrl, UriKind.Absolute, out var uri) ||
+            (uri.Scheme != Uri.UriSchemeHttp && uri.Scheme != Uri.UriSchemeHttps))
+        {
+            return new UrlUploadResult
+            {
+                Success = false,
+                Error = "Invalid URL format. URL must start with http:// or https://."
+            };
+        }
+
+        var initialized = await FileStorageService.EnsureInitializedAsync();
+        if (!initialized)
+        {
+            return new UrlUploadResult
+            {
+                Success = false,
+                Error = "File storage service initialization failed."
+            };
+        }
+
+        var urlHash = FileStorageService.CalculateUrlHash(websiteUrl);
+        if (Logger.IsEnabled(LogLevel.Information))
+        {
+            Logger.LogInformation("Calculated URL hash: {Hash} for URL: {Url}", urlHash, websiteUrl);
+        }
+
+        var existingUrl = await FileStorageService.FindDuplicateByHashAsync(urlHash, TenantContext.CurrentTenantId);
+        if (existingUrl is not null)
+        {
+            return new UrlUploadResult
+            {
+                Success = true,
+                IsDuplicate = true,
+                Url = websiteUrl,
+                ExistingFileId = existingUrl.Id,
+                ExistingFileName = existingUrl.FileName,
+                ExistingUploadedAt = existingUrl.UploadedAt,
+                Message = $"URL already exists as '{existingUrl.FileName}' (added on {existingUrl.UploadedAt:yyyy-MM-dd HH:mm:ss}). Duplicate not saved."
+            };
+        }
+
+        var fileName = GenerateFileNameFromUrl(uri);
+        var fileMetadata = await FileStorageService.AddUrlAsync(
+            fileName,
+            websiteUrl,
+            "uploaded",
+            TenantContext.CurrentTenantId);
+
+        return new UrlUploadResult
+        {
+            Success = true,
+            IsDuplicate = false,
+            Url = websiteUrl,
+            FileName = fileName,
+            Message = "Website URL added successfully.",
+            ExistingFileId = fileMetadata.Id
+        };
+    }
+
+    private static string GenerateUniqueFileName(string originalFileName)
+    {
+        var nameWithoutExtension = Path.GetFileNameWithoutExtension(originalFileName);
+        var extension = Path.GetExtension(originalFileName);
+        var timestamp = DateTime.UtcNow.ToString("yyyyMMdd_HHmmss");
+        var uniqueId = Guid.NewGuid().ToString("N")[..8];
+
+        return $"{nameWithoutExtension}_{timestamp}_{uniqueId}{extension}";
+    }
+
+    private static string GenerateFileNameFromUrl(Uri uri)
+    {
+        var host = uri.Host.Replace("www.", "");
+        var pathPart = uri.AbsolutePath.Trim('/').Replace("/", "_");
+
+        if (string.IsNullOrEmpty(pathPart))
+        {
+            pathPart = "index";
+        }
+        else if (pathPart.Length > 50)
+        {
+            pathPart = pathPart[..50];
+        }
+
+        var timestamp = DateTime.UtcNow.ToString("yyyyMMdd_HHmmss");
+        return $"{host}_{pathPart}_{timestamp}";
     }
 
     // Helper methods for UI rendering
