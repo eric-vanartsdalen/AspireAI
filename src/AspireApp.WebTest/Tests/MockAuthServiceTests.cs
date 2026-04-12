@@ -45,7 +45,7 @@ public class MockAuthServiceTests
         var navigationManager = new TestNavigationManager();
         var service = new MockAuthService(authenticationStateProvider, tenantContext, navigationManager);
 
-        await service.SignInAsync("microsoft", "ms-avery-collins", "/chat", TestContext.Current.CancellationToken);
+        await service.SignInAsync("demo", "demo-taylor-jones", "/chat", TestContext.Current.CancellationToken);
         await service.SignOutAsync("/", TestContext.Current.CancellationToken);
 
         Assert.EndsWith("/auth/mock/signout?returnUrl=%2F", navigationManager.Uri, StringComparison.Ordinal);

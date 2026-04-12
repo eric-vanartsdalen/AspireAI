@@ -20,9 +20,9 @@
         <AuthorizeView>
             <Authorized>
                 <div class="px-3 py-2">
-                    <div class="small text-uppercase text-muted">Signed in</div>
-                    <div class="fw-semibold">@AuthenticationContext.CurrentUser?.DisplayName</div>
-                    <div class="small text-muted">@AuthenticationContext.CurrentUser?.Email</div>
+                    <div class="small text-uppercase sidebar-label">Signed in</div>
+                    <div class="fw-semibold sidebar-text">@AuthenticationContext.CurrentUser?.DisplayName</div>
+                    <div class="small sidebar-label">@AuthenticationContext.CurrentUser?.Email</div>
                 </div>
 
                 <div class="tenant-context-section">
@@ -54,7 +54,7 @@
                 </div>
             </Authorized>
             <NotAuthorized>
-                <div class="px-3 py-2 text-muted small">
+                <div class="px-3 py-2 sidebar-label small">
                     Sign in from Home to unlock chat, uploads, weather, and tenant-aware navigation.
                 </div>
             </NotAuthorized>
