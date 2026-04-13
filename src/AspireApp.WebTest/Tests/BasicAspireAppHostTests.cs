@@ -240,6 +240,7 @@ public class BasicAspireAppHostTests : IClassFixture<TestFixture>
 
             var uploadButton = page.GetByRole(AriaRole.Button, new() { Name = "Start Upload" });
             await WaitForLocator(uploadButton);
+            await WaitForUploadButtonEnabledAsync(uploadButton);
             await uploadButton.HoverAsync();
             await uploadButton.ClickAsync(new LocatorClickOptions() { Delay = 250 });
             await WaitForPageLoadCompletion(page);
@@ -1089,6 +1090,22 @@ public class BasicAspireAppHostTests : IClassFixture<TestFixture>
         }
     }
 
+    private static async Task WaitForUploadButtonEnabledAsync(ILocator uploadButton)
+    {
+        var timeoutAt = DateTime.UtcNow.AddSeconds(10);
+        while (DateTime.UtcNow < timeoutAt)
+        {
+            if (!await uploadButton.IsDisabledAsync())
+            {
+                return;
+            }
+
+            await Task.Delay(250, TestContext.Current.CancellationToken);
+        }
+
+        Assert.Fail("Upload button stayed disabled after a file was selected.");
+    }
+
     private static string PullFilename(string filePathName)
     {
         // pull only the filename from the full path.
@@ -1103,12 +1120,122 @@ public class BasicAspireAppHostTests : IClassFixture<TestFixture>
 
     private static async Task ClickByRole(AriaRole role, string name, IPage page)
     {
-        ILocator element = page.GetByRole(role, new() { Name = name });
-        await WaitForLocator(element);
-        var target = element.First;
-        await target.HoverAsync();
-        await target.ClickAsync(new LocatorClickOptions() { Delay = 250 });
+        var target = page.GetByRole(role, new() { Name = name }).First;
+        var closeDesktopSidebarAfterClick = await EnsureNavigationTargetVisibleAsync(target, page);
+        await target.ClickAsync(new LocatorClickOptions() { Delay = 250, Force = true });
         await WaitForPageLoadCompletion(page);
+
+        if (closeDesktopSidebarAfterClick)
+        {
+            await EnsureDesktopSidebarClosedAsync(page);
+        }
+    }
+
+    private static async Task<bool> EnsureNavigationTargetVisibleAsync(ILocator target, IPage page)
+    {
+        await WaitForLocator(target, 30_000);
+
+        if (await IsWithinViewportAsync(target))
+        {
+            return false;
+        }
+
+        var desktopToggle = page.Locator(".sidebar-toggle").First;
+        if (await desktopToggle.IsVisibleAsync())
+        {
+            var openedDesktopSidebar = false;
+            if (!await IsDesktopSidebarOpenAsync(page))
+            {
+                await desktopToggle.ClickAsync(new LocatorClickOptions { Delay = 100, Force = true });
+                openedDesktopSidebar = true;
+            }
+
+            await WaitForNavigationTargetWithinViewportAsync(target);
+            return openedDesktopSidebar;
+        }
+
+        var mobileToggle = page.Locator(".navbar-toggler").First;
+        if (await mobileToggle.IsVisibleAsync())
+        {
+            if (!await mobileToggle.IsCheckedAsync())
+            {
+                await mobileToggle.ClickAsync(new LocatorClickOptions { Delay = 100, Force = true });
+            }
+
+            await WaitForNavigationTargetWithinViewportAsync(target);
+            return false;
+        }
+
+        await WaitForNavigationTargetWithinViewportAsync(target);
+        return false;
+    }
+
+    private static async Task EnsureDesktopSidebarClosedAsync(IPage page)
+    {
+        if (!await IsDesktopSidebarOpenAsync(page))
+        {
+            return;
+        }
+
+        var backdrop = page.Locator(".sidebar-backdrop").First;
+        if (await backdrop.IsVisibleAsync())
+        {
+            await backdrop.ClickAsync(new LocatorClickOptions { Delay = 100, Force = true });
+        }
+        else
+        {
+            var desktopToggle = page.Locator(".sidebar-toggle").First;
+            if (!await desktopToggle.IsVisibleAsync())
+            {
+                return;
+            }
+
+            await desktopToggle.ClickAsync(new LocatorClickOptions { Delay = 100, Force = true });
+        }
+
+        await page.WaitForFunctionAsync(
+            "() => document.querySelector('.page')?.classList.contains('sidebar-open') === false",
+            new PageWaitForFunctionOptions { Timeout = 5_000 });
+    }
+
+    private static async Task<bool> IsDesktopSidebarOpenAsync(IPage page)
+    {
+        return await page.Locator(".page").First.EvaluateAsync<bool>(
+            "element => element.classList.contains('sidebar-open')");
+    }
+
+    private static async Task<bool> IsWithinViewportAsync(ILocator target)
+    {
+        return await target.EvaluateAsync<bool>(
+            @"element => {
+                const rect = element.getBoundingClientRect();
+                const centerX = rect.left + (rect.width / 2);
+                const centerY = rect.top + (rect.height / 2);
+                return rect.width > 0 &&
+                    rect.height > 0 &&
+                    centerX >= 0 &&
+                    centerX <= window.innerWidth &&
+                    centerY >= 0 &&
+                    centerY <= window.innerHeight;
+            }");
+    }
+
+    private static async Task WaitForNavigationTargetWithinViewportAsync(ILocator target, int timeoutMs = 30_000)
+    {
+        await WaitForLocator(target, timeoutMs);
+
+        var waitStopwatch = Stopwatch.StartNew();
+        while (waitStopwatch.ElapsedMilliseconds < timeoutMs)
+        {
+            if (await IsWithinViewportAsync(target))
+            {
+                return;
+            }
+
+            await Task.Delay(100, TestContext.Current.CancellationToken);
+        }
+
+        Assert.Fail($"Navigation target '{await target.TextContentAsync()}' did not become clickable within {timeoutMs}ms.");
     }
 
     private static async Task WaitForLocator(ILocator locator, int timeout = 5000)
