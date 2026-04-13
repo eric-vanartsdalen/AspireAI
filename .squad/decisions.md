@@ -8,6 +8,7 @@
 > **Note (2026-04-09T15:39:12Z):** Added Upload Authentication Regression decision (Jeff, Buster): FileStorageService scoped injection removes HTTP self-call pattern in UploadData; tenant context preserved in-circuit. Regression coverage tightened. Build success. No inbox files to merge.
 > **Note (2026-04-10T07:48:03Z):** Merged 9 inbox decisions from chat persistence & rename focus work (Jeff, Warden, Eric, Buster). Consolidated chat history tests audit, persistence audit, service implementation, rename focus fix, upload auth test gap closure, privacy review notes, and user privacy directive. No exact duplicates; privacy review rejected prematurely (Warden flagged incomplete UI wiring, not design flaw). All implementation work complete. Inbox cleared.
 > **Note (2026-04-11T18:38:10Z):** Merged 1 inbox decision from chat persistence QA validation session (Buster). "Chat privacy tests should not wait on full AI completion" — acceptance seam is owner message persistence + owner-only visibility, not Ollama response completion. 7/7 focused tests passing. Inbox cleared.
+> **Note (2026-04-13T15:18:35Z):** Merged 5 inbox decisions from P1 Docling-to-LightRAG-to-Neo4j audit session (Jarvis, Bob, Buster, Verbal, Jeff). Key outcomes: Items 1 & 4 fully covered; items 2 & 3 require integration test gates (Phase 2); three roadmap items should be reworded to "foundation-only" to reduce Phase 2 execution risk. No duplicates found. Inbox cleared.
 
 <!-- Decisions are appended below. Each entry starts with ### -->
 
