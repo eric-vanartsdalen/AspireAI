@@ -12,6 +12,7 @@
             class="form-select tenant-select"
             disabled="@(TenantContext.Tenants.Count <= 1)"
             value="@TenantContext.CurrentTenantId"
+            data-testid="auth-current-tenant"
             @onchange="OnTenantChanged">
         @if (TenantContext.Tenants.Count == 0)
         {
@@ -25,18 +26,6 @@
             }
         }
     </select>
-    @if (AuthenticationContext.CurrentUser is not null)
-    {
-        <div class="tenant-hint" data-testid="auth-current-tenant">
-            Using @TenantContext.CurrentTenantName
-            @if (TenantContext.CurrentTenantIsProtected)
-            {
-                <span> · protected</span>
-            }
-            <span> · </span>
-            <a href="tenants">Manage</a>
-        </div>
-    }
 </div>
 
 @code {
