@@ -33,6 +33,18 @@
 
 <!-- Append new learnings below. Each entry is something lasting about the project. -->
 
+### 2026-04-18 — Ollama Contention: Serialize Embedding vs LightRAG Workloads
+
+**Pattern:** `process_document_task` in `processing.py` performs both Ollama embedding work (page + claim vectors) and triggers LightRAG ingestion (which also calls Ollama for LLM inference + embedding). Running these concurrently against a single Ollama instance with `MAX_ASYNC=1` causes serial queuing. With 60-second embedding timeouts, total processing time can exceed the 2-minute test polling window.
+
+**Fix:** Reordered the task to complete all Python-side Ollama calls BEFORE triggering LightRAG scan. Pure sequencing change — no logic or interface modifications. Eliminates the contention window.
+
+**Architecture Principle:** When multiple consumers share a single-instance AI model server (Ollama), orchestrate their workloads sequentially, not concurrently. This applies to any future pipeline step that calls Ollama.
+
+**Key Files:**
+- `src/AspireApp.PythonServices/app/routers/processing.py` (lines 59-170: processing task ordering)
+- `src/AspireApp.AppHost/AppHost.cs` (LightRAG config: `MAX_ASYNC=1`, `EMBEDDING_FUNC_MAX_ASYNC=1`)
+
 ### 2026-04-15 (Updated 2025-11-02) — Phase 2 Knowledge Layer: P2-B Confidence Scoring Slice Scoped
 
 **Scope:** Architecture decision on smallest next slice to unblock P2-B gate (confidence scoring).
