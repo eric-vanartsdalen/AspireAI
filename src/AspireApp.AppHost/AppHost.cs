@@ -48,7 +48,7 @@ public partial class Program
         }
 
         // Config with .NET Aspire
-        var aiChatModel = builder.AddParameterFromConfiguration("AI-Chat-Model", "AI-Chat-Model");
+        var aiModel = builder.AddParameterFromConfiguration("AI-Model", "AI-Model");
         var aiEmbeddings = builder.AddParameterFromConfiguration("AI-Embedding-Model", "AI-Embedding-Model");
         var aiEndpoint = builder.AddParameterFromConfiguration("AI-Endpoint", "AI-Endpoint");
 
@@ -86,12 +86,14 @@ public partial class Program
             .WithBindMount(redisDataPath, "/data")
             .WithRedisCommander();
 
-        // API Service
-        var apiService = builder.AddProject<Projects.AspireApp_ApiService>("apiservice")
-            .WithHttpHealthCheck("/health");
+        // BRAIN gateway service
+        var apiGateway = builder.AddProject<Projects.AspireApp_ApiService>("brain-gateway")
+            .WithEnvironment("AI-Endpoint", aiEndpoint.Resource)
+            .WithEnvironment("AI-Model", aiModel.Resource)
+            .WithHttpHealthCheck("/brain/health");
 
         // SETUP OLLAMA & MODEL CONTAINERS
-        var chatModelName = builder.Configuration["AI-Chat-Model"] ?? "phi4-mini:latest";
+        var chatModelName = builder.Configuration["AI-Model"] ?? "phi4-mini:latest";
         var embeddingModelName = builder.Configuration["AI-Embedding-Model"] ?? "nomic-embed-text:latest";
         var ollama = builder.AddOllama("ollama")
             .WithAnnotation(new ContainerImageAnnotation
@@ -165,7 +167,10 @@ public partial class Program
             .WithEnvironment("LIGHTRAG_DOC_STATUS_STORAGE", "JsonDocStatusStorage")
             .WithEnvironment("LIGHTRAG_GRAPH_STORAGE", "Neo4JStorage")
             .WithEnvironment("LIGHTRAG_VECTOR_STORAGE", "NanoVectorDBStorage")
-            .WithEnvironment("ENTITY_TYPES", "['Person', 'Creature', 'Organization', 'Location', 'Event', 'Concept', 'Method', 'Content', 'Data', 'Artifact', 'NaturalObject']")
+            .WithEnvironment("ENTITY_TYPES", "['Person','Organization','Location','Concept','Domain','Topic','Claim','Evidence'," +
+                "'Hypothesis','Insight','Method','Process','Workflow','Strategy','Framework','Model','Algorithm','System','Component'," +
+                "'Service','API','Tool','Technology','Data','Dataset','Metric','Parameter','Document','Work','Version','Event'," +
+                "'Task','Artifact']")
             .WithEnvironment("WORKERS", "2")
             .WithEnvironment("MAX_ASYNC", "1")
             .WithEnvironment("WEBUI_TITLE", "Local LightRAG")
@@ -175,7 +180,7 @@ public partial class Program
             .WithEnvironment("LLM_TIMEOUT", "420")
             .WithEnvironment("LLM_BINDING", "ollama")
             .WithEnvironment("LLM_BINDING_HOST", ollama.GetEndpoint("http"))
-            .WithEnvironment("LLM_MODEL", aiChatModel.Resource)
+            .WithEnvironment("LLM_MODEL", aiModel.Resource)
             .WithEnvironment("MAX_PARALLEL_INSERT", "2")
             .WithEnvironment("EMBEDDING_FUNC_MAX_ASYNC", "1")
             .WithEnvironment("EMBEDDING_BATCH_NUM", "1")
@@ -207,11 +212,12 @@ public partial class Program
             .WithExternalHttpEndpoints()
             .WithHttpHealthCheck("/health")
             .WithReference(uploadStore)
-            .WithReference(apiService)
+            .WithReference(apiGateway)
             .WithReference(ollama)
             .WithReference(appmodel)
             .WithEnvironment("AI-Endpoint", aiEndpoint.Resource)
-            .WithEnvironment("AI-Chat-Model", aiChatModel.Resource)
+            .WithEnvironment("AI-Model", aiModel.Resource)
+            .WithEnvironment("BRAIN_GATEWAY_URL", apiGateway.GetEndpoint("http"))
             .WithEnvironment("POSTGRES_USER", postgresUser.Resource)               // Pass Postgres username to Web UI services
             .WithEnvironment("POSTGRES_PASSWORD", postgresPass.Resource)           // Pass Postgres password to Web UI services
             .WithEnvironment("FileUpload__DataDirectory", sharedDataPath)          // Shared data directory for file uploads and processing
@@ -221,7 +227,7 @@ public partial class Program
             .WithEnvironment("PYTHON_SERVICE_URL", pythonServices.GetEndpoint("http")) // Get Python service endpoint
             .WaitFor(ollama)
             .WaitFor(appmodel)
-            .WaitFor(apiService)
+            .WaitFor(apiGateway)
             .WaitFor(postgres)
             .WaitFor(redis)
             .WaitFor(neo4jDb)

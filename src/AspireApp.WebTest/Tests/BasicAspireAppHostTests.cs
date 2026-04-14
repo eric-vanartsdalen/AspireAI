@@ -94,7 +94,7 @@ public class BasicAspireAppHostTests : IClassFixture<TestFixture>
             string graphDbLink = string.Empty;
             string lightRagLink = string.Empty;
             string pythonServiceLink = string.Empty;
-            string apiServiceLink = string.Empty;
+            string brainGatewayLink = string.Empty;
 
             for (int i = 0; i < rowNames.Count; i++)
             {
@@ -123,9 +123,10 @@ public class BasicAspireAppHostTests : IClassFixture<TestFixture>
                 {
                     pythonServiceLink = link.Trim();
                 }
-                if (name.Contains("ApiService", StringComparison.OrdinalIgnoreCase))
+                if (name.Contains("Brain-Gateway", StringComparison.OrdinalIgnoreCase) ||
+                    name.Contains("BrainGateway", StringComparison.OrdinalIgnoreCase))
                 {
-                    apiServiceLink = link.Trim();
+                    brainGatewayLink = link.Trim();
                 }
             }
 
@@ -133,7 +134,7 @@ public class BasicAspireAppHostTests : IClassFixture<TestFixture>
             Assert.False(string.IsNullOrWhiteSpace(webFrontendLink), "Web Frontend link should not be empty");
             Assert.False(string.IsNullOrWhiteSpace(graphDbLink), "Graph-Db link should not be empty");
             Assert.False(string.IsNullOrEmpty(pythonServiceLink), "PythonService link should not be empty");
-            Assert.False(string.IsNullOrEmpty(apiServiceLink), "ApiService link should not be empty");
+            Assert.False(string.IsNullOrEmpty(brainGatewayLink), "Brain Gateway link should not be empty");
 
             Assert.True(ollamaLink.Contains(_data.OllamaUri, StringComparison.OrdinalIgnoreCase),
                 $"Ollama link ({ollamaLink}) should contain {_data.OllamaUri}");
@@ -148,8 +149,8 @@ public class BasicAspireAppHostTests : IClassFixture<TestFixture>
             }
             Assert.True(pythonServiceLink.Contains(_data.PythonServiceUri, StringComparison.OrdinalIgnoreCase),
                 $"PythonService link ({pythonServiceLink}) should contain {_data.PythonServiceUri}");
-            Assert.True(apiServiceLink.Contains(_data.ApiServiceUri, StringComparison.OrdinalIgnoreCase),
-                $"ApiService link ({apiServiceLink}) should contain {_data.ApiServiceUri}");
+            Assert.True(brainGatewayLink.Contains(_data.BrainGatewayUri, StringComparison.OrdinalIgnoreCase),
+                $"Brain Gateway link ({brainGatewayLink}) should contain {_data.BrainGatewayUri}");
         });
     }
 

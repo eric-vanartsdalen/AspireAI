@@ -110,7 +110,7 @@ public class TestFixture : IAsyncLifetime
         AppHostMapping.GraphDBUri = _app.GetEndpoint("graph-db", "http").AbsoluteUri.TrimEnd('/');
         AppHostMapping.LightRagUri = _app.GetEndpoint("lightrag", "http").AbsoluteUri.TrimEnd('/');
         AppHostMapping.PythonServiceUri = _app.GetEndpoint("python-service", "http").AbsoluteUri.TrimEnd('/');
-		AppHostMapping.ApiServiceUri = _app.GetEndpoint("apiservice", "https").AbsoluteUri.TrimEnd('/');
+		AppHostMapping.BrainGatewayUri = _app.GetEndpoint("brain-gateway", "https").AbsoluteUri.TrimEnd('/');
         AppHostMapping.SharedDataPath = _testDataPath;
         AppHostMapping.SharedDatabasePath = _testDatabasePath;
 

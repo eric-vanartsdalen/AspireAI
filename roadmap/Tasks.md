@@ -53,6 +53,10 @@ Note: This will be a living document.
 - [x] `test_services.py` now runs as a real pytest smoke suite and no longer masks database startup failures
 - [x] Regression coverage now exercises the stale `file_hash` upgrade path
 
+### Phase 0 Closeout Note
+
+> Phase 0 is complete. Outstanding Docker-backed integration validation (cold-start orchestration, service health checks, cross-container volume access) has been carried forward to Phase 4 (Evaluate + Harden) as part of the cross-service integration test suite — see Phase 4 quality gate P4-B.
+
 ### Processing Pipeline Stabilization (P1)
 
 - [x] Process uploaded records through Docling and persist page content in `document_pages`
@@ -75,28 +79,28 @@ Note: This will be a living document.
 
 ### Project Structure and Branch Setup
 
-- [ ] Create `brain-pivot` feature branch from current main
-- [ ] Create `contracts/` directory at repo root for shared BRAIN data contracts
-- [ ] Create `app/brain/` Python package structure:
+- [x] Create `brain-pivot` feature branch from current main — *Created by Eric (2026-07-15)*
+- [x] Create `contracts/` directory at repo root for shared BRAIN data contracts
+- [x] Create `app/brain/` Python package structure:
   - `app/brain/__init__.py`
   - `app/brain/ingestion/` - connector and normalization modules
   - `app/brain/validation/` - claim extraction, confidence scoring
   - `app/brain/knowledge/` - Neo4j graph + vector, retrieval
   - `app/brain/reasoning/` - agent orchestration, proactive monitoring
-- [ ] Create `app/contracts/` Python package for shared Pydantic models
+- [x] Create `app/contracts/` Python package for shared Pydantic models
 
 **Files:** New directories + `__init__.py` files
 
 ### ApiService Repurpose to Gateway
 
-- [ ] Delete weather forecast stub from `AspireApp.ApiService/Program.cs`
-- [ ] Scaffold BRAIN API Gateway endpoints:
+- [x] Delete weather forecast stub from `AspireApp.ApiService/Program.cs`
+- [x] Scaffold BRAIN API Gateway endpoints:
   - `POST /brain/chat` (stub - returns 501 until Phase 3)
   - `POST /brain/ingest` (stub - returns 501 until Phase 2)
   - `POST /brain/query` (stub - returns 501 until Phase 2)
   - `GET /brain/health`
-- [ ] Add `Microsoft.Extensions.AI` package reference (replace Semantic Kernel dependency in gateway)
-- [ ] Update AppHost to wire Gateway as entry point for Web frontend
+- [x] Add `Microsoft.Extensions.AI` package reference (replace Semantic Kernel dependency in gateway)
+- [x] Update AppHost to wire Gateway as entry point for Web frontend
 
 **Files:**
 - `src/AspireApp.ApiService/Program.cs`
@@ -105,12 +109,12 @@ Note: This will be a living document.
 
 ### Documentation and Config
 
-- [ ] Update `README.md` to reflect BRAIN vision
-- [ ] Resolve AI model config key mismatch - standardize `AI-Model` across AppHost and Web services
-- [ ] Pin Python dependency versions in `requirements.txt`
-- [ ] Consolidate duplicate `ServiceDiscoveryUtilities` classes into single shared class
-- [ ] Remove legacy EF entity classes (`Document`, `ProcessedDocument`) that reference non-existent tables
-- [ ] Update `.squad/decisions.md` with BRAIN pivot decision
+- [x] Update `README.md` to reflect BRAIN vision
+- [x] Resolve AI model config key mismatch - standardize `AI-Model` across AppHost and Web services
+- [x] Pin Python dependency versions in `requirements.txt`
+- [x] Consolidate duplicate `ServiceDiscoveryUtilities` classes into single shared class
+- [x] Remove legacy EF entity classes (`Document`, `ProcessedDocument`) that reference non-existent tables
+- [x] Update `.squad/decisions.md` with BRAIN pivot decision
 
 ---
 
@@ -219,6 +223,7 @@ Note: This will be a living document.
 - [ ] Retrieval quality metrics - precision/recall against known test sets
 - [ ] Honest failure mode tests - verify "I don't know" for out-of-knowledge questions
 - [ ] Cross-service integration test suite (upload to ingest to validate to store to query to chat to cite)
+- [ ] **[P0 Carry-Forward] Docker-backed integration validation** — cold-start Aspire orchestration, verify all service health checks pass, validate cross-container volume access (uploads mounted from host to Python container)
 - [ ] **[P1 Carry-Forward] Prove LightRAG-backed retrieval reads persisted Neo4j state** — integration test verifying that Knowledge Layer queries return documents ingested via LightRAG and confirmed in Neo4j
 - [ ] Latency baselines - document acceptable response times
 
@@ -258,7 +263,7 @@ Note: This will be a living document.
 | Gate | Criteria | Status | Phase |
 |------|----------|--------|-------|
 | P0-A | Feature branch exists with BRAIN directory structure | Not started | 0 |
-| P0-B | ApiService weather stub deleted; Gateway scaffolded | Not started | 0 |
+| P0-B | ApiService weather stub deleted; Gateway scaffolded | Complete | 0 |
 | P1-A | All BRAIN contracts defined (Python + C#) | Not started | 1 |
 | P1-B | Serialization round-trip test passes | Not started | 1 |
 | P2-A | Upload to CanonicalDocument to Neo4j storage end-to-end | Not started | 2 |
@@ -270,6 +275,7 @@ Note: This will be a living document.
 | P3-D | Blazor chat routes through Gateway (no direct Ollama) | Not started | 3 |
 | P3-G | Proactive suggestion appears without prompting | Not started | 3 |
 | P4-A | Automated evaluation suite runs | Not started | 4 |
+| P4-B | Docker-backed integration validation passes (cold-start, health checks, volume access) | Not started | 4 |
 | P4-C | BRAIN says "insufficient evidence" for unknown topics | Not started | 4 |
 
 ---
