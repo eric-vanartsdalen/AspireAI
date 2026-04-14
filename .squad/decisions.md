@@ -10,6 +10,7 @@
 > **Note (2026-04-10T07:48:03Z):** Merged 9 inbox decisions from chat persistence & rename focus work (Jeff, Warden, Eric, Buster). Consolidated chat history tests audit, persistence audit, service implementation, rename focus fix, upload auth test gap closure, privacy review notes, and user privacy directive. No exact duplicates; privacy review rejected prematurely (Warden flagged incomplete UI wiring, not design flaw). All implementation work complete. Inbox cleared.
 > **Note (2026-04-11T18:38:10Z):** Merged 1 inbox decision from chat persistence QA validation session (Buster). "Chat privacy tests should not wait on full AI completion" — acceptance seam is owner message persistence + owner-only visibility, not Ollama response completion. 7/7 focused tests passing. Inbox cleared.
 > **Note (2026-04-13T15:18:35Z):** Merged 5 inbox decisions from P1 Docling-to-LightRAG-to-Neo4j audit session (Jarvis, Bob, Buster, Verbal, Jeff). Key outcomes: Items 1 & 4 fully covered; items 2 & 3 require integration test gates (Phase 2); three roadmap items should be reworded to "foundation-only" to reduce Phase 2 execution risk. No duplicates found. Inbox cleared.
+> **Note (2026-04-14T06:17:03Z):** Merged 1 inbox decision from Phase 0 gate closeout session (Bob). "Phase 0 Gate Closeout: BRAIN Pivot Decision Recording Complete" — Decision-recording gate closed; BRAIN pivot recorded; Docker validation caveat noted as outstanding quality gate (not blocking Phase 1 parallel work). No duplicates found. Inbox cleared.
 
 <!-- Decisions are appended below. Each entry starts with ### -->
 
@@ -1269,6 +1270,59 @@ User reported three failing test classes: `AuthenticatedUploadUxTests`, `AuthUxF
    - ✅ **Prevents:** Tenant escalation; cross-tenant file access
 
 5. **Secure Credential Handling**
+
+---
+
+## Phase 0 Gate Closeout: BRAIN Pivot Decision Recording Complete — Bob — 2026-07-15
+
+**Author:** Bob (Architect)  
+**Date:** 2026-07-15  
+**Scope:** Phase 0 decision-recording gate completion and pending integration validation caveat  
+**Status:** DECISION-RECORDING GATE CLOSED; DOCKER VALIDATION CAVEAT OUTSTANDING
+
+### Summary
+
+The Phase 0 decision-recording gate has closed. The BRAIN pivot decision (reframing AspireAI as an agentic knowledge assistant with phases 0–6 roadmap) is now recorded in `.squad/decisions.md` as the official architectural direction.
+
+### Gate Status Update
+
+#### ✅ Decision-Recording Gate: CLOSED
+
+- **What was pending:** BRAIN pivot decision needed formal documentation in shared decision log
+- **What's done:** Decision recorded at `.squad/decisions.md` with full context:
+  - Product vision (agentic knowledge assistant)
+  - Roadmap restructuring (legacy phases 0–8 → BRAIN phases 0–6)
+  - Architectural approvals (Eric checkout of `brain-pivot` branch + team alignment)
+  - Phase 0 scaffolding decisions (Python structure, .NET gateway repurpose, config alignment)
+  - Risk profile and rollback criteria documented
+- **Verification:** Roadmap Tasks.md Phase 0 checklist now 5/5 complete (no unchecked items remain in this gate)
+
+#### ⏳ Remaining Caveat: Docker-Backed Integration Validation
+
+The Phase 0 implementation is **complete and documented**, but a quality caveat remains unfulfilled:
+
+**Caveat:** Buster's QA review (from `.squad/decisions.md` note 2025-11-02) flagged that "full merge-confidence claim requires live Docker orchestration validation" — i.e., Phase 0 logic must be tested end-to-end with all services running via Aspire AppHost before declaring Phase 0 stable for main branch merge.
+
+**Current state:** Phase 0 scaffolding is in place (directory structure, gateway endpoints, decision records) and **static code review passed**. But the decision-gating process is not yet complete until Buster's Docker-backed integration test suite confirms cross-service contracts are honored at runtime.
+
+**Implication:** Phase 0 feature branch (`brain-pivot`) is **merge-ready on decision grounds** but **not merge-approved on QA grounds** without Docker validation. This is not a blocker for Phase 1 contract work to proceed (Phases can overlap), but QA signoff is required before `brain-pivot` → `main` promotion.
+
+### Next Steps
+
+1. **Phase 1 work may proceed** in parallel — contracts can be drafted and tested independently.
+2. **Docker validation** (Buster's scope) should run against Phase 0 scaffolding as a separate track to unblock main merge.
+3. **No roadmap changes** — Phase 0 tasks.md remains stable; Phase 1 contract tasks are ready for intake.
+
+### Decision History
+
+This gate closeout records that the phase-0 decision-recording obligation is satisfied. Buster's historical QA review remains valid and is not rewritten — the caveat is appended here as a note on gate state, not a revision of prior QA findings.
+
+---
+
+**Related decisions:**
+- BRAIN Pivot Decision (2026-07-15) — Phase 0 scaffolding approved
+- QA Gate Assessment (2025-11-02, Buster) — Docker validation caveat noted
+- Phase 0 Scaffolding Decisions (Jarvis, Jeff, 2025-11-02) — Python structure, gateway repurpose, config alignment
    - No hardcoded secrets in committed configuration
    - `dotnet user-secrets` only for local credential storage
    - ✅ **Prevents:** Credential exposure in source control
