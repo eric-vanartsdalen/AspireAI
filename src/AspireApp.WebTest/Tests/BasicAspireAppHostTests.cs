@@ -30,6 +30,7 @@ public class BasicAspireAppHostTests : IClassFixture<TestFixture>
             "AspireApp.WebTest", "DataExample", "processing-smoke.pdf");
     private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web);
     private static readonly TimeSpan PythonVisibilityTimeout = TimeSpan.FromSeconds(30);
+    private static readonly TimeSpan WebApiTimeout = TimeSpan.FromSeconds(90);
     private static readonly TimeSpan PythonVisibilityPollInterval = TimeSpan.FromMilliseconds(500);
     private static readonly TimeSpan ProcessingPollTimeout = TimeSpan.FromMinutes(2);
     private static readonly TimeSpan ProcessingPollInterval = TimeSpan.FromSeconds(1);
@@ -241,11 +242,14 @@ public class BasicAspireAppHostTests : IClassFixture<TestFixture>
             var uploadButton = page.GetByRole(AriaRole.Button, new() { Name = "Start Upload" });
             await WaitForLocator(uploadButton);
             await WaitForUploadButtonEnabledAsync(uploadButton);
-            await uploadButton.HoverAsync();
-            await uploadButton.ClickAsync(new LocatorClickOptions() { Delay = 250 });
+            await uploadButton.ClickAsync();
             await WaitForPageLoadCompletion(page);
 
-            var uploadedFile = await WaitForUploadedFileAsync(webClient);
+            var filePrefix = Path.GetFileNameWithoutExtension(TestFile);
+            var uploadedRow = await WaitForUploadSuccessAsync(page, filePrefix);
+            Assert.Contains(filePrefix, uploadedRow, StringComparison.OrdinalIgnoreCase);
+
+            var uploadedFile = await WaitForUploadedFileByPrefixAsync(webClient, filePrefix, 60000);
             var originalTestFileName = PullFilename(TestFile);
 
             Assert.True(uploadedFile.Id > 0,
@@ -254,27 +258,14 @@ public class BasicAspireAppHostTests : IClassFixture<TestFixture>
                 "Upload completed, but the API-backed file state did not expose the stored file name.");
             Assert.Equal(originalTestFileName, uploadedFile.OriginalFileName);
             Assert.Equal("upload", uploadedFile.SourceType);
-            Assert.Equal("uploaded", uploadedFile.Status);
+            Assert.True(
+                new[] { "uploaded", "processing", "processed" }.Contains(uploadedFile.Status, StringComparer.OrdinalIgnoreCase),
+                $"Upload completed, but the initial status '{uploadedFile.Status}' was unexpected.");
 
             var documentId = uploadedFile.Id;
             await WaitForUploadedFileRowAsync(page, uploadedFile.FileName!);
 
             using var pythonClient = CreatePythonServiceHttpClient();
-            var triggerEndpoint = $"processing/process-document/{documentId}";
-            using var triggerResponse = await pythonClient.PostAsync(triggerEndpoint, content: null, TestContext.Current.CancellationToken);
-            var triggerBody = await triggerResponse.Content.ReadAsStringAsync(TestContext.Current.CancellationToken);
-
-            if (!triggerResponse.IsSuccessStatusCode)
-            {
-                var pythonVisibilityDiagnostic = await GetPythonDocumentVisibilityDiagnosticAsync(pythonClient, documentId);
-                Assert.Fail(
-                    $"Python processing trigger '{BuildAbsoluteUri(_data.PythonServiceUri, triggerEndpoint)}' returned {(int)triggerResponse.StatusCode} {triggerResponse.ReasonPhrase}. Response: {triggerBody}{Environment.NewLine}{pythonVisibilityDiagnostic}");
-            }
-
-            var triggerResult = DeserializeJson<ProcessingTriggerResponse>(triggerBody, $"POST /{triggerEndpoint}");
-            Assert.False(string.IsNullOrWhiteSpace(triggerResult.Message),
-                $"Python processing trigger returned success but no message. Response: {triggerBody}");
-
             var finalStatus = await PollForProcessingCompletionAsync(pythonClient, documentId);
             Assert.Equal("processed", finalStatus.Status);
             Assert.NotNull(finalStatus.StartedAt);
@@ -293,6 +284,8 @@ public class BasicAspireAppHostTests : IClassFixture<TestFixture>
             Assert.Equal("processed", finalUploadState.Status);
 
             var artifacts = await WaitForProcessedArtifactsAsync(documentId);
+            using var lightRagClient = CreateLightRagHttpClient();
+            await WaitForLightRagIngestionAsync(lightRagClient, artifacts);
             Assert.True(File.Exists(artifacts.DocumentJsonPath),
                 $"Expected Docling document artifact at '{artifacts.DocumentJsonPath}', but it was not created.");
             Assert.True(File.Exists(artifacts.FirstPagePath),
@@ -315,6 +308,12 @@ public class BasicAspireAppHostTests : IClassFixture<TestFixture>
         using var webClient = clientInfo.Client;
         await DeleteExistingTestUploadsAsync(webClient);
         var uploadedFile = await UploadTestFileViaApiAsync(webClient);
+        using var pythonClient = CreatePythonServiceHttpClient();
+        var finalStatus = await PollForProcessingCompletionAsync(pythonClient, uploadedFile.Id);
+        Assert.Equal("processed", finalStatus.Status);
+        var artifacts = await WaitForProcessedArtifactsAsync(uploadedFile.Id);
+        using var lightRagClient = CreateLightRagHttpClient();
+        await WaitForLightRagIngestionAsync(lightRagClient, artifacts);
 
         await WithPageAsync(async page =>
         {
@@ -332,6 +331,8 @@ public class BasicAspireAppHostTests : IClassFixture<TestFixture>
             await targetFileToDelete.ClickAsync(new LocatorClickOptions() { Delay = 250 });
             await WaitForPageLoadCompletion(page);
             await WaitForUploadedFileRowRemovedAsync(page, uploadedFile.FileName!);
+            await WaitForUploadedFileRemovedFromApiAsync(webClient, uploadedFile.Id);
+            await WaitForDeletedArtifactsAsync(uploadedFile, artifacts);
 
             IReadOnlyList<ILocator> updatedFilenameRows = await GetDocumentSourceTableRows(page);
             foreach (var fileCell in updatedFilenameRows)
@@ -342,6 +343,9 @@ public class BasicAspireAppHostTests : IClassFixture<TestFixture>
                 Debug.WriteLine(cellText);
             }
         });
+
+        using var deletedDocumentResponse = await pythonClient.GetAsync($"documents/{uploadedFile.Id}", TestContext.Current.CancellationToken);
+        Assert.Equal(System.Net.HttpStatusCode.NotFound, deletedDocumentResponse.StatusCode);
     }
 
     private async Task WithPageAsync(Func<IPage, Task> testAction)
@@ -389,7 +393,7 @@ public class BasicAspireAppHostTests : IClassFixture<TestFixture>
         var client = new HttpClient(handler)
         {
             BaseAddress = new Uri($"{_data.WebfrontendUri.TrimEnd('/')}/"),
-            Timeout = TimeSpan.FromSeconds(30)
+            Timeout = WebApiTimeout
         };
 
         await AuthenticateAsync(client);
@@ -406,6 +410,15 @@ public class BasicAspireAppHostTests : IClassFixture<TestFixture>
         {
             BaseAddress = new Uri($"{_data.PythonServiceUri.TrimEnd('/')}/"),
             Timeout = TimeSpan.FromSeconds(30)
+        };
+    }
+
+    private HttpClient CreateLightRagHttpClient()
+    {
+        return new HttpClient
+        {
+            BaseAddress = new Uri($"{_data.LightRagUri.TrimEnd('/')}/"),
+            Timeout = WebApiTimeout
         };
     }
 
@@ -471,7 +484,7 @@ public class BasicAspireAppHostTests : IClassFixture<TestFixture>
         }
     }
 
-    private async Task<UploadedFileApiModel> WaitForUploadedFileAsync(HttpClient webClient, int timeoutMs = 30000)
+    private async Task<UploadedFileApiModel> WaitForUploadedFileAsync(HttpClient webClient, int timeoutMs = 60000)
     {
         var waitStopwatch = Stopwatch.StartNew();
         var testFileName = PullFilename(TestFile);
@@ -508,6 +521,41 @@ public class BasicAspireAppHostTests : IClassFixture<TestFixture>
         return default!;
     }
 
+    private async Task<UploadedFileApiModel> WaitForUploadedFileByPrefixAsync(HttpClient webClient, string filePrefix, int timeoutMs)
+    {
+        var waitStopwatch = Stopwatch.StartNew();
+        string lastPayload = "<no upload state returned>";
+
+        while (waitStopwatch.ElapsedMilliseconds < timeoutMs)
+        {
+            using var listResponse = await webClient.GetAsync("api/FileUpload", TestContext.Current.CancellationToken);
+            lastPayload = await listResponse.Content.ReadAsStringAsync(TestContext.Current.CancellationToken);
+
+            Assert.True(listResponse.IsSuccessStatusCode,
+                $"Upload state query '{BuildAbsoluteUri(_data.WebfrontendUri, "api/FileUpload")}' returned {(int)listResponse.StatusCode} {listResponse.ReasonPhrase}. Response: {lastPayload}");
+
+            var listResult = DeserializeJson<UploadedFilesApiResponse>(lastPayload, "GET /api/FileUpload");
+            Assert.True(listResult.Success, $"Upload state query returned success=false. Response: {lastPayload}");
+
+            var uploadedFile = listResult.Files
+                .Where(file => string.Equals(file.SourceType, "upload", StringComparison.OrdinalIgnoreCase))
+                .OrderByDescending(file => file.Id)
+                .FirstOrDefault(file =>
+                    !string.IsNullOrWhiteSpace(file.FileName) &&
+                    file.FileName.StartsWith(filePrefix, StringComparison.OrdinalIgnoreCase));
+
+            if (uploadedFile is not null)
+            {
+                return uploadedFile;
+            }
+
+            await Task.Delay(500, TestContext.Current.CancellationToken);
+        }
+
+        Assert.Fail($"Timed out after {timeoutMs}ms waiting for an uploaded file with prefix '{filePrefix}'. Last payload: {lastPayload}");
+        return default!;
+    }
+
     private async Task<UploadedFileApiModel> UploadTestFileViaApiAsync(HttpClient webClient)
     {
         await using var fileStream = File.OpenRead(TestFile);
@@ -527,6 +575,59 @@ public class BasicAspireAppHostTests : IClassFixture<TestFixture>
         Assert.False(uploadResult.IsDuplicate, $"Seed upload unexpectedly returned a duplicate response. Response: {uploadBody}");
 
         return await WaitForUploadedFileAsync(webClient);
+    }
+
+    private async Task WaitForUploadedFileRemovedFromApiAsync(HttpClient webClient, int documentId, int timeoutMs = 30000)
+    {
+        var waitStopwatch = Stopwatch.StartNew();
+        string lastPayload = "<no upload state returned>";
+
+        while (waitStopwatch.ElapsedMilliseconds < timeoutMs)
+        {
+            using var listResponse = await webClient.GetAsync("api/FileUpload", TestContext.Current.CancellationToken);
+            lastPayload = await listResponse.Content.ReadAsStringAsync(TestContext.Current.CancellationToken);
+
+            Assert.True(listResponse.IsSuccessStatusCode,
+                $"Upload state query '{BuildAbsoluteUri(_data.WebfrontendUri, "api/FileUpload")}' returned {(int)listResponse.StatusCode} {listResponse.ReasonPhrase}. Response: {lastPayload}");
+
+            var listResult = DeserializeJson<UploadedFilesApiResponse>(lastPayload, "GET /api/FileUpload");
+            Assert.True(listResult.Success, $"Upload state query returned success=false. Response: {lastPayload}");
+
+            if (listResult.Files.All(file => file.Id != documentId))
+            {
+                return;
+            }
+
+            await Task.Delay(ProcessingPollInterval, TestContext.Current.CancellationToken);
+        }
+
+        Assert.Fail(
+            $"Timed out after {timeoutMs}ms waiting for document {documentId} to disappear from API-backed upload state. Last payload: {lastPayload}");
+    }
+
+    private async Task WaitForDeletedArtifactsAsync(UploadedFileApiModel uploadedFile, ProcessedArtifactsInfo artifacts)
+    {
+        var originalUploadPath = Path.Combine(_data.SharedDataPath, uploadedFile.FileName!);
+        var processedDocumentDirectory = Path.Combine(_data.SharedDataPath, "processed", "documents", uploadedFile.Id.ToString());
+        var stagedInputPath = artifacts.LightRagStagedInputPath;
+        var pollStopwatch = Stopwatch.StartNew();
+
+        while (pollStopwatch.Elapsed < ProcessingPollTimeout)
+        {
+            var originalDeleted = !File.Exists(originalUploadPath);
+            var processedDeleted = !Directory.Exists(processedDocumentDirectory);
+            var stagedDeleted = string.IsNullOrWhiteSpace(stagedInputPath) || !File.Exists(stagedInputPath);
+
+            if (originalDeleted && processedDeleted && stagedDeleted)
+            {
+                return;
+            }
+
+            await Task.Delay(ProcessingPollInterval, TestContext.Current.CancellationToken);
+        }
+
+        Assert.Fail(
+            $"Timed out after {ProcessingPollTimeout.TotalSeconds:N0}s waiting for document {uploadedFile.Id} artifacts to be deleted. UploadPathExists={File.Exists(originalUploadPath)}, ProcessedDirectoryExists={Directory.Exists(processedDocumentDirectory)}, StagedPathExists={!string.IsNullOrWhiteSpace(stagedInputPath) && File.Exists(stagedInputPath)}");
     }
 
     private async Task<string> GetPythonDocumentVisibilityDiagnosticAsync(HttpClient pythonClient, int documentId)
@@ -746,6 +847,42 @@ public class BasicAspireAppHostTests : IClassFixture<TestFixture>
         return default!;
     }
 
+    private static async Task WaitForLightRagIngestionAsync(HttpClient lightRagClient, ProcessedArtifactsInfo artifacts, int timeoutMs = 120000)
+    {
+        var stagedInputFileName = Path.GetFileName(artifacts.LightRagStagedInputPath);
+        Assert.False(string.IsNullOrWhiteSpace(stagedInputFileName), "Processed artifacts did not record a LightRAG staged input path.");
+
+        var waitStopwatch = Stopwatch.StartNew();
+        string lastDocumentsPayload = "<no LightRAG documents payload returned>";
+        string lastPipelinePayload = "<no LightRAG pipeline payload returned>";
+
+        while (waitStopwatch.ElapsedMilliseconds < timeoutMs)
+        {
+            using var documentsResponse = await lightRagClient.GetAsync("documents", TestContext.Current.CancellationToken);
+            lastDocumentsPayload = await documentsResponse.Content.ReadAsStringAsync(TestContext.Current.CancellationToken);
+            Assert.True(documentsResponse.IsSuccessStatusCode,
+                $"LightRAG documents query returned {(int)documentsResponse.StatusCode} {documentsResponse.ReasonPhrase}. Response: {lastDocumentsPayload}");
+
+            var documentVisible = LightRagDocumentsContainFile(lastDocumentsPayload, stagedInputFileName);
+
+            using var pipelineResponse = await lightRagClient.GetAsync("documents/pipeline_status", TestContext.Current.CancellationToken);
+            lastPipelinePayload = await pipelineResponse.Content.ReadAsStringAsync(TestContext.Current.CancellationToken);
+            Assert.True(pipelineResponse.IsSuccessStatusCode,
+                $"LightRAG pipeline query returned {(int)pipelineResponse.StatusCode} {pipelineResponse.ReasonPhrase}. Response: {lastPipelinePayload}");
+
+            var pipelineBusy = LightRagPipelineBusy(lastPipelinePayload);
+            if (documentVisible && !pipelineBusy)
+            {
+                return;
+            }
+
+            await Task.Delay(500, TestContext.Current.CancellationToken);
+        }
+
+        Assert.Fail(
+            $"Timed out after {timeoutMs}ms waiting for LightRAG ingestion of '{stagedInputFileName}'. Last documents payload: {lastDocumentsPayload}{Environment.NewLine}Last pipeline payload: {lastPipelinePayload}");
+    }
+
     private static LightRagHandoffInfo? TryReadLightRagHandoffInfo(string metadataPath)
     {
         if (!File.Exists(metadataPath))
@@ -793,6 +930,63 @@ public class BasicAspireAppHostTests : IClassFixture<TestFixture>
         catch (JsonException)
         {
             return null;
+        }
+    }
+
+    private static bool LightRagDocumentsContainFile(string payload, string targetFileName)
+    {
+        try
+        {
+            using var document = JsonDocument.Parse(payload);
+            if (!document.RootElement.TryGetProperty("statuses", out var statusesElement) ||
+                statusesElement.ValueKind != JsonValueKind.Object)
+            {
+                return false;
+            }
+
+            foreach (var status in statusesElement.EnumerateObject())
+            {
+                if (status.Value.ValueKind != JsonValueKind.Array)
+                {
+                    continue;
+                }
+
+                foreach (var entry in status.Value.EnumerateArray())
+                {
+                    if (!entry.TryGetProperty("file_path", out var filePathElement) ||
+                        filePathElement.ValueKind != JsonValueKind.String)
+                    {
+                        continue;
+                    }
+
+                    var fileName = Path.GetFileName(filePathElement.GetString());
+                    if (string.Equals(fileName, targetFileName, StringComparison.OrdinalIgnoreCase))
+                    {
+                        return true;
+                    }
+                }
+            }
+        }
+        catch (JsonException)
+        {
+            return false;
+        }
+
+        return false;
+    }
+
+    private static bool LightRagPipelineBusy(string payload)
+    {
+        try
+        {
+            using var document = JsonDocument.Parse(payload);
+            return document.RootElement.TryGetProperty("busy", out var busyElement) &&
+                   busyElement.ValueKind is JsonValueKind.True or JsonValueKind.False &&
+                   busyElement.GetBoolean();
+        }
+        catch (JsonException)
+        {
+            return true;
         }
     }
 
@@ -940,7 +1134,7 @@ public class BasicAspireAppHostTests : IClassFixture<TestFixture>
         Assert.Fail($"Uploaded file '{fileName}' did not appear in the Upload Documents table within {timeoutMs}ms.");
     }
 
-    private static async Task WaitForUploadedFileRowRemovedAsync(IPage page, string fileName, int timeoutMs = 15000)
+    private static async Task WaitForUploadedFileRowRemovedAsync(IPage page, string fileName, int timeoutMs = 120000)
     {
         var waitStopwatch = Stopwatch.StartNew();
 
@@ -968,6 +1162,69 @@ public class BasicAspireAppHostTests : IClassFixture<TestFixture>
         }
 
         Assert.Fail($"Uploaded file '{fileName}' still appeared in the Upload Documents table after deletion.");
+    }
+
+    private static async Task<string> WaitForUploadSuccessAsync(IPage page, string filePrefix)
+    {
+        var timeoutAt = DateTime.UtcNow.AddSeconds(30);
+        var lastAlert = string.Empty;
+
+        while (DateTime.UtcNow < timeoutAt)
+        {
+            var alert = page.Locator(".alert").First;
+            try
+            {
+                if (await alert.IsVisibleAsync())
+                {
+                    lastAlert = (await alert.TextContentAsync()) ?? string.Empty;
+                    if (lastAlert.Contains("Authentication is required", StringComparison.OrdinalIgnoreCase))
+                    {
+                        Assert.Fail($"Upload surfaced an authentication failure. Alert: {lastAlert}");
+                    }
+
+                    if (lastAlert.Contains("Upload Failed", StringComparison.OrdinalIgnoreCase) ||
+                        lastAlert.Contains("Error:", StringComparison.OrdinalIgnoreCase))
+                    {
+                        Assert.Fail($"Upload failed. Alert: {lastAlert}");
+                    }
+                }
+            }
+            catch (PlaywrightException)
+            {
+            }
+
+            var rowText = await TryFindRowTextByPrefixAsync(page, filePrefix);
+            if (!string.IsNullOrWhiteSpace(rowText))
+            {
+                return rowText;
+            }
+
+            await Task.Delay(250, TestContext.Current.CancellationToken);
+        }
+
+        Assert.Fail($"Timed out waiting for an uploaded row with prefix '{filePrefix}'. Last alert: {lastAlert}");
+        return string.Empty;
+    }
+
+    private static async Task<string?> TryFindRowTextByPrefixAsync(IPage page, string filePrefix)
+    {
+        var row = await TryFindRowByPrefixAsync(page, filePrefix);
+        return row is null ? null : await row.TextContentAsync();
+    }
+
+    private static async Task<ILocator?> TryFindRowByPrefixAsync(IPage page, string filePrefix)
+    {
+        var rows = await GetDocumentSourceTableRows(page);
+        foreach (var row in rows)
+        {
+            var rowText = (await row.TextContentAsync()) ?? string.Empty;
+            if (rowText.Contains(filePrefix, StringComparison.OrdinalIgnoreCase))
+            {
+                return row;
+            }
+        }
+
+        return null;
     }
 
     private static T DeserializeJson<T>(string payload, string endpoint)

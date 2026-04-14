@@ -1,4 +1,6 @@
 import json
+import shutil
+import os
 from pathlib import Path
 
 from fastapi import APIRouter, HTTPException, Depends, BackgroundTasks
@@ -8,7 +10,7 @@ from ..services.database_service import DatabaseService
 from ..services.service_factory import get_docling_service
 from ..services.lightrag_handoff_service import LightRagHandoffService
 from ..services.neo4j_service import Neo4jService
-from ..models.models import BatchProcessingStartResponse, ProcessingStartResponse, ProcessingStatus
+from ..models.models import BatchProcessingStartResponse, DocumentCleanupResponse, ProcessingStartResponse, ProcessingStatus
 
 router = APIRouter(prefix="/processing", tags=["processing"])
 logger = logging.getLogger(__name__)
@@ -20,6 +22,10 @@ def get_database_service():
 
 def get_neo4j_service():
     return Neo4jService()
+
+
+def get_lightrag_handoff_service():
+    return LightRagHandoffService()
 
 
 async def process_document_task(
@@ -146,6 +152,37 @@ def _persist_processing_metadata(processed_doc) -> None:
     )
 
 
+def _load_processing_metadata(docling_document_path: str | None) -> dict:
+    if not docling_document_path:
+        return {}
+
+    metadata_path = Path(docling_document_path).with_name("metadata.json")
+    if not metadata_path.exists():
+        return {}
+
+    try:
+        return json.loads(metadata_path.read_text(encoding="utf-8"))
+    except json.JSONDecodeError:
+        logger.warning("Processing metadata at %s is not valid JSON", metadata_path)
+        return {}
+
+
+def _resolve_processed_document_directory(document_id: int, docling_document_path: str | None) -> Path:
+    if docling_document_path:
+        return Path(docling_document_path).resolve().parent
+
+    data_root = Path(os.getenv("ASPIRE_DATA_PATH", "/app/data"))
+    return data_root / "processed" / "documents" / str(document_id)
+
+
+def _delete_processed_document_directory(document_directory: Path) -> list[str]:
+    if not document_directory.exists():
+        return []
+
+    shutil.rmtree(document_directory)
+    return [str(document_directory)]
+
+
 @router.post("/process-document/{document_id}", response_model=ProcessingStartResponse)
 async def process_document(
     document_id: int,
@@ -233,6 +270,54 @@ async def process_all_documents(
         
     except Exception as e:
         logger.error(f"Error starting batch processing: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.delete("/cleanup-document/{document_id}", response_model=DocumentCleanupResponse)
+async def cleanup_document(
+    document_id: int,
+    db: DatabaseService = Depends(get_database_service),
+    neo4j: Neo4jService = Depends(get_neo4j_service),
+    lightrag_handoff: LightRagHandoffService = Depends(get_lightrag_handoff_service),
+):
+    """Delete external processing artifacts before the Web frontend removes the source row."""
+    try:
+        document = db.get_document_by_id(document_id)
+        if not document:
+            raise HTTPException(status_code=404, detail="Document not found")
+
+        if document.processing_status == "processing":
+            raise HTTPException(status_code=409, detail="Document is still processing and cannot be deleted yet")
+
+        file_record = db.get_file_by_id(document_id)
+        if file_record is None:
+            raise HTTPException(status_code=404, detail="Document not found")
+
+        metadata = _load_processing_metadata(file_record.get("docling_document_path"))
+        lightrag_metadata = metadata.get("lightrag", {}) if isinstance(metadata.get("lightrag"), dict) else {}
+        staged_input_path = lightrag_metadata.get("staged_input_path")
+
+        cleanup_result = lightrag_handoff.cleanup_document(
+            document,
+            staged_input_path=staged_input_path,
+        )
+        neo4j.delete_document_graph(document_id)
+        removed_paths = cleanup_result.get("removed_paths", [])
+        removed_paths.extend(
+            _delete_processed_document_directory(
+                _resolve_processed_document_directory(document_id, file_record.get("docling_document_path"))
+            )
+        )
+
+        return DocumentCleanupResponse(
+            message=f"Cleanup completed for document {document_id}",
+            lightrag_doc_ids=cleanup_result.get("doc_ids", []),
+            removed_paths=removed_paths,
+        )
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error cleaning up document {document_id}: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 

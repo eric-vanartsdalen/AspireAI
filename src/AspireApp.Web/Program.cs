@@ -33,6 +33,26 @@ builder.Services.AddHttpClient<WeatherApiClient>(client =>
         client.BaseAddress = new("https+http://apiservice");
     });
 
+#pragma warning disable EXTEXP0001
+builder.Services.AddHttpClient<IDocumentProcessingCoordinator, DocumentProcessingCoordinator>((serviceProvider, client) =>
+    {
+        var configuration = serviceProvider.GetRequiredService<IConfiguration>();
+        var configuredBaseAddress = configuration["PYTHON_SERVICE_URL"];
+        client.BaseAddress = new Uri(
+            string.IsNullOrWhiteSpace(configuredBaseAddress)
+                ? "http://localhost:8000/"
+                : configuredBaseAddress.EndsWith('/') ? configuredBaseAddress : $"{configuredBaseAddress}/");
+        client.Timeout = TimeSpan.FromMinutes(2);
+    })
+    .RemoveAllResilienceHandlers()
+    .AddStandardResilienceHandler(options =>
+    {
+        options.TotalRequestTimeout.Timeout = TimeSpan.FromMinutes(3);
+        options.AttemptTimeout.Timeout = TimeSpan.FromSeconds(90);
+        options.CircuitBreaker.SamplingDuration = TimeSpan.FromMinutes(3);
+    });
+#pragma warning restore EXTEXP0001
+
 // Add HttpClient factory for general use
 builder.Services.AddHttpClient();
 builder.Services.AddHttpContextAccessor();
@@ -54,7 +74,8 @@ builder.Services.AddScoped<FileStorageService>(sp =>
     new FileStorageService(
         sp.GetRequiredService<UploadDbContext>(),
         sp.GetRequiredService<ILogger<FileStorageService>>(),
-        dataDirectory));
+        dataDirectory,
+        sp.GetRequiredService<IDocumentProcessingCoordinator>()));
 builder.Services.AddScoped<IChatTitleGenerator, ChatTitleGenerator>();
 builder.Services.AddScoped<IChatConversationService, ChatConversationService>();
 builder.Services.AddScoped<ChatConversationStoreBootstrapper>();

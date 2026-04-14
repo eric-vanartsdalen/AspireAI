@@ -128,6 +128,43 @@ class Neo4jService:
                     "page2_id": page_node_ids[i + 1]
                 })
 
+    def delete_document_graph(self, document_id: int) -> Dict[str, int]:
+        """Delete a document graph and any page nodes for the document."""
+        with self.get_driver().session() as session:
+            document_row = session.run(
+                """
+                MATCH (d:Document {id: $document_id})
+                RETURN count(d) AS deleted_documents
+                """,
+                {"document_id": document_id},
+            ).single()
+            session.run(
+                """
+                MATCH (d:Document {id: $document_id})
+                DETACH DELETE d
+                """,
+                {"document_id": document_id},
+            )
+            page_row = session.run(
+                """
+                MATCH (p:Page {document_id: $document_id})
+                RETURN count(p) AS deleted_pages
+                """,
+                {"document_id": document_id},
+            ).single()
+            session.run(
+                """
+                MATCH (p:Page {document_id: $document_id})
+                DETACH DELETE p
+                """,
+                {"document_id": document_id},
+            )
+
+            return {
+                "deleted_documents": document_row["deleted_documents"] if document_row else 0,
+                "deleted_pages": page_row["deleted_pages"] if page_row else 0,
+            }
+
     def search_similar_content(self, query: str, limit: int = 10) -> List[Dict[str, Any]]:
         """Search for similar content (basic text matching for now)"""
         with self.get_driver().session() as session:

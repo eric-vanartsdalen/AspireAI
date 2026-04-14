@@ -648,6 +648,13 @@ public partial class UploadData : ComponentBase, IAsyncDisposable, IDisposable
             "uploaded",
             TenantContext.CurrentTenantId);
 
+        var automaticProcessing = await FileStorageService.TryStartAutomaticProcessingAsync(fileMetadata.Id);
+        var message = automaticProcessing.Attempted
+            ? automaticProcessing.Started
+                ? "File uploaded successfully. Processing started automatically."
+                : "File uploaded successfully, but automatic processing could not be started."
+            : "File uploaded successfully.";
+
         return new FileUploadResult
         {
             Success = true,
@@ -655,7 +662,7 @@ public partial class UploadData : ComponentBase, IAsyncDisposable, IDisposable
             FileName = uniqueFileName,
             Size = browserFile.Size,
             FileHash = fileHash,
-            Message = "File uploaded successfully.",
+            Message = message,
             ExistingFileId = fileMetadata.Id
         };
     }

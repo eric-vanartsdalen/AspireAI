@@ -1,10 +1,13 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import sys
+import tempfile
 import unittest
 from pathlib import Path
 from types import SimpleNamespace
+from unittest.mock import patch
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 TEST_ROOT = Path(__file__).resolve().parent
@@ -17,6 +20,7 @@ if str(TEST_ROOT) not in sys.path:
 from fastapi import BackgroundTasks, HTTPException
 
 from app.routers import processing
+from app.services.lightrag_handoff_service import LightRagHandoffService
 
 
 class FakeDatabaseService:
@@ -25,6 +29,7 @@ class FakeDatabaseService:
         self.status_updates: list[tuple[int, str, str | None]] = []
         self.processing_updates: list[dict] = []
         self.saved_pages: list[dict] = []
+        self.file_record: dict | None = None
 
     def get_document_by_id(self, document_id: int):
         if self.document and self.document.id == document_id:
@@ -49,8 +54,16 @@ class FakeDatabaseService:
     def get_processing_status(self, document_id: int):
         return None
 
+    def get_file_by_id(self, file_id: int):
+        if self.file_record and self.file_record.get("id") == file_id:
+            return self.file_record
+        return None
+
 
 class FakeNeo4jService:
+    def __init__(self):
+        self.deleted_document_ids: list[int] = []
+
     def create_document_node(self, document):
         return "doc-node"
 
@@ -63,13 +76,63 @@ class FakeNeo4jService:
     def create_sequential_relationships(self, page_node_ids):
         return None
 
+    def delete_document_graph(self, document_id: int):
+        self.deleted_document_ids.append(document_id)
+        return {"deleted_documents": 1, "deleted_pages": 2}
+
 
 class FakeLightRagHandoffService:
+    def __init__(self):
+        self.cleaned_documents: list[tuple[int, str | None]] = []
+
     def handoff_document(self, document, markdown_path):
         return {"scan_requested": True, "markdown_path": markdown_path}
 
+    def cleanup_document(self, document, staged_input_path=None, delete_llm_cache=False, wait_timeout_seconds=30.0):
+        self.cleaned_documents.append((document.id, staged_input_path))
+        return {"doc_ids": ["doc_123"], "removed_paths": [staged_input_path] if staged_input_path else []}
+
 
 class ProcessingPipelineRegressionTests(unittest.TestCase):
+    def test_lightrag_handoff_waits_for_service_ready_before_scan(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            markdown_path = Path(temp_dir) / "processing-smoke.md"
+            markdown_path.write_text("# test", encoding="utf-8")
+            document = SimpleNamespace(
+                id=42,
+                filename="processing-smoke.pdf",
+                original_filename="processing-smoke.pdf",
+            )
+
+            class SequencedLightRagHandoffService(LightRagHandoffService):
+                def __init__(self, input_dir: Path):
+                    super().__init__(input_dir=input_dir, service_url="http://lightrag.test", scan_timeout_seconds=1.0)
+                    self.document_requests = 0
+                    self.scan_requests = 0
+
+                def _json_request(self, method: str, path: str, payload=None, timeout=None):
+                    if method == "GET" and path == "/documents":
+                        self.document_requests += 1
+                        if self.document_requests < 3:
+                            raise RuntimeError("LightRAG is still starting")
+                        return {"statuses": {}}
+
+                    if method == "POST" and path == "/documents/scan":
+                        self.scan_requests += 1
+                        return {"status": "accepted"}
+
+                    raise AssertionError(f"Unexpected request {method} {path}")
+
+            handoff_service = SequencedLightRagHandoffService(Path(temp_dir) / "inputs")
+
+            with patch("app.services.lightrag_handoff_service.time.sleep", return_value=None):
+                handoff = handoff_service.handoff_document(document, markdown_path)
+
+            self.assertTrue(handoff["scan_requested"])
+            self.assertEqual(3, handoff_service.document_requests)
+            self.assertEqual(1, handoff_service.scan_requests)
+            self.assertTrue((Path(temp_dir) / "inputs" / "000042-processing-smoke.md").exists())
+
     def test_process_document_task_persists_pages_and_marks_processed(self):
         document = SimpleNamespace(
             id=42,
@@ -147,6 +210,71 @@ class ProcessingPipelineRegressionTests(unittest.TestCase):
                     background_tasks=BackgroundTasks(),
                     db=db,
                     neo4j=FakeNeo4jService(),
+                )
+            )
+
+        self.assertEqual(409, context.exception.status_code)
+
+    def test_cleanup_document_removes_processed_artifacts_and_calls_external_cleanup(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            document_dir = Path(temp_dir) / "processed" / "documents" / "42"
+            outputs_dir = document_dir / "outputs"
+            outputs_dir.mkdir(parents=True, exist_ok=True)
+            document_json_path = document_dir / "document.json"
+            document_json_path.write_text("{}", encoding="utf-8")
+            metadata_path = document_dir / "metadata.json"
+            metadata_path.write_text(
+                json.dumps({"lightrag": {"staged_input_path": str(Path(temp_dir) / "inputs" / "000042-test.md")}}),
+                encoding="utf-8",
+            )
+
+            document = SimpleNamespace(
+                id=42,
+                file_path="C:\\data\\uploads\\stored-file.pdf",
+                processing_status="processed",
+                filename="stored-file.pdf",
+                original_filename="stored-file.pdf",
+            )
+            db = FakeDatabaseService(document)
+            db.file_record = {
+                "id": 42,
+                "docling_document_path": str(document_json_path),
+            }
+            neo4j = FakeNeo4jService()
+            lightrag = FakeLightRagHandoffService()
+
+            response = asyncio.run(
+                processing.cleanup_document(
+                    document_id=42,
+                    db=db,
+                    neo4j=neo4j,
+                    lightrag_handoff=lightrag,
+                )
+            )
+
+            self.assertEqual("Cleanup completed for document 42", response.message)
+            self.assertEqual([42], neo4j.deleted_document_ids)
+            self.assertEqual([(42, str(Path(temp_dir) / "inputs" / "000042-test.md"))], lightrag.cleaned_documents)
+            self.assertFalse(document_dir.exists())
+
+    def test_cleanup_document_rejects_processing_document(self):
+        document = SimpleNamespace(
+            id=11,
+            file_path="C:\\data\\uploads\\queued.pdf",
+            processing_status="processing",
+            filename="queued.pdf",
+            original_filename="queued.pdf",
+        )
+        db = FakeDatabaseService(document)
+        db.file_record = {"id": 11, "docling_document_path": None}
+
+        with self.assertRaises(HTTPException) as context:
+            asyncio.run(
+                processing.cleanup_document(
+                    document_id=11,
+                    db=db,
+                    neo4j=FakeNeo4jService(),
+                    lightrag_handoff=FakeLightRagHandoffService(),
                 )
             )
 

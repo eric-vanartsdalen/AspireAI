@@ -134,6 +134,10 @@ public class FileUploadController(
                 "uploaded",
                 tenantId);
 
+            var automaticProcessing = await _fileStorageService.TryStartAutomaticProcessingAsync(
+                fileMetadata.Id,
+                cancellationToken);
+
             if (_logger.IsEnabled(LogLevel.Information))
             {
                 _logger.LogInformation("File uploaded successfully: {FileName} -> {FilePath}, Size: {Size} bytes, Hash: {Hash}, Tenant: {TenantId}",
@@ -151,7 +155,13 @@ public class FileUploadController(
                 uploadedAt = fileMetadata.UploadedAt,
                 status = fileMetadata.Status,
                 fileHash,
-                message = "File uploaded successfully."
+                automaticProcessingAttempted = automaticProcessing.Attempted,
+                automaticProcessingStarted = automaticProcessing.Started,
+                message = automaticProcessing.Attempted
+                    ? automaticProcessing.Started
+                        ? "File uploaded successfully. Processing started automatically."
+                        : "File uploaded successfully, but automatic processing could not be started."
+                    : "File uploaded successfully."
             });
         }
         catch (Exception ex)
@@ -318,7 +328,7 @@ public class FileUploadController(
                 return tenantResolution.ErrorResult;
             }
 
-            var success = await _fileStorageService.DeleteFileAsync(id, tenantResolution.TenantId);
+            var success = await _fileStorageService.DeleteFileAsync(id, tenantResolution.TenantId, cancellationToken);
             if (success)
             {
                 return Ok(new { success = true, message = "File deleted successfully." });
