@@ -6,6 +6,7 @@ from pathlib import Path
 from fastapi import APIRouter, HTTPException, Depends, BackgroundTasks
 import logging
 
+from ..brain.ingestion import build_canonical_document
 from ..services.database_service import DatabaseService
 from ..services.service_factory import get_docling_service
 from ..services.lightrag_handoff_service import LightRagHandoffService
@@ -52,6 +53,8 @@ async def process_document_task(
         
         # Process with docling (full or fallback)
         processed_doc, pages = docling.process_document(document, resolved_file_path)
+        canonical_document = build_canonical_document(document, pages)
+        _persist_canonical_document(processed_doc, canonical_document)
         _attempt_lightrag_handoff(
             document=document,
             processed_doc=processed_doc,
@@ -63,10 +66,10 @@ async def process_document_task(
         page_node_ids = []
         try:
             # Create document node
-            doc_node_id = neo4j.create_document_node(document)
+            doc_node_id = neo4j.create_document_node(canonical_document)
             
             # Create page nodes
-            page_node_ids = neo4j.create_page_nodes(pages, doc_node_id, document.id)
+            page_node_ids = neo4j.create_page_nodes(canonical_document.pages, doc_node_id, document.id)
             
             # Create relationships
             neo4j.create_relationships(doc_node_id, page_node_ids)
@@ -79,6 +82,12 @@ async def process_document_task(
             logger.warning(f"Neo4j processing failed for document {document_id}: {neo4j_error}")
             # Continue without Neo4j - the document is still processed
 
+        db.update_file_ingestion_metadata(
+            file_id=document_id,
+            tenant_id=canonical_document.tenant_id,
+            source_type=canonical_document.source_type,
+            source_confidence=canonical_document.source_confidence,
+        )
         db.update_file_processing_results(
             file_id=document_id,
             docling_path=processed_doc.docling_document_path,
@@ -87,7 +96,7 @@ async def process_document_task(
         )
         
         # Save individual pages
-        for i, page in enumerate(pages):
+        for i, page in enumerate(canonical_document.pages):
             db.save_document_page(
                 file_id=document_id,
                 page_number=page.page_number,
@@ -150,6 +159,29 @@ def _persist_processing_metadata(processed_doc) -> None:
         json.dumps(metadata, indent=2, ensure_ascii=False),
         encoding="utf-8",
     )
+
+
+def _persist_canonical_document(processed_doc, canonical_document) -> None:
+    document_path = getattr(processed_doc, "docling_document_path", None)
+    if not document_path:
+        return
+
+    canonical_document_path = Path(document_path).with_name("canonical_document.json")
+    if not canonical_document_path.parent.exists():
+        return
+
+    canonical_document_path.write_text(
+        canonical_document.model_dump_json(indent=2),
+        encoding="utf-8",
+    )
+
+    metadata = getattr(processed_doc, "processing_metadata", None) or {}
+    metadata["canonical_document_path"] = str(canonical_document_path)
+    metadata["tenant_id"] = canonical_document.tenant_id
+    metadata["source_type"] = canonical_document.source_type
+    metadata["source_confidence"] = canonical_document.source_confidence
+    metadata["correlation_id"] = canonical_document.correlation_id
+    processed_doc.processing_metadata = metadata
 
 
 def _load_processing_metadata(docling_document_path: str | None) -> dict:

@@ -105,6 +105,55 @@
 
 **Key pattern from this session:** The Postgres migration was clean because (1) we kept the schema unchanged, (2) we used Aspire's `WithReference()` to wire connection strings, (3) both C# and Python respected environment variable naming conventions. Future migrations should follow this pattern: change infrastructure, keep contracts stable, use Aspire to wire parameters.
 
+### 2026-04-14T20:00Z — Phase 2 State Review: Smallest Critical Slice Identified
+
+**Scope:** Architectual assessment of Phase 2 implementation state; roadmap clarification; execution sequencing for P2-A/P2-B closure.
+
+**Current State:**
+- ✅ Gateway wiring complete: `/brain/ingest`, `/brain/query` endpoints scaffolded & tested (BrainGatewayPhase2Tests)
+- ✅ Python client: `PythonBrainBackendClient` implements resilient fallback (LightRAG → semantic-search)
+- ✅ Contract types: C# + Python `BrainIngestRequest`, `BrainQueryRequest`, `KnowledgeResult` defined & tested
+- ⚠️ **Ingestion refactor (P2-A):** Canonical shape building blocks exist (`build_canonical_document`, `resolve_source_confidence`) but ingestion router has not been refactored to emit canonical shape in production code
+- ⚠️ **Query confidence:** Returns static 0.5 scores; payload score extraction not yet implemented
+- ❌ Neo4j Knowledge Layer: Constraints exist; no claim/evidence nodes, no vector indexes, no `IKnowledgeRetriever` implementation
+- ❌ Validation Layer: Not started
+- ❌ LightRAG round-trip proof: No integration test yet
+
+**Smallest Slice for P2-A→P2-B Closure (Prioritized):**
+
+1. **Option 1 (RECOMMENDED): P2-A Ingestion Refactor** — Jarvis lead
+   - Refactor `processing.py` to call `build_canonical_document()` and emit canonical shape
+   - Update `database_service.py` to accept `CanonicalDocument` and persist `source_confidence` 
+   - Wire `/brain/ingest` end-to-end: upload → canonical shape → database
+   - **Done when:** Upload shows `source_confidence` populated, document has correct tenant/correlation IDs
+   - **Time:** ~4 hours
+   - **Why first:** Unblocks P2-B testing (LightRAG round-trip), validates Phase 1 contracts in production code
+
+2. **Option 2: LightRAG Round-Trip Gate** — Jarvis + Buster
+   - Write integration test: upload → ingest → query LightRAG → assert document in results
+   - Does not require P2-A; reuses existing paths
+   - **Done when:** Test passes cold-start Aspire; proves Neo4j persistence + LightRAG retrieval
+   - **Time:** ~6 hours
+
+3. **Option 3: Confidence Score Extraction** — Jarvis
+   - Replace static 0.5 with semantic score extraction from response payload
+   - Update `KnowledgeItem` confidence tracking
+   - **Done when:** Query test asserts actual payload confidence, not hardcoded
+   - **Time:** ~2 hours
+
+**Roadmap Corrections (Minimal):**
+- Line 159: "...emit `CanonicalDocument`" → "...call `build_canonical_document()` and emit canonical shape; persist `source_confidence` in `files` table"
+- Line 168: "...with constraints" → "...with `IS UNIQUE` constraints on `(label).id` properties"
+- Line 171–175 (note): "Baseline Note: Gateway query routing is now in place..." → "**P2-B Dependency:** Gateway query routing is scaffolded but returns static 0.5 confidence scores. Phase 2 is not complete until dynamic confidence extraction from payloads is live and the LightRAG round-trip is proven in integration tests."
+
+**Recommendation:**
+Execute Option 1 (P2-A) → Option 2 (round-trip) → Option 3 (confidence). This sequence validates contracts, proves data flow persistence, then closes the confidence gate.
+
+**Roadmap Edits Applied:**
+✅ Ingestion Refactor checkbox unchecked, wording tightened
+✅ Knowledge Layer schema note made specific
+✅ P2-B note rewritten to clarify blockers
+
 ### 2026-04-05 — Tenant-Context UI Slice - Architectural Revision
 
 **Status:** ✅ COMPLETE (Revision 2)

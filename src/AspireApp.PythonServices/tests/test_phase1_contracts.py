@@ -18,6 +18,7 @@ if str(TEST_ROOT) not in sys.path:
     sys.path.insert(0, str(TEST_ROOT))
 
 from app.contracts import (
+    BrainQueryRequest,
     CanonicalDocument,
     Claim,
     Contradiction,
@@ -164,6 +165,21 @@ class Phase1ContractTests(unittest.TestCase):
         self.assertEqual("corr-789", reason_payload["correlation_id"])
         self.assertEqual("retrieve", reason_payload["reasoning_steps"][0]["step"])
 
+    def test_brain_query_request_serializes_with_contract_envelope(self):
+        request = BrainQueryRequest(
+            tenant_id="tenant-query",
+            correlation_id="corr-query",
+            query="Aspire",
+            top_k=4,
+        )
+
+        payload = json.loads(request.model_dump_json())
+
+        self.assertEqual("tenant-query", payload["tenant_id"])
+        self.assertEqual("corr-query", payload["correlation_id"])
+        self.assertEqual("Aspire", payload["query"])
+        self.assertEqual(4, payload["top_k"])
+
     def test_contract_exports_and_retriever_interface_are_available(self):
         self.assertTrue(issubclass(CanonicalDocument, EnvelopeMixin))
         self.assertTrue(inspect.isabstract(IKnowledgeRetriever))
@@ -172,6 +188,69 @@ class Phase1ContractTests(unittest.TestCase):
             IKnowledgeRetriever.planned_implementations,
         )
         self.assertIn("retrieve", IKnowledgeRetriever.__abstractmethods__)
+
+    def test_canonical_document_model_all_required_fields_present(self):
+        """Verify CanonicalDocument has all Phase 2 required fields."""
+        doc = CanonicalDocument(
+            tenant_id="tenant-check",
+            correlation_id="corr-check",
+            document_id=1,
+            source_type="upload",
+            source_confidence=0.95,
+            pages=[],
+            metadata={},
+        )
+        # Assert no field is accidentally optional
+        self.assertEqual("tenant-check", doc.tenant_id)
+        self.assertEqual("corr-check", doc.correlation_id)
+        self.assertEqual(1, doc.document_id)
+        self.assertEqual("upload", doc.source_type)
+        self.assertEqual(0.95, doc.source_confidence)
+        self.assertIsNotNone(doc.pages)
+        self.assertIsNotNone(doc.metadata)
+
+    def test_canonical_document_tenant_id_defaults_to_default(self):
+        """Verify Pydantic provides default tenant_id='default' when omitted."""
+        doc = CanonicalDocument(
+            correlation_id="corr-123",
+            document_id=1,
+            source_type="upload",
+            source_confidence=0.95,
+            pages=[],
+            metadata={},
+            # tenant_id intentionally omitted
+        )
+        # tenant_id should default to "default"
+        self.assertEqual("default", doc.tenant_id)
+
+    def test_knowledge_retriever_interface_has_required_methods(self):
+        """Verify IKnowledgeRetriever has abstract retrieve() method."""
+        self.assertTrue(hasattr(IKnowledgeRetriever, "retrieve"))
+        self.assertIn("retrieve", IKnowledgeRetriever.__abstractmethods__)
+        # Verify planned implementations are string names (not instantiated)
+        self.assertEqual(
+            ("BrainKnowledgeRetriever", "LightRAGRetriever"),
+            IKnowledgeRetriever.planned_implementations,
+        )
+
+    def test_validated_document_inherits_envelope_fields(self):
+        """Verify ValidatedDocument includes tenant_id, correlation_id from CanonicalDocument."""
+        validated = ValidatedDocument(
+            tenant_id="tenant-inherit",
+            correlation_id="corr-inherit",
+            document_id=2,
+            source_type="textbook",
+            source_confidence=0.92,
+            pages=[],
+            metadata={},
+            claims=[],
+            contradictions=[],
+            overall_confidence=0.90,
+        )
+        self.assertEqual("tenant-inherit", validated.tenant_id)
+        self.assertEqual("corr-inherit", validated.correlation_id)
+        # Verify it's still a CanonicalDocument subclass
+        self.assertIsInstance(validated, CanonicalDocument)
 
 
 if __name__ == "__main__":

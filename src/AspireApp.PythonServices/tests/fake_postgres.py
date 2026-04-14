@@ -23,6 +23,7 @@ FILE_COLUMNS = [
     "neo4j_document_node_id",
     "tenant_id",
     "source_type",
+    "source_confidence",
     "source_url",
 ]
 
@@ -41,6 +42,7 @@ COLUMN_DEFAULTS = {
     "status": "uploaded",
     "tenant_id": "default",
     "source_type": "upload",
+    "source_confidence": 0.7,
 }
 
 
@@ -140,7 +142,8 @@ class FakeCursor:
                 "total_pages": None,
                 "neo4j_document_node_id": None,
                 "source_type": params[9],
-                "source_url": params[10],
+                "source_confidence": params[10],
+                "source_url": params[11],
             }
             self.state.tables["files"]["rows"].append(row)
             self.state.next_file_id += 1
@@ -179,6 +182,15 @@ class FakeCursor:
             row["docling_document_path"] = params[0]
             row["total_pages"] = params[1]
             row["neo4j_document_node_id"] = params[2]
+            self._result = []
+            return self
+
+        if normalized.startswith("update files set tenant_id = %s, source_type = %s, source_confidence = %s where id = %s"):
+            file_id = params[3]
+            row = self._get_file(file_id)
+            row["tenant_id"] = params[0]
+            row["source_type"] = params[1]
+            row["source_confidence"] = params[2]
             self._result = []
             return self
 

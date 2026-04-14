@@ -1,5 +1,6 @@
 extern alias api;
 
+using System.Diagnostics;
 using System.Text.Json;
 using System.Text.Json.Nodes;
 using Contracts = api::AspireApp.ApiService.Contracts;
@@ -198,11 +199,92 @@ public sealed class BrainContractRoundTripTests
         AssertJsonEquivalent(pythonJson, JsonSerializer.Serialize(contract, JsonOptions));
     }
 
+    [Fact]
+    public async Task CanonicalDocument_RoundTrips_Between_Python_And_CSharp()
+    {
+        var helperScriptPath = GetRepositoryPath("src", "AspireApp.PythonServices", "tests", "contract_roundtrip_helper.py");
+        var pythonJson = await RunPythonHelperAsync(helperScriptPath, "emit-canonical");
+
+        var contract = JsonSerializer.Deserialize<Contracts.CanonicalDocument>(pythonJson, JsonOptions);
+
+        Assert.NotNull(contract);
+        Assert.Equal("tenant-roundtrip", contract.TenantId);
+        Assert.Equal("corr-roundtrip", contract.CorrelationId);
+        Assert.Equal(42, contract.DocumentId);
+
+        var csharpJson = JsonSerializer.Serialize(contract, JsonOptions);
+        var tempFilePath = Path.GetTempFileName();
+
+        try
+        {
+            await File.WriteAllTextAsync(tempFilePath, csharpJson, TestContext.Current.CancellationToken);
+            var normalizedPythonJson = await RunPythonHelperAsync(helperScriptPath, "validate-canonical", tempFilePath);
+
+            AssertJsonEquivalent(pythonJson, csharpJson);
+            AssertJsonEquivalent(csharpJson, normalizedPythonJson);
+        }
+        finally
+        {
+            File.Delete(tempFilePath);
+        }
+    }
+
     private static void AssertJsonEquivalent(string expectedJson, string actualJson)
     {
         var expected = JsonNode.Parse(expectedJson);
         var actual = JsonNode.Parse(actualJson);
 
         Assert.True(JsonNode.DeepEquals(expected, actual), $"Expected JSON:{Environment.NewLine}{expectedJson}{Environment.NewLine}Actual JSON:{Environment.NewLine}{actualJson}");
+    }
+
+    private static string GetRepositoryPath(params string[] segments)
+    {
+        var directory = new DirectoryInfo(AppContext.BaseDirectory);
+
+        while (directory is not null)
+        {
+            if (File.Exists(Path.Combine(directory.FullName, "AspireApp.sln")))
+            {
+                return Path.Combine([directory.FullName, .. segments]);
+            }
+
+            directory = directory.Parent;
+        }
+
+        throw new DirectoryNotFoundException("Could not locate the repository root from the test output directory.");
+    }
+
+    private static async Task<string> RunPythonHelperAsync(string scriptPath, params string[] arguments)
+    {
+        var startInfo = new ProcessStartInfo
+        {
+            FileName = "python",
+            RedirectStandardOutput = true,
+            RedirectStandardError = true,
+            UseShellExecute = false
+        };
+
+        startInfo.ArgumentList.Add(scriptPath);
+        foreach (var argument in arguments)
+        {
+            startInfo.ArgumentList.Add(argument);
+        }
+
+        using var process = Process.Start(startInfo)
+            ?? throw new InvalidOperationException("Failed to start the Python contract helper.");
+
+        var standardOutputTask = process.StandardOutput.ReadToEndAsync(TestContext.Current.CancellationToken);
+        var standardErrorTask = process.StandardError.ReadToEndAsync(TestContext.Current.CancellationToken);
+
+        await process.WaitForExitAsync(TestContext.Current.CancellationToken);
+
+        var standardOutput = (await standardOutputTask).Trim();
+        var standardError = (await standardErrorTask).Trim();
+
+        Assert.True(
+            process.ExitCode == 0,
+            $"Python contract helper failed with exit code {process.ExitCode}.{Environment.NewLine}{standardError}");
+
+        return standardOutput;
     }
 }

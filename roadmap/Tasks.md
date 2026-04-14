@@ -6,7 +6,7 @@ Working task breakdown for the [BRAIN Plan](Plan.md). Tracks what's been accompl
 
 Note: This will be a living document.
 
-**Last Updated:** 2026-07-15
+**Last Updated:** 2026-04-14
 
 ---
 
@@ -27,7 +27,7 @@ Note: This will be a living document.
 - [x] Blazor chat UI with message history, user/assistant bubbles, auto-scroll
 - [x] Backend LLM integration (Ollama via Semantic Kernel)
 - [x] Speech-to-text and text-to-speech (Web Speech API interop)
-- [x] File upload UI component with SQLite metadata persistence
+- [x] File upload UI component with persisted metadata storage (legacy SQLite foundation, now Postgres-backed operationally)
 - [x] Timestamped file storage with `original_file_name` / `file_name` distinction
 
 ### Upload Path Normalization (P0)
@@ -67,11 +67,11 @@ Note: This will be a living document.
 ### Docling to LightRAG Ingestion (P1)
 
 - [x] Export Docling free-text output to markdown and stage it for LightRAG document scanning
-- [x] **Prove a live LightRAG ingest to query round-trip** _(foundation: ingestion & idle pipeline proven; **query round-trip assertion pending P2**)_
-- [x] **Confirm AppHost LightRAG graph storage stays on explicit Neo4j contract** _(foundation: config explicit; **live Neo4j state assertion pending P4**)_
+- [x] **Prove a live LightRAG ingest to query round-trip** _(closed in Phase 2 via `BasicAspireAppHostTests.LiveLightRagNeo4jQueryRoundTrip`)_
+- [x] **Confirm AppHost LightRAG graph storage stays on explicit Neo4j contract** _(runtime verified in Phase 2 via live Neo4j graph growth assertions against the shared database)_
 - [x] Keep orchestration through Python retrieval APIs (no parallel retrieval path)
 
-**Partial Coverage Note:** Items 2–3 are foundation-only in P1. Live query round-trip (item 2) requires full Knowledge Layer integration in Phase 2 before round-trip can be tested end-to-end. Live Neo4j state assertion (item 3) requires integration test harness added in Phase 4 (observability & cross-service testing).
+**Coverage Note:** The original P1 carry-forward on live LightRAG query round-trip and explicit Neo4j runtime verification is now closed in Phase 2. Remaining later-phase work is hardening and broader cross-service quality coverage, not first-proof validation.
 
 ---
 
@@ -143,35 +143,48 @@ Note: This will be a living document.
 
 ### Cross-Language Validation
 
-- [ ] Write serialization round-trip test: Python Pydantic to JSON to C# deserialization to JSON to Python deserialization
-- [ ] Verify `tenant_id` and `correlation_id` present in all contract JSON
+- [x] Define C# contract types: `BrainContractEnvelope`, `CanonicalDocument`, `ValidatedDocument`, `KnowledgeResult`, `ReasonResponse` with JSON property mapping
+- [x] Define Python contract types mirroring C#: Pydantic models with `BaseModel` inheritance and field validation
+- [x] Verify `tenant_id` and `correlation_id` present in all contract definitions (C# and Python)
+- [x] **[Phase 2 P2-A Dependency]** Write serialization round-trip test: Python Pydantic to JSON to C# deserialization to JSON to Python deserialization
 
 ---
 
 ## Phase 2: Ingestion + Knowledge Baseline
 
-### Ingestion Refactor
+> **Phase 2 Implementation Directive:** Complete the three-layer pipeline (Ingestion → Validation → Knowledge Storage) end-to-end. All items are gated on Phase 1 cross-language round-trip test (P2-A dependency). Prioritize: (1) Ingestion contract + refactor; (2) Neo4j schema + retriever interface; (3) Validation + wiring.
 
-- [ ] Refactor `processing.py` to emit `CanonicalDocument` instead of raw page writes
-- [ ] Add `source_confidence` tagging (textbook PDF: 0.9, general file: 0.7, URL: 0.5, user note: 0.3)
-- [ ] Update SQLite `files` table: add `tenant_id` (TEXT, default 'default'), `source_confidence` (REAL)
-- [ ] Implement ingestion trigger contract - Gateway `POST /brain/ingest` calls Python processing
+### Ingestion Refactor (Jarvis lead, Jeff review)
 
-### Knowledge Layer
+- [x] Refactor `processing.py` to call `build_canonical_document()` and emit the canonical shape; persist `source_confidence` in `files` table (update `processing.py` and `database_service.py` to respect Phase 1 contract shape)
+- [x] Add `source_confidence` tagging (textbook PDF: 0.9, general file: 0.7, URL: 0.5, user note: 0.3)
+- [x] Update operational `files` table schema/handling: keep `tenant_id` support and add `source_confidence` (REAL) migration/defaults
+- [x] **[P2-A Gate Dependency]** Write serialization round-trip test (Buster): Python `CanonicalDocument` → JSON → C# deserialization → JSON → Python
+- [x] Implement ingestion trigger contract - Gateway `POST /brain/ingest` calls Python processing (Jeff: wire Gateway endpoint; Jarvis: implement Python endpoint)
 
-- [ ] Extend Neo4j schema - add `Claim`, `Evidence`, `Concept`, `Entity` node labels with constraints
-- [ ] Create Neo4j vector indexes on `Page.content` and `Claim.text` properties
-- [ ] Implement `BrainKnowledgeRetriever` (graph traversal + vector similarity + confidence scoring)
-- [ ] Implement `LightRAGRetriever` (wraps existing LightRAG query path behind `IKnowledgeRetriever`)
-- [ ] **[P1 Carry-Forward] Prove live LightRAG ingest-to-query round-trip** — ingest document, validate it appears in Neo4j graph, query it back successfully
-- [ ] Wire Gateway `POST /brain/query` to Knowledge retrieval
-- [ ] Add Ollama embedding model usage for vector index population
+### Knowledge Layer (Jarvis lead)
 
-### Validation Layer (Basic)
+- [ ] Extend Neo4j schema - add `Claim`, `Evidence`, `Concept`, `Entity` node labels with `IS UNIQUE` constraints on `(label).id` properties
+- [ ] Create Neo4j vector indexes on `Page.content` and `Claim.text` properties (coordinate with Ollama embedding model setup)
+- [ ] Implement `BrainKnowledgeRetriever` (graph traversal + vector similarity + confidence scoring) behind `IKnowledgeRetriever` interface
+- [x] Implement `LightRAGRetriever` (wraps existing LightRAG query path behind `IKnowledgeRetriever`)
+- [x] **[P1 Carry-Forward] Prove live LightRAG ingest-to-query round-trip** — covered by `BasicAspireAppHostTests.LiveLightRagNeo4jQueryRoundTrip` (upload/process → LightRAG scan → Neo4j graph checks → live `/brain/query`)
+- [x] Wire Gateway `POST /brain/query` to the current Python knowledge seam (single contract-shaped Python route now owns LightRAG-first + semantic fallback) (Jeff: endpoint; Jarvis: retriever selection + call)
+- [ ] Add Ollama embedding model usage for vector index population (Jarvis + Ollama config coordination)
 
-- [ ] Implement basic claim extraction using Ollama LLM
-- [ ] Implement basic contradiction detection against existing Neo4j claims
-- [ ] Wire: Ingestion to Validation to Knowledge storage path
+**P2-B Dependency:** Gateway query routing is live and the LightRAG ingest/query round-trip is now proven in WebTest integration coverage, but the semantic fallback still collapses to the default 0.5 when downstream returns no score. Phase 2 is not complete until the production retrieval path yields real confidence-backed results without relying on the default.
+
+### Validation Layer (Basic) (Jarvis lead)
+
+- [ ] Implement basic claim extraction using Ollama LLM (prompt template + extraction logic)
+- [ ] Implement basic contradiction detection against existing Neo4j claims (graph query pattern)
+- [ ] Wire: Ingestion → Validation → Knowledge storage path (Jarvis: orchestrate; Jeff: expose as internal pipeline)
+- [ ] **[P2-B Gate]** `/brain/query` returns confidence-scored `KnowledgeResult` (manual test: upload doc, process, query, verify results contain document + confidence scores)
+
+### Cross-Layer Integration (Jeff + Jarvis)
+
+- [ ] Ensure all contract round-trips serialize consistently (use Phase 1 round-trip test as regression)
+- [ ] Document the Ingest → Validate → Store → Retrieve contract surface for Phase 3 agents
 
 ---
 
@@ -224,8 +237,17 @@ Note: This will be a living document.
 - [ ] Honest failure mode tests - verify "I don't know" for out-of-knowledge questions
 - [ ] Cross-service integration test suite (upload to ingest to validate to store to query to chat to cite)
 - [ ] **[P0 Carry-Forward] Docker-backed integration validation** — cold-start Aspire orchestration, verify all service health checks pass, validate cross-container volume access (uploads mounted from host to Python container)
-- [ ] **[P1 Carry-Forward] Prove LightRAG-backed retrieval reads persisted Neo4j state** — integration test verifying that Knowledge Layer queries return documents ingested via LightRAG and confirmed in Neo4j
+- [x] **[P1 Carry-Forward] Prove LightRAG-backed retrieval reads persisted Neo4j state** — covered by `BasicAspireAppHostTests.LiveLightRagNeo4jQueryRoundTrip` (upload/process → LightRAG scan → Neo4j graph checks → live `/brain/query`)
 - [ ] Latency baselines - document acceptable response times
+
+### Knowledge Quality Optimization
+
+- [ ] **Chunking Strategy Review** — Assess document chunking granularity (page-level vs. sub-page chunks) and overlap strategy
+  - Measure retrieval quality impact: precision/recall with current page-level chunking vs. proposed multi-level chunking with overlap
+  - Define optimal chunk size and stride (overlap percentage) for domain documents
+  - Implement cross-page context preservation mechanism — preserve section/chapter boundaries and preceding/following content reference for improved reasoning context
+  - Document chunking strategy choice and rationale in Knowledge Layer design doc
+  - *Owner: Jarvis (Ingestion/Knowledge Lead)*
 
 ### Code Quality (Carried Forward)
 
@@ -262,12 +284,12 @@ Note: This will be a living document.
 
 | Gate | Criteria | Status | Phase |
 |------|----------|--------|-------|
-| P0-A | Feature branch exists with BRAIN directory structure | Not started | 0 |
+| P0-A | Feature branch exists with BRAIN directory structure | Complete | 0 |
 | P0-B | ApiService weather stub deleted; Gateway scaffolded | Complete | 0 |
-| P1-A | All BRAIN contracts defined (Python + C#) | Not started | 1 |
-| P1-B | Serialization round-trip test passes | Not started | 1 |
-| P2-A | Upload to CanonicalDocument to Neo4j storage end-to-end | Not started | 2 |
-| P2-B | `/brain/query` returns confidence-scored results | Not started | 2 |
+| P1-A | All BRAIN contracts defined (Python + C#) | Complete | 1 |
+| P1-B | Serialization round-trip test passes | Complete | 1 |
+| P2-A | Upload to CanonicalDocument to Neo4j storage end-to-end | Complete | 2 |
+| P2-B | `/brain/query` returns confidence-scored results | In progress | 2 |
 | P2-C | Neo4j vector indexes queryable | Not started | 2 |
 | P3-A | `/brain/chat` returns evidence-backed response | Not started | 3 |
 | P3-B | Multi-step reasoning visible | Not started | 3 |

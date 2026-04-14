@@ -2,6 +2,7 @@
 
 from .interfaces import IKnowledgeRetriever
 from .models import (
+    BrainQueryRequest,
     BrainContractModel,
     CanonicalDocument,
     Claim,
@@ -18,6 +19,7 @@ from .models import (
 
 __all__ = [
     "BrainContractModel",
+    "BrainQueryRequest",
     "CanonicalDocument",
     "Claim",
     "Contradiction",

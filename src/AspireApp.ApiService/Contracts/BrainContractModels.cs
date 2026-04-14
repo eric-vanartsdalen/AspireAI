@@ -32,6 +32,27 @@ public sealed record KnowledgeResult(
     [property: JsonPropertyName("results")] IReadOnlyList<KnowledgeItem> Results)
     : BrainContractEnvelope(TenantId, CorrelationId);
 
+public sealed record BrainIngestRequest(
+    string TenantId,
+    string CorrelationId,
+    [property: JsonPropertyName("document_id")] int DocumentId)
+    : BrainContractEnvelope(TenantId, CorrelationId);
+
+public sealed record BrainIngestResponse(
+    string TenantId,
+    string CorrelationId,
+    [property: JsonPropertyName("document_id")] int DocumentId,
+    [property: JsonPropertyName("status")] string Status,
+    [property: JsonPropertyName("message")] string Message)
+    : BrainContractEnvelope(TenantId, CorrelationId);
+
+public sealed record BrainQueryRequest(
+    string TenantId,
+    string CorrelationId,
+    [property: JsonPropertyName("query")] string Query,
+    [property: JsonPropertyName("top_k")] int TopK = 5)
+    : BrainContractEnvelope(TenantId, CorrelationId);
+
 public sealed record ReasonResponse(
     string TenantId,
     string CorrelationId,

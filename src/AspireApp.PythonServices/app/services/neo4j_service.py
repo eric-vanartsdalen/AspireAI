@@ -3,6 +3,7 @@ from typing import List, Dict, Any, Optional
 from neo4j import GraphDatabase, Driver
 import json
 
+from ..contracts import CanonicalDocument
 from ..models.models import Document, DocumentPage, PageContent
 
 
@@ -47,8 +48,9 @@ class Neo4jService:
         except Exception as e:
             print(f"Warning: Could not create Neo4j constraints: {e}")
 
-    def create_document_node(self, document: Document) -> str:
+    def create_document_node(self, document: Document | CanonicalDocument) -> str:
         """Create a document node in Neo4j and return the node ID"""
+        payload = self._build_document_payload(document)
         with self.get_driver().session() as session:
             result = session.run("""
                 CREATE (d:Document {
@@ -59,21 +61,46 @@ class Neo4jService:
                     file_size: $file_size,
                     mime_type: $mime_type,
                     upload_date: $upload_date,
-                    processed: $processed
+                    processed: $processed,
+                    tenant_id: $tenant_id,
+                    source_type: $source_type,
+                    source_confidence: $source_confidence
                 })
                 RETURN elementId(d) as node_id
-            """, {
-                "id": document.id,
-                "filename": document.filename,
-                "original_filename": document.original_filename,
-                "file_path": document.file_path,
-                "file_size": document.file_size,
-                "mime_type": document.mime_type,
-                "upload_date": document.upload_date.isoformat(),
-                "processed": document.processed
-            })
-            
+            """, payload)
+             
             return result.single()["node_id"]
+
+    def _build_document_payload(self, document: Document | CanonicalDocument) -> dict[str, Any]:
+        if isinstance(document, CanonicalDocument):
+            metadata = document.metadata or {}
+            return {
+                "id": document.document_id,
+                "filename": metadata.get("file_name", f"document-{document.document_id}"),
+                "original_filename": metadata.get("original_file_name", metadata.get("file_name", f"document-{document.document_id}")),
+                "file_path": metadata.get("file_path", ""),
+                "file_size": metadata.get("file_size"),
+                "mime_type": metadata.get("mime_type"),
+                "upload_date": metadata.get("upload_date"),
+                "processed": True,
+                "tenant_id": document.tenant_id,
+                "source_type": document.source_type,
+                "source_confidence": document.source_confidence,
+            }
+
+        return {
+            "id": document.id,
+            "filename": document.filename,
+            "original_filename": document.original_filename,
+            "file_path": document.file_path,
+            "file_size": document.file_size,
+            "mime_type": document.mime_type,
+            "upload_date": document.upload_date.isoformat(),
+            "processed": document.processed,
+            "tenant_id": getattr(document, "tenant_id", "default"),
+            "source_type": getattr(document, "source_type", "upload"),
+            "source_confidence": getattr(document, "source_confidence", 0.7),
+        }
 
     def create_page_nodes(self, pages: List[PageContent], doc_node_id: str, document_id: int) -> List[str]:
         """Create page nodes and return their IDs"""
@@ -175,7 +202,10 @@ class Neo4jService:
                 RETURN p.content as content, 
                        p.page_number as page_number, 
                        d.filename as filename,
-                       d.id as document_id
+                       d.id as document_id,
+                       d.source_confidence as source_confidence,
+                       coalesce(d.source_confidence, 0.5) as confidence,
+                       coalesce(d.source_confidence, 0.5) as relevance_score
                 ORDER BY p.page_number
                 LIMIT $limit
             """, {

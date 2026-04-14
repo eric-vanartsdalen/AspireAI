@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
-from typing import ClassVar
+from typing import Any, ClassVar
 
 from .models import KnowledgeResult
 
@@ -22,5 +22,6 @@ class IKnowledgeRetriever(ABC):
         tenant_id: str = "default",
         correlation_id: str | None = None,
         limit: int = 10,
+        **options: Any,
     ) -> KnowledgeResult:
         """Return confidence-scored knowledge results for a tenant-scoped query."""

@@ -17,6 +17,7 @@ except ModuleNotFoundError as exc:
 else:
     _PSYCOPG_POOL_IMPORT_ERROR = None
 
+from ..brain.ingestion import normalize_source_type, resolve_source_confidence
 from ..models.models import Document, ProcessingStatus
 
 logger = logging.getLogger(__name__)
@@ -100,6 +101,7 @@ class DatabaseService:
         "neo4j_document_node_id": "TEXT",
         "tenant_id": "TEXT NOT NULL DEFAULT 'default'",
         "source_type": "TEXT NOT NULL DEFAULT 'upload'",
+        "source_confidence": "REAL NOT NULL DEFAULT 0.7",
         "source_url": "TEXT",
     }
     _document_pages_column_definitions: Dict[str, str] = {
@@ -247,6 +249,7 @@ class DatabaseService:
                         neo4j_document_node_id TEXT,
                         tenant_id TEXT NOT NULL DEFAULT 'default',
                         source_type TEXT NOT NULL DEFAULT 'upload',
+                        source_confidence REAL NOT NULL DEFAULT 0.7,
                         source_url TEXT
                     )
                     """
@@ -489,10 +492,18 @@ class DatabaseService:
         status: str = "uploaded",
         tenant_id: str = "default",
         source_type: str = "upload",
+        source_confidence: Optional[float] = None,
         source_url: Optional[str] = None,
     ) -> int:
         try:
             normalized_status = self._normalize_file_status(status)
+            normalized_source_type = normalize_source_type(source_type)
+            normalized_source_confidence = resolve_source_confidence(
+                source_type=normalized_source_type,
+                mime_type=mime_type,
+                file_name=original_file_name or file_name,
+                explicit_confidence=source_confidence,
+            )
             uploaded_at_value = uploaded_at or datetime.now(UTC)
 
             with self._pool.get_connection() as conn:
@@ -510,9 +521,10 @@ class DatabaseService:
                         status,
                         tenant_id,
                         source_type,
+                        source_confidence,
                         source_url
                     )
-                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                     RETURNING id
                     """,
                     (
@@ -525,7 +537,8 @@ class DatabaseService:
                         uploaded_at_value,
                         normalized_status,
                         tenant_id,
-                        source_type,
+                        normalized_source_type,
+                        normalized_source_confidence,
                         source_url,
                     ),
                 )
@@ -534,6 +547,40 @@ class DatabaseService:
                 return file_id
         except Exception as exc:
             logger.error("Error creating file record for %s: %s", file_name, exc)
+            raise
+
+    def update_file_ingestion_metadata(
+        self,
+        *,
+        file_id: int,
+        tenant_id: str = "default",
+        source_type: str = "upload",
+        source_confidence: Optional[float] = None,
+    ) -> None:
+        try:
+            normalized_source_type = normalize_source_type(source_type)
+            file_record = self.get_file_by_id(file_id)
+            normalized_source_confidence = resolve_source_confidence(
+                source_type=normalized_source_type,
+                mime_type=file_record.get("mime_type") if file_record else None,
+                file_name=(file_record or {}).get("original_file_name") or (file_record or {}).get("file_name"),
+                explicit_confidence=source_confidence,
+            )
+
+            with self._pool.get_connection() as conn:
+                cursor = conn.cursor()
+                cursor.execute(
+                    """
+                    UPDATE files
+                    SET tenant_id = %s,
+                        source_type = %s,
+                        source_confidence = %s
+                    WHERE id = %s
+                    """,
+                    (tenant_id, normalized_source_type, normalized_source_confidence, file_id),
+                )
+        except Exception as exc:
+            logger.error("Error updating file %s ingestion metadata: %s", file_id, exc)
             raise
 
     def resolve_upload_path(self, source: Union[Document, Dict[str, Any]]) -> Path:
@@ -869,7 +916,8 @@ class DatabaseService:
             "neo4j_document_node_id": row[14],
             "tenant_id": row[15],
             "source_type": row[16],
-            "source_url": row[17],
+            "source_confidence": row[17],
+            "source_url": row[18],
         }
 
     def _fetch_file_row(self, conn, file_id: int):
@@ -880,7 +928,7 @@ class DatabaseService:
                    file_size, mime_type, uploaded_at, status,
                    processing_started_at, processing_completed_at, processing_error,
                    docling_document_path, total_pages, neo4j_document_node_id,
-                   tenant_id, source_type, source_url
+                   tenant_id, source_type, source_confidence, source_url
             FROM files
             WHERE id = %s
             """,
@@ -896,7 +944,7 @@ class DatabaseService:
                    file_size, mime_type, uploaded_at, status,
                    processing_started_at, processing_completed_at, processing_error,
                    docling_document_path, total_pages, neo4j_document_node_id,
-                   tenant_id, source_type, source_url
+                   tenant_id, source_type, source_confidence, source_url
             FROM files
             ORDER BY uploaded_at DESC
             """
@@ -911,7 +959,7 @@ class DatabaseService:
                    file_size, mime_type, uploaded_at, status,
                    processing_started_at, processing_completed_at, processing_error,
                    docling_document_path, total_pages, neo4j_document_node_id,
-                   tenant_id, source_type, source_url
+                   tenant_id, source_type, source_confidence, source_url
             FROM files
             WHERE LOWER(status) IN ('uploaded', 'error')
             ORDER BY uploaded_at ASC
@@ -939,6 +987,10 @@ class DatabaseService:
             upload_date=file_dict["uploaded_at"],
             processed=(status == "processed"),
             processing_status=status,
+            tenant_id=file_dict.get("tenant_id") or "default",
+            source_type=file_dict.get("source_type") or "upload",
+            source_confidence=file_dict.get("source_confidence"),
+            source_url=file_dict.get("source_url"),
         )
 
     def _normalize_file_status(self, status: str) -> str:

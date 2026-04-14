@@ -9,6 +9,29 @@
 
 <!-- Append new learnings below. Each entry is something lasting about the project. -->
 
+### 2026-11-02 — Phase 2 Validation Gates Defined
+
+**Task:** Define Phase 2 testing scope before implementation begins.
+
+**Clarified:**
+- Phase 2 scope is **ingestion + knowledge baseline**, NOT chat/reasoning (Phase 3+)
+- Three primary gates: P2-A (upload to storage), P2-B (query returns scores), P2-C (vector similarity)
+- Contract parity prerequisite: P1-B (serialization) must be verified first
+
+**Test Strategy:**
+- Unit tests mock all external services (fast, no Aspire)
+- Integration tests use real Neo4j/Ollama in Aspire or test containers (slow, gated to nightly CI)
+- Tenant isolation enforcement required on every test
+- Vector index queryability validated but not optimized in Phase 2
+
+**Decisions recorded:**
+- `.squad/decisions/inbox/buster-phase2-validation-gates.md` - Full validation gate strategy
+- Created 5 missing field-validation tests in `test_phase1_contracts.py` and verified they pass
+
+**Key insight:** Define gates BEFORE implementation begins to prevent scope creep. Phase 2 should not include agent framework selection, proactive monitoring setup, or chat UX changes—those are Phase 3+.
+
+---
+
 ### 2026-04-15 — Phase 1 Validation: Contract Parity ≠ Pipeline Completion
 
 **Clarified:**

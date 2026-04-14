@@ -19,6 +19,7 @@ if str(TEST_ROOT) not in sys.path:
 
 from fastapi import BackgroundTasks, HTTPException
 
+from app.contracts import CanonicalDocument
 from app.routers import processing
 from app.services.lightrag_handoff_service import LightRagHandoffService
 
@@ -27,6 +28,7 @@ class FakeDatabaseService:
     def __init__(self, document: SimpleNamespace | None = None):
         self.document = document
         self.status_updates: list[tuple[int, str, str | None]] = []
+        self.ingestion_updates: list[dict] = []
         self.processing_updates: list[dict] = []
         self.saved_pages: list[dict] = []
         self.file_record: dict | None = None
@@ -44,6 +46,9 @@ class FakeDatabaseService:
 
     def update_file_processing_results(self, **kwargs) -> None:
         self.processing_updates.append(kwargs)
+
+    def update_file_ingestion_metadata(self, **kwargs) -> None:
+        self.ingestion_updates.append(kwargs)
 
     def save_document_page(self, **kwargs) -> None:
         self.saved_pages.append(kwargs)
@@ -63,8 +68,10 @@ class FakeDatabaseService:
 class FakeNeo4jService:
     def __init__(self):
         self.deleted_document_ids: list[int] = []
+        self.created_documents: list[object] = []
 
     def create_document_node(self, document):
+        self.created_documents.append(document)
         return "doc-node"
 
     def create_page_nodes(self, pages, doc_node_id, document_id):
@@ -136,8 +143,13 @@ class ProcessingPipelineRegressionTests(unittest.TestCase):
     def test_process_document_task_persists_pages_and_marks_processed(self):
         document = SimpleNamespace(
             id=42,
+            filename="science-textbook.pdf",
+            original_filename="science-textbook.pdf",
             file_path="C:\\data\\uploads\\stored-file.pdf",
+            mime_type="application/pdf",
             processing_status="uploaded",
+            tenant_id="default",
+            source_type="upload",
         )
         db = FakeDatabaseService(document)
         neo4j = FakeNeo4jService()
@@ -168,10 +180,13 @@ class ProcessingPipelineRegressionTests(unittest.TestCase):
 
         self.assertEqual((42, "processing", None), db.status_updates[0])
         self.assertEqual((42, "processed", None), db.status_updates[-1])
+        self.assertEqual(1, len(db.ingestion_updates))
         self.assertEqual(1, len(db.processing_updates))
         self.assertEqual(2, len(db.saved_pages))
         self.assertEqual("page-node-1", db.saved_pages[0]["neo4j_node_id"])
         self.assertEqual("Page 2", db.saved_pages[1]["content"])
+        self.assertEqual(0.9, db.ingestion_updates[0]["source_confidence"])
+        self.assertIsInstance(neo4j.created_documents[0], CanonicalDocument)
 
     def test_process_document_task_marks_error_when_docling_fails(self):
         document = SimpleNamespace(

@@ -87,6 +87,13 @@ class KnowledgeResult(EnvelopeMixin):
     results: list[KnowledgeItem] = Field(default_factory=list)
 
 
+class BrainQueryRequest(EnvelopeMixin):
+    """Contract-shaped knowledge query request shared with the gateway."""
+
+    query: str
+    top_k: int = Field(default=5, ge=1)
+
+
 class ReasoningStep(BrainContractModel):
     """Traceable reasoning step produced while forming a response."""
 

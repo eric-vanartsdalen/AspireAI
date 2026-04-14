@@ -4,8 +4,9 @@ import logging
 
 from ..services.database_service import DatabaseService
 from ..services.neo4j_service import Neo4jService
-from ..services.lightrag_query_service import LightRagQueryService
-from ..models.models import SemanticQuery, LightRagQueryRequest, LightRagQueryResponse
+from ..brain.knowledge import BrainKnowledgeRetriever, LightRagRetriever
+from ..contracts import BrainQueryRequest, IKnowledgeRetriever, KnowledgeResult
+from ..models.models import SemanticQuery, LightRagQueryRequest
 
 router = APIRouter(prefix="/rag", tags=["rag"])
 logger = logging.getLogger(__name__)
@@ -19,8 +20,14 @@ def get_neo4j_service():
     return Neo4jService()
 
 
-def get_lightrag_query_service():
-    return LightRagQueryService()
+def get_knowledge_retriever() -> IKnowledgeRetriever:
+    return LightRagRetriever()
+
+
+def get_brain_knowledge_retriever(
+    neo4j: Neo4jService = Depends(get_neo4j_service),
+) -> IKnowledgeRetriever:
+    return BrainKnowledgeRetriever(neo4j_service=neo4j)
 
 
 @router.get("/search-documents")
@@ -126,14 +133,24 @@ async def semantic_search(
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@router.post("/lightrag-query", response_model=LightRagQueryResponse)
+@router.post("/lightrag-query", response_model=KnowledgeResult)
 async def lightrag_query(
     query: LightRagQueryRequest,
-    lightrag: LightRagQueryService = Depends(get_lightrag_query_service)
+    retriever: IKnowledgeRetriever = Depends(get_knowledge_retriever),
 ):
-    """Query LightRAG through the Python retrieval layer."""
+    """Query LightRAG through the contract-shaped retrieval seam."""
     try:
-        return lightrag.query_data(query)
+        return await retriever.retrieve(
+            query.query,
+            tenant_id=query.tenant_id,
+            correlation_id=query.correlation_id,
+            limit=max(query.top_k, query.chunk_top_k, 1),
+            mode=query.mode,
+            top_k=query.top_k,
+            chunk_top_k=query.chunk_top_k,
+            include_references=query.include_references,
+            include_chunk_content=query.include_chunk_content,
+        )
     except ValueError as e:
         logger.warning(f"Invalid LightRAG query request: {e}")
         raise HTTPException(status_code=400, detail=str(e))
@@ -142,6 +159,34 @@ async def lightrag_query(
         raise HTTPException(status_code=502, detail=str(e))
     except Exception as e:
         logger.error(f"Unexpected LightRAG query failure: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.post("/query", response_model=KnowledgeResult)
+async def query_knowledge(
+    request: BrainQueryRequest,
+    retriever: IKnowledgeRetriever = Depends(get_brain_knowledge_retriever),
+):
+    """Query the Python knowledge layer through a single contract-shaped route."""
+    try:
+        return await retriever.retrieve(
+            request.query,
+            tenant_id=request.tenant_id,
+            correlation_id=request.correlation_id,
+            limit=request.top_k,
+            top_k=request.top_k,
+            chunk_top_k=request.top_k,
+            include_references=True,
+            include_chunk_content=True,
+        )
+    except ValueError as e:
+        logger.warning(f"Invalid knowledge query request: {e}")
+        raise HTTPException(status_code=400, detail=str(e))
+    except RuntimeError as e:
+        logger.error(f"Knowledge query failed: {e}")
+        raise HTTPException(status_code=502, detail=str(e))
+    except Exception as e:
+        logger.error(f"Unexpected knowledge query failure: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 

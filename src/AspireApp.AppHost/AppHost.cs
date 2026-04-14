@@ -24,7 +24,7 @@ public partial class Program
         var neo4jMetricsPath = Path.Combine(neo4jRootPath, "metrics");
         var neo4jBackupPath = Path.Combine(neo4jRootPath, "backup");
 
-        // SQLite database file setup with configuration and fallback
+        // Legacy shared database file setup retained for test fixture compatibility.
         var sharedDatabaseFileName = builder.Configuration.GetValue<string>("SharedPaths:DatabaseFileName");
         if (string.IsNullOrWhiteSpace(sharedDatabaseFileName))
         {
@@ -157,6 +157,10 @@ public partial class Program
             pythonServices.WithContainerRuntimeArgs("--user", "0");
         }
 
+        apiGateway
+            .WithEnvironment("PYTHON_SERVICE_URL", pythonServices.GetEndpoint("http"))
+            .WaitFor(pythonServices);
+
         // SETUP CONTAINER LightRAG service
         // see: https://github.com/hkuds/LightRAG
         // video: https://www.youtube.com/watch?v=g21royNJ4fw
@@ -202,7 +206,10 @@ public partial class Program
             .WithEnvironment("NEO4J_LIVENESS_CHECK_TIMEOUT", "30")
             .WithEnvironment("NEO4J_KEEP_ALIVE", "true")
             .WithHttpEndpoint(port: 9621, targetPort: 9621, name: "http")
+            .WithHttpHealthCheck("/documents")
             .WaitFor(ollama)
+            .WaitFor(appmodel)
+            .WaitFor(embeddingmodel)
             .WaitFor(neo4jDb);
 
         pythonServices.WithEnvironment("LIGHTRAG_URL", lightrag.GetEndpoint("http"));

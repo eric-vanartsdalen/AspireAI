@@ -33,6 +33,7 @@ def read_root():
             "/documents/health/database - Operational store health",
             "/processing - Document processing",
             "/rag - Retrieval endpoints",
+            "/rag/query - Contract-shaped retrieval with LightRAG-first fallback",
             "/rag/lightrag-query - LightRAG retrieval via Python API"
         ]
     }
