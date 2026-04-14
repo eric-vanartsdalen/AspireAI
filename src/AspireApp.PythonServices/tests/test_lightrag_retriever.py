@@ -33,10 +33,24 @@ class FakeNeo4jService:
     def __init__(self, results: list[dict]):
         self.results = results
         self.calls: list[dict] = []
+        self.confidence_lookups: list[dict] = []
 
     def search_similar_content(self, query: str, limit: int) -> list[dict]:
         self.calls.append({"query": query, "limit": limit})
         return self.results
+    
+    def get_confidence_by_provenance(
+        self, 
+        document_id: int, 
+        page_number: int | None = None
+    ) -> float | None:
+        """Mock confidence lookup for testing enrichment"""
+        self.confidence_lookups.append({
+            "document_id": document_id, 
+            "page_number": page_number
+        })
+        # Return mocked confidence based on test setup
+        return getattr(self, '_mock_confidence', None)
 
 
 class CapturingRetriever(IKnowledgeRetriever):
@@ -283,6 +297,130 @@ class LightRagRetrieverTests(unittest.TestCase):
             },
             retriever.calls[0]["options"],
         )
+
+    def test_lightrag_retriever_enriches_unscored_result_with_neo4j_confidence(self):
+        """When LightRAG omits score but provenance is available, enrich from Neo4j"""
+        neo4j = FakeNeo4jService([])
+        neo4j._mock_confidence = 0.82  # Mock stored confidence
+        
+        query_service = FakeLightRagQueryService(
+            {
+                "results": [
+                    {
+                        "content": "Unscored LightRAG result",
+                        "document_id": 5,
+                        "page_number": 3,
+                        # No confidence/score field
+                    }
+                ]
+            }
+        )
+        retriever = LightRagRetriever(query_service, neo4j_service=neo4j)
+        
+        result = asyncio.run(retriever.retrieve("query"))
+        
+        self.assertEqual(1, len(result.results))
+        self.assertEqual(0.82, result.results[0].confidence)
+        self.assertEqual(1, len(neo4j.confidence_lookups))
+        self.assertEqual(5, neo4j.confidence_lookups[0]["document_id"])
+        self.assertEqual(3, neo4j.confidence_lookups[0]["page_number"])
+
+    def test_lightrag_retriever_enriches_from_parsed_source_refs(self):
+        """When provenance is only in source_refs, parse and enrich from Neo4j"""
+        neo4j = FakeNeo4jService([])
+        neo4j._mock_confidence = 0.74
+        
+        query_service = FakeLightRagQueryService(
+            {
+                "results": [
+                    {
+                        "content": "Result with ref-only provenance",
+                        "source_refs": ["document:12/page:7"],
+                        # No document_id/page_number fields, no score
+                    }
+                ]
+            }
+        )
+        retriever = LightRagRetriever(query_service, neo4j_service=neo4j)
+        
+        result = asyncio.run(retriever.retrieve("query"))
+        
+        self.assertEqual(1, len(result.results))
+        self.assertEqual(0.74, result.results[0].confidence)
+        self.assertEqual(1, len(neo4j.confidence_lookups))
+        self.assertEqual(12, neo4j.confidence_lookups[0]["document_id"])
+        self.assertEqual(7, neo4j.confidence_lookups[0]["page_number"])
+
+    def test_lightrag_retriever_fails_closed_when_neo4j_returns_none(self):
+        """When Neo4j cannot resolve confidence, fail closed (return empty) to force semantic fallback"""
+        neo4j = FakeNeo4jService([])
+        neo4j._mock_confidence = None  # Neo4j has no stored confidence
+        
+        query_service = FakeLightRagQueryService(
+            {
+                "results": [
+                    {
+                        "content": "Unresolved confidence result",
+                        "document_id": 99,
+                        "page_number": 1,
+                        # No score, and Neo4j will return None
+                    }
+                ]
+            }
+        )
+        retriever = LightRagRetriever(query_service, neo4j_service=neo4j)
+        
+        result = asyncio.run(retriever.retrieve("query"))
+        
+        # Should return empty results, forcing fallback to semantic retriever
+        self.assertEqual(0, len(result.results))
+        self.assertEqual(1, len(neo4j.confidence_lookups))
+
+    def test_lightrag_retriever_without_neo4j_service_fails_closed(self):
+        """When no Neo4j service is provided and no score exists, fail closed (return empty)"""
+        query_service = FakeLightRagQueryService(
+            {
+                "results": [
+                    {
+                        "content": "Unscored result without Neo4j",
+                        "document_id": 8,
+                        "page_number": 2,
+                        # No score, no Neo4j service
+                    }
+                ]
+            }
+        )
+        retriever = LightRagRetriever(query_service, neo4j_service=None)
+        
+        result = asyncio.run(retriever.retrieve("query"))
+        
+        # Should return empty results, forcing fallback to semantic retriever
+        self.assertEqual(0, len(result.results))
+
+    def test_lightrag_retriever_preserves_explicit_scores_without_enrichment(self):
+        """When LightRAG provides a score, use it directly without Neo4j lookup"""
+        neo4j = FakeNeo4jService([])
+        neo4j._mock_confidence = 0.99  # Would enrich if called, but shouldn't be
+        
+        query_service = FakeLightRagQueryService(
+            {
+                "results": [
+                    {
+                        "content": "Scored result",
+                        "document_id": 6,
+                        "page_number": 4,
+                        "confidence": 0.68,  # Explicit score provided
+                    }
+                ]
+            }
+        )
+        retriever = LightRagRetriever(query_service, neo4j_service=neo4j)
+        
+        result = asyncio.run(retriever.retrieve("query"))
+        
+        self.assertEqual(1, len(result.results))
+        self.assertEqual(0.68, result.results[0].confidence)
+        self.assertEqual(0, len(neo4j.confidence_lookups))  # No lookup needed
 
 
 if __name__ == "__main__":

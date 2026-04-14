@@ -16,7 +16,11 @@ SCORE_KEYS = ("confidence", "relevance_score", "score", "similarity", "source_co
 
 
 class _KnowledgeItemFactory:
-    def _build_item(self, item: Any) -> KnowledgeItem:
+    def __init__(self):
+        # Allow subclasses to provide Neo4j service for confidence enrichment
+        self._neo4j_service: Neo4jService | None = getattr(self, '_neo4j_service', None)
+
+    def _build_item(self, item: Any, *, enrich_confidence: bool = False) -> KnowledgeItem | None:
         content = ""
         if isinstance(item, Mapping):
             content = self._first_string(
@@ -34,8 +38,17 @@ class _KnowledgeItemFactory:
         confidence = self._first_float(item, SCORE_KEYS)
         if confidence is None:
             confidence = self._first_float(self._metadata(item), SCORE_KEYS)
+        
+        # NEW: Enrich confidence from Neo4j when LightRAG doesn't provide a score
+        if confidence is None and enrich_confidence and self._neo4j_service is not None:
+            confidence = self._enrich_confidence_from_provenance(item)
+        
+        # If still no confidence after enrichment, fail closed: return None
+        # This signals unresolved confidence and allows fallback to semantic retriever
+        # Do NOT use DEFAULT_CONFIDENCE for unresolved scores
         if confidence is None:
-            confidence = DEFAULT_CONFIDENCE
+            return None
+        
         source_refs = self._extract_source_refs(item)
 
         return KnowledgeItem(
@@ -44,6 +57,67 @@ class _KnowledgeItemFactory:
             source_refs=source_refs,
             relevance_score=confidence,
         )
+    
+    def _enrich_confidence_from_provenance(self, item: Any) -> float | None:
+        """
+        Attempt to enrich confidence from stored Neo4j data when LightRAG omits score.
+        Returns None if provenance cannot be resolved or Neo4j lookup fails.
+        """
+        if not isinstance(item, Mapping):
+            return None
+        
+        # Extract document_id and page_number from the item
+        document_id = self._extract_int(item, "document_id")
+        page_number = self._extract_int(item, "page_number")
+        
+        if document_id is None:
+            # Try to parse from source_refs if present
+            source_refs = self._extract_source_refs(item)
+            for ref in source_refs:
+                parsed = self._parse_provenance_from_ref(ref)
+                if parsed and parsed.get("document_id") is not None:
+                    document_id = parsed["document_id"]
+                    page_number = parsed.get("page_number")
+                    break
+        
+        if document_id is None:
+            return None
+        
+        try:
+            return self._neo4j_service.get_confidence_by_provenance(document_id, page_number)
+        except Exception:
+            # Neo4j query failed; return None to signal unresolved confidence
+            return None
+    
+    def _parse_provenance_from_ref(self, ref: str) -> dict[str, int | None]:
+        """
+        Parse document_id and page_number from reference strings like:
+        - "document:7/page:2"
+        - "document:7"
+        """
+        result: dict[str, int | None] = {"document_id": None, "page_number": None}
+        
+        if not isinstance(ref, str):
+            return result
+        
+        # Try to extract document:N/page:M pattern
+        if "document:" in ref:
+            parts = ref.split("/")
+            doc_part = next((p for p in parts if "document:" in p), None)
+            if doc_part:
+                try:
+                    result["document_id"] = int(doc_part.split(":")[1])
+                except (ValueError, IndexError):
+                    pass
+            
+            page_part = next((p for p in parts if "page:" in p), None)
+            if page_part:
+                try:
+                    result["page_number"] = int(page_part.split(":")[1])
+                except (ValueError, IndexError):
+                    pass
+        
+        return result
 
     @staticmethod
     def _first_list(payload: Mapping[str, Any], keys: Iterable[str]) -> list[Any] | None:
@@ -194,8 +268,13 @@ class _KnowledgeItemFactory:
 class LightRagRetriever(_KnowledgeItemFactory, IKnowledgeRetriever):
     """Retrieve knowledge by proxying LightRAG and shaping the response."""
 
-    def __init__(self, query_service: LightRagQueryService | None = None) -> None:
+    def __init__(
+        self, 
+        query_service: LightRagQueryService | None = None,
+        neo4j_service: Neo4jService | None = None
+    ) -> None:
         self._query_service = query_service or LightRagQueryService()
+        self._neo4j_service = neo4j_service
 
     async def retrieve(
         self,
@@ -249,9 +328,9 @@ class LightRagRetriever(_KnowledgeItemFactory, IKnowledgeRetriever):
             return [
                 item
                 for item in (
-                    self._build_item(entry) for entry in list(items)[: max(limit, 1)]
+                    self._build_item(entry, enrich_confidence=True) for entry in list(items)[: max(limit, 1)]
                 )
-                if item.content
+                if item is not None and item.content
             ]
 
         data = payload.get("data")
@@ -267,8 +346,18 @@ class LightRagRetriever(_KnowledgeItemFactory, IKnowledgeRetriever):
         fallback_confidence = self._first_float(payload, SCORE_KEYS)
         if fallback_confidence is None:
             fallback_confidence = self._first_float(data, SCORE_KEYS)
+        
+        # NEW: Try to enrich from Neo4j when confidence is missing
+        if fallback_confidence is None and self._neo4j_service is not None:
+            fallback_confidence = self._enrich_confidence_from_provenance(payload)
+            if fallback_confidence is None and isinstance(data, Mapping):
+                fallback_confidence = self._enrich_confidence_from_provenance(data)
+        
+        # If still no confidence, fail closed: return empty list
+        # This forces fallback to semantic retriever instead of guessing 0.5
         if fallback_confidence is None:
-            fallback_confidence = DEFAULT_CONFIDENCE
+            return []
+        
         fallback_source_refs = self._extract_source_refs(payload)
         if not fallback_source_refs and isinstance(data, Mapping):
             fallback_source_refs = self._extract_source_refs(data)
@@ -323,9 +412,9 @@ class SemanticKnowledgeRetriever(_KnowledgeItemFactory, IKnowledgeRetriever):
         items = [
             item
             for item in (
-                self._build_item(result) for result in raw_results[:resolved_limit]
+                self._build_item(result, enrich_confidence=False) for result in raw_results[:resolved_limit]
             )
-            if item.content
+            if item is not None and item.content
         ]
 
         return KnowledgeResult(

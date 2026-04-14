@@ -118,16 +118,15 @@ class KnowledgeRetrieverTests(unittest.TestCase):
         self.assertEqual(0.87, item.relevance_score)
         self.assertIn("doc-9#page-2", item.source_refs)
 
-    def test_lightrag_retriever_falls_back_to_response_text(self):
+    def test_lightrag_retriever_fails_closed_on_unscored_response_text(self):
+        """When response text has no score and no enrichment is possible, fail closed"""
         payload = {"data": {"response": "Fallback response."}}
         retriever = LightRagRetriever(query_service=FakeLightRagQueryService(payload))
 
         result = asyncio.run(retriever.retrieve("what is policy", limit=3))
 
-        self.assertEqual(1, len(result.results))
-        item = result.results[0]
-        self.assertEqual("Fallback response.", item.content)
-        self.assertEqual(0.5, item.confidence)
+        # Should return empty when confidence cannot be resolved
+        self.assertEqual(0, len(result.results))
 
     def test_lightrag_retriever_uses_source_confidence_for_fallback_items(self):
         payload = {

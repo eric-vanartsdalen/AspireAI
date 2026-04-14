@@ -360,3 +360,56 @@ class Neo4jService:
             })
             
             return [dict(record) for record in result]
+
+    def get_confidence_by_provenance(
+        self, 
+        document_id: int, 
+        page_number: Optional[int] = None
+    ) -> Optional[float]:
+        """
+        Retrieve stored confidence for a specific document/page.
+        Tries Claim nodes first (highest precision), then Page nodes.
+        Returns None if no confidence can be resolved.
+        """
+        with self.get_driver().session() as session:
+            # Try to find a claim with this provenance
+            if page_number is not None:
+                claim_result = session.run("""
+                    MATCH (cl:Claim {document_id: $document_id, page_number: $page_number})
+                    RETURN cl.confidence as confidence
+                    ORDER BY cl.confidence DESC
+                    LIMIT 1
+                """, {
+                    "document_id": document_id,
+                    "page_number": page_number
+                })
+                claim_record = claim_result.single()
+                if claim_record and claim_record["confidence"] is not None:
+                    return float(claim_record["confidence"])
+                
+                # Fall back to page confidence
+                page_result = session.run("""
+                    MATCH (p:Page {page_number: $page_number})<-[:CONTAINS]-(d:Document {id: $document_id})
+                    RETURN coalesce(d.source_confidence, p.confidence) as confidence
+                    LIMIT 1
+                """, {
+                    "document_id": document_id,
+                    "page_number": page_number
+                })
+                page_record = page_result.single()
+                if page_record and page_record["confidence"] is not None:
+                    return float(page_record["confidence"])
+            else:
+                # Document-level confidence
+                doc_result = session.run("""
+                    MATCH (d:Document {id: $document_id})
+                    RETURN d.source_confidence as confidence
+                    LIMIT 1
+                """, {
+                    "document_id": document_id
+                })
+                doc_record = doc_result.single()
+                if doc_record and doc_record["confidence"] is not None:
+                    return float(doc_record["confidence"])
+            
+            return None

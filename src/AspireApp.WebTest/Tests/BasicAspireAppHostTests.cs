@@ -379,6 +379,51 @@ public class BasicAspireAppHostTests : IClassFixture<TestFixture>
             ContainsSignificantQueryTerm(item.Content, knowledgeQuery));
     }
 
+    [Fact, Priority(2)]
+    [Trait("Category", "P2-B")]
+    public async Task BrainQueryReturnsConfidenceEnrichedResults()
+    {
+        var clientInfo = await CreateWebFrontendHttpClientAsync();
+        using var webClient = clientInfo.Client;
+        await DeleteExistingTestUploadsAsync(webClient);
+        var uploadedFile = await UploadTestFileViaApiAsync(webClient);
+        using var pythonClient = CreatePythonServiceHttpClient();
+        var finalStatus = await PollForProcessingCompletionAsync(pythonClient, uploadedFile.Id);
+        Assert.Equal("processed", finalStatus.Status);
+
+        var artifacts = await WaitForProcessedArtifactsAsync(uploadedFile.Id);
+        using var lightRagClient = CreateLightRagHttpClient();
+        await WaitForLightRagIngestionAsync(lightRagClient, artifacts, timeoutMs: 300000);
+
+        using var brainGatewayClient = CreateBrainGatewayHttpClient();
+        var gatewayResult = await WaitForKnowledgeQueryResultAsync(
+            brainGatewayClient,
+            "brain/query",
+            new
+            {
+                tenant_id = clientInfo.TenantId,
+                correlation_id = $"p2b-confidence-{uploadedFile.Id}",
+                query = SmokeRoundTripQuery,
+                top_k = 3
+            });
+
+        Assert.NotEmpty(gatewayResult.Results);
+
+        var uploadedDocResults = gatewayResult.Results
+            .Where(item => item.SourceRefs.Any(sourceRef =>
+                sourceRef.Contains($"document:{uploadedFile.Id}", StringComparison.OrdinalIgnoreCase) ||
+                (!string.IsNullOrWhiteSpace(uploadedFile.FileName) &&
+                 sourceRef.Contains(uploadedFile.FileName, StringComparison.OrdinalIgnoreCase))))
+            .ToList();
+
+        Assert.NotEmpty(uploadedDocResults);
+
+        foreach (var result in uploadedDocResults)
+        {
+            Assert.NotEqual(0.5, result.Confidence);
+        }
+    }
+
     [Fact, Priority(3)]
     public async Task DeleteUploadedTestFile()
     {

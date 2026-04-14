@@ -20,8 +20,10 @@ def get_neo4j_service():
     return Neo4jService()
 
 
-def get_knowledge_retriever() -> IKnowledgeRetriever:
-    return LightRagRetriever()
+def get_knowledge_retriever(
+    neo4j: Neo4jService = Depends(get_neo4j_service),
+) -> IKnowledgeRetriever:
+    return LightRagRetriever(neo4j_service=neo4j)
 
 
 def get_brain_knowledge_retriever(
