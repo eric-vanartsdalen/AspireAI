@@ -97,3 +97,45 @@
 - Scribe focuses on logging, not domain work
 
 **Status:** Orchestration logs created; session log complete; no merge work needed; ready for git commit
+
+### 2026-04-17 — Roadmap/Tasks.md Update Session: Decision Merge & Commit
+
+**Scope:** Post-spawn consolidation session after Bob and Buster updated roadmap for P2-B completion and Phase 3 blocking gate clarification.
+
+**What Scribe Did:**
+1. Created orchestration logs (2 files: Bob P2-B Completion, Buster Review & Phase 3 Guidance) documenting update rationale and cross-agent coordination
+2. Created session log summarizing P2-B closure verification, Phase 3 critical path identification, and blocking gate clarification
+3. Merged 2 inbox files into decisions.md (no exact duplicates):
+   - "P2-B Completion & Roadmap Closure: Confidence Fail-Closed + Neo4j Enrichment" (consolidated P2 status + Phase 2 outstanding triage + Phase 3 immediate actions)
+   - "Phase 3 Agent Framework Selection: Critical Path Decision" (framework evaluation plan, sequencing, unblock timeline)
+4. Added dated merge note to decisions.md header (2026-04-17T23:50:00Z)
+5. Deleted inbox files after merge (inbox cleared)
+6. Committed .squad/decisions.md with descriptive multi-author message (Bob + Buster + Copilot)
+7. Verified no other .squad/ changes staged (orchestration-log/ and log/ are .gitignored per convention)
+
+**Decision Merge Pattern (Consolidated):**
+- Bob's decision: P2-B complete (all tests pass, live infrastructure ready); P2-C unblocked (infrastructure blocker identified); Phase 3 sequencing locked with dependency diagram
+- Buster's decision: Framework selection (LangGraph recommended) is blocking gate; immediate 2-day prototype plan; Phase 3 gates cannot start until framework chosen (2026-04-24 deadline)
+- Both merged into 2 dated decisions with full context for future reference (previous sprint retrospectives will reference these)
+- Inbox cleared successfully
+
+**Cross-Agent Context (No Updates Needed):**
+- Bob, Jarvis, Jeff, Buster already track Phase 3 coordination via decisions.md
+- No individual history.md updates required; roadmap change is team-level decision
+- Jarvis will check decisions.md for framework evaluation task and deadline
+
+**File Size Check (Performed):**
+- bob/history.md: 39.9 KB (exceeds 30KB; recommend archival next quarter if still > 30KB)
+- buster/history.md: 90.4 KB (exceeds 30KB; recommend archival if content is historical)
+- jarvis/history.md: 48.2 KB (exceeds 30KB; recommend archival)
+- jeff/history.md: 78.5 KB (exceeds 30KB; recommend archival)
+- warden/history.md: 17.1 KB (exceeds 12KB but under 30KB; monitor)
+- Decision: No archival action taken yet (content is still active, referenced in recent sessions); recommend revisiting after Phase 3 starts (2026-04-29)
+
+**Key Learnings:**
+- Roadmap updates with clear blocking gates prevent false starts (Phase 3 example: agent framework selection blocks 7 gates)
+- Honest assessment of completion status builds team trust (P2-B verified against tests, not claims)
+- Early blocking gate identification enables parallel work (embedding setup, agent contract, Blazor prep can happen in parallel once framework is chosen)
+- Decision merge workflow stable across sessions (consolidate overlapping decisions, delete inbox, commit, log)
+
+**Status:** Session complete; all inbox decisions merged (2 files); decisions.md updated with merge note; .squad/decisions.md committed; inbox cleared
