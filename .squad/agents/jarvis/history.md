@@ -9,6 +9,28 @@
 
 <!-- Append new learnings below. Each entry is something lasting about the project. -->
 
+### 2026-11-02 — Roadmap Precision: Separating Proven from Deferred in Phase 2 BRAIN Work
+
+**Completed:**
+- Revised `roadmap/Tasks.md` to clarify P2-B and P2-C blockers per Buster's rejection feedback.
+- Separated `BrainKnowledgeRetriever` into proven (interface + routing) vs. deferred (confidence scoring, graph traversal).
+- Tightened gateway `/brain/query` scope: proved HTTP contract mapping, deferred full orchestration to Phase 3.
+- Moved Validation Layer into explicit Phase 2 blocker status (not Phase 3 optional).
+- Added inline blocker notes: Neo4j schema extension blocks both P2-B (confidence from claims) and P2-C (vector indexes).
+
+**Key pattern:**
+- When a deliverable is "done" (code written, interface exposed), distinguish what's proven by tests from what's deferred:
+  - ✅ Proven = interface contract, routing wiring, happy-path tests pass
+  - ❌ Deferred = core scoring/ranking logic, edge cases, data pipelines not yet wired
+- Validation Layer is not optional Phase 3+ work; it's a Phase 2 gate blocker. P2-B cannot close without Validation kickoff (claim extraction + confidence strategy).
+- Neo4j schema constraints (Claim/Evidence nodes) block both P2-B (confidence storage) and P2-C (vector index population).
+
+**Key file paths:**
+- `roadmap/Tasks.md` (lines 165-193: Knowledge Layer + Validation Layer sections clarified)
+- `src/AspireApp.WebTest/Tests/BasicAspireAppHostTests.cs` (proven test: `LiveLightRagNeo4jQueryRoundTrip`)
+- `src/AspireApp.WebTest/Tests/BrainGatewayPhase2Tests.cs` (proven test: `QueryKnowledgeAsync_MapsContractShapedKnowledgeResult_FromPythonQueryRoute`)
+- Decision: `.squad/decisions/inbox/jarvis-tasks-md-precision-edits.md`
+
 ### 2026-04-05 — Python Test Stability: Dependency-Tolerant Imports & Bootstrap Path Repair
 
 **Completed:**

@@ -33,6 +33,38 @@
 
 <!-- Append new learnings below. Each entry is something lasting about the project. -->
 
+### 2026-04-15 — Phase 2 Architecture Review: Retriever Interfaces Live, Confidence Scoring Gap Identified
+
+**Scope:** Architectural review of Phase 2 Knowledge Layer implementation against Tasks.md roadmap.
+
+**Status Summary:**
+- **Delivered:** `IKnowledgeRetriever` abstraction with three implementations: `LightRagRetriever` (legacy LightRAG path), `SemanticKnowledgeRetriever` (Neo4j semantic), `BrainKnowledgeRetriever` (LightRAG-first fallback)
+- **Gateway wiring complete:** `/brain/ingest` and `/brain/query` endpoints tested and working; `BrainBackendClient` successfully maps Python responses to C# contracts
+- **Live test proof:** `BrainGatewayPhase2Tests.QueryKnowledgeAsync_MapsContractShapedKnowledgeResult_FromPythonQueryRoute` confirms contract shape + source refs working
+
+**P2-B Blocker Identified:**
+The semantic fallback path in `BrainKnowledgeRetriever` currently **hard-codes `DEFAULT_CONFIDENCE=0.5`** when LightRAG fails. P2-B gate requires real confidence scores from Neo4j retrieval. Options:
+1. Persist `source_confidence` on `Page` nodes during ingestion, surface in `SemanticKnowledgeRetriever.retrieve()`
+2. Compute confidence from Neo4j graph structure (centrality, validation metadata)
+
+This blocks P2 completion and requires Jarvis + Neo4j schema extension.
+
+**Still TODO for Phase 2:**
+- Neo4j schema extension: `Claim`, `Evidence`, `Concept`, `Entity` labels + constraints
+- Vector index creation on `Page.content` and `Claim.text` (P2-C gate)
+- Validation layer: claim extraction + contradiction detection (Jarvis orchestration)
+- Semantic confidence scoring (P2-B blocker)
+
+**Key files referenced:**
+- Retrievers: `src/AspireApp.PythonServices/app/brain/knowledge/retrievers.py`
+- Gateway client: `src/AspireApp.ApiService/Services/BrainBackendClient.cs`
+- Test harness: `src/AspireApp.WebTest/Tests/BrainGatewayPhase2Tests.cs`
+- Contracts: `src/AspireApp.ApiService/Contracts/` + `src/AspireApp.PythonServices/app/contracts/`
+
+**Roadmap alignment:** Tasks.md updated with accurate status; P2-B marked as **Blocked** pending confidence scoring implementation. Decision logged for cross-team visibility.
+
+
+
 ### 2026-04-05 — Mock Auth UX Revision Uses Dedicated Sign-In Route + Framework Redirect
 
 **Scope:** Independent architectural revision of the Blazor mock auth shell after QA rejected the first UX pass.

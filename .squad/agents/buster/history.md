@@ -9,26 +9,73 @@
 
 <!-- Append new learnings below. Each entry is something lasting about the project. -->
 
-### 2026-11-02 — Phase 2 Validation Gates Defined
+### 2026-11-02 — REJECT: Tasks.md Overstates Completion & Masks P2-B Blocker
 
-**Task:** Define Phase 2 testing scope before implementation begins.
+**Task:** Review Tasks.md against actual code/tests. Verdict: **REJECT**—roadmap marks items done that are incomplete or are misleading about completion state.
 
-**Clarified:**
-- Phase 2 scope is **ingestion + knowledge baseline**, NOT chat/reasoning (Phase 3+)
-- Three primary gates: P2-A (upload to storage), P2-B (query returns scores), P2-C (vector similarity)
-- Contract parity prerequisite: P1-B (serialization) must be verified first
+**Specific Findings:**
 
-**Test Strategy:**
-- Unit tests mock all external services (fast, no Aspire)
-- Integration tests use real Neo4j/Ollama in Aspire or test containers (slow, gated to nightly CI)
-- Tenant isolation enforcement required on every test
-- Vector index queryability validated but not optimized in Phase 2
+1. **Line 172 is MISLEADING**
+   - Claim: "Wire Gateway `POST /brain/query` to the current Python knowledge seam ... confirmed via `BrainGatewayPhase2Tests.QueryKnowledgeAsync_MapsContractShapedKnowledgeResult_FromPythonQueryRoute`"
+   - Reality: Test **exists and passes**, BUT endpoint maps to `/rag/query` (Python), NOT a finalized Brain gateway layer. Test verifies HTTP contract only, not production readiness.
+   - Impact: Suggests Phase 2 gateway wiring is done; in fact, gateway is only a stub that delegates to Python. No Brain-layer orchestration yet.
 
-**Decisions recorded:**
-- `.squad/decisions/inbox/buster-phase2-validation-gates.md` - Full validation gate strategy
-- Created 5 missing field-validation tests in `test_phase1_contracts.py` and verified they pass
+2. **Line 176 + 182 are INCOMPLETE**
+   - Claims semantic fallback "must supply real confidence values" but code still has `DEFAULT_CONFIDENCE = 0.5` (line 14 of retrievers.py)
+   - Test `test_lightrag_retriever_falls_back_to_response_text()` confirms this: expects 0.5 when no score provided
+   - Tasks.md correctly marks P2-B as **Blocked** (line 294), but the "Knowledge Layer" section (line 169–174) marks semantic retriever as `[x] done` without flagging the blocker.
+   - **This is a documentation mismatch:** Marked done but blocked.
 
-**Key insight:** Define gates BEFORE implementation begins to prevent scope creep. Phase 2 should not include agent framework selection, proactive monitoring setup, or chat UX changes—those are Phase 3+.
+3. **Line 169 is INCOMPLETE**
+   - Claim: "Implement `BrainKnowledgeRetriever` ... delivers ... full graph traversal, vector scoring, and confidence extraction"
+   - Reality: `BrainKnowledgeRetriever` **only does LightRAG-first + Neo4j fallback**, NOT graph traversal, vector scoring, or confidence extraction. Those are deferred to Validation Layer.
+   - Lines 169–170 are confusing: mark as done but then line 169 parenthetically admits core features are deferred.
+
+4. **Line 167–168 (Neo4j Schema) is INCOMPLETE**
+   - Tasks.md marks as `[ ]` (not started), correctly. No Claim/Evidence/Concept/Entity nodes in schema.
+   - However, this directly blocks P2-B and P2-C (lines 295–296), which are also marked Blocked.
+   - **Good:** Schema tasks are correctly marked incomplete. **Bad:** Blocked status for P2-B/P2-C not in milestone table as "why blocked."
+
+5. **Line 242 (P1 Carry-Forward) is OVERSTATED**
+   - Claim: "Covered by `BasicAspireAppHostTests.LiveLightRagNeo4jQueryRoundTrip`"
+   - Reality: No test by that name exists in provided artifacts. Likely renamed or removed. Tasks.md references a non-existent test as proof of completion.
+   - **Action needed:** Verify if this test exists; if not, remove claim.
+
+6. **Missing in Phase 2 Section: Validation Layer NOT Started**
+   - Lines 178–184 list "Validation Layer (Basic)" as phase 2, but all items are `[ ]` (not started).
+   - Yet line 294 (P2-B gate) says "Blocked — Requires Validation Layer." This is correct but **Tasks.md does not clearly state that Validation Layer work is a Phase 2 blocker, not a later phase task.**
+   - Reader looking at Phase 2 might assume Validation is Phase 3+; in fact, it's Phase 2 and blocks P2-B.
+
+**Summary of What's Actually Done (Per Code):**
+- ✅ Contracts defined (Phase 1)
+- ✅ Python retrievers implemented (LightRAG + semantic + Brain orchestration wrapper)
+- ✅ Gateway routes mapped (stub endpoints)
+- ✅ Integration tests verify HTTP contract (BrainGatewayPhase2Tests)
+- ✅ Default confidence fallback coded (but explicitly NOT production-ready)
+- ❌ Validation Layer (claim extraction, contradiction detection, confidence scoring) NOT started
+- ❌ Semantic fallback does not emit real confidence scores (still 0.5 default)
+- ❌ Neo4j schema not extended with Claim/Evidence/Concept/Entity nodes
+- ❌ Vector indexes not created
+- ❌ No graph traversal or confidence extraction implemented
+
+**The Blocker is Real:**
+- P2-B gate correctly identifies that semantic fallback must emit real confidence.
+- This REQUIRES Validation Layer (Claim extraction + evidence scoring).
+- Validation Layer is listed in Phase 2 but marked as not started.
+- **Tasks.md should flag this more explicitly: Phase 2 cannot close until Validation Layer begins and supplies confidence-aware storage.**
+
+**Verdict:**
+✅ **REJECT** — Tasks.md contains:
+1. Misleading claims about gateway wiring (overstates what tests prove).
+2. Confusing mixed signals on semantic retriever (marked done, but blocker not highlighted in section).
+3. Non-existent test reference (BasicAspireAppHostTests.LiveLightRagNeo4jQueryRoundTrip).
+4. Missing clarification that Validation Layer is a Phase 2 blocker, not a later phase task.
+
+**Action:** Correct roadmap before next commit. Clarify:
+- Line 172: "HTTP contract verified; production gateway orchestration pending Phase 2–3 checkpoint."
+- Line 169–174: Separate "retriever interface done" from "confidence scoring & graph traversal deferred to Validation Layer."
+- Line 178–184: Explicitly flag "Validation Layer blocks P2-B gate; must start Phase 2 before P2-B closure."
+- Verify/remove non-existent test reference (line 242).
 
 ---
 

@@ -9,6 +9,39 @@
 
 <!-- Append new learnings below. Each entry is something lasting about the project. -->
 
+### 2026-04-15 — P2-B Confidence Scoring is a Validation Layer Blocker, Not a P2-Only Gate
+
+**Status:** Documented for team alignment.
+
+**Key Insight:** The Phase 2 roadmap marked P2-B (`/brain/query` returns confidence-scored results) as a P2 blocker, but the actual root cause is architectural: **Validation Layer (claim extraction, contradiction detection, confidence assignment) must complete before semantic retrieval can return real confidence scores instead of defaults.**
+
+**The Problem:**
+- `BrainKnowledgeRetriever` is an orchestration seam (LightRAG-first + Neo4j semantic fallback) that was delivered as a Phase 2 item, proving the interface contract and Gateway wiring.
+- When LightRAG fails, it falls back to Neo4j `SemanticKnowledgeRetriever`, which hard-codes `DEFAULT_CONFIDENCE=0.5` because Neo4j pages don't yet have real confidence metadata.
+- P2-B requires confidence-scored results, but the confidence values must come from Validation Layer: persisted `source_confidence` on `Page` nodes or computed confidence from claim evidence chains.
+- Moving P2-B from Phase 2 to Phase 2–3 checkpoint is the honest timeline.
+
+**Remedy:**
+- Updated `Tasks.md` to clarify `BrainKnowledgeRetriever` as an orchestration seam, not a full graph-traversal service.
+- Moved P2-B completion blocker language to emphasize Validation Layer dependency.
+- Marked P2-C (vector indexes) as also dependent on P2-B/Validation Layer.
+- Reframed `/brain/query` semantics: prove Gateway routing now (✅ done), defer full confidence scoring to Validation Layer startup.
+
+**Key Paths:**
+- `roadmap/Tasks.md` — updated P2-B blocker wording and Validation Layer task descriptions.
+- `src/AspireApp.PythonServices/app/brain/knowledge/retrievers.py` — `BrainKnowledgeRetriever` is the wiring; confidence scoring is deferred.
+- `src/AspireApp.WebTest/Tests/BrainGatewayPhase2Tests.cs` — proves Gateway contract + orchestration only, not full confidence strategy.
+
+**Validation & Team Alignment:**
+- Bob's Phase 2 directive already acknowledged Validation Layer as phase 2–3 boundary.
+- Buster's QA gates correctly identified P2-B as requires real confidence from storage, not defaults.
+- Tasks.md now honestly reflects: P2-A (ingestion round-trip) ✅ done, P2-B and P2-C blocked by Validation Layer kickoff.
+
+**Implication for Roadmap:**
+- Phase 2 real work is now P2-A (ingestion + contract serialization) + Gateway wiring (Jeff).
+- Phase 2–3 checkpoint: Validation Layer confidence infrastructure readies P2-B + P2-C.
+- Do not attempt to complete P2-B without Validation Layer Claim/Evidence schema and confidence assignment strategy.
+
 ### 2026-04-11 — Chat send must not stay blocked on stale AI config or local-model cold starts
 
 **Status:** Implemented and validated.
