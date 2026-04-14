@@ -9,6 +9,37 @@
 
 <!-- Append new learnings below. Each entry is something lasting about the project. -->
 
+### 2026-04-15 — Phase 1 Validation: Contract Parity ≠ Pipeline Completion
+
+**Clarified:**
+- Phase 1 gates are **contract readiness** only: definitions and serialization parity across C# ↔ Python.
+- Phase 1 is NOT blocked by pipeline incompleteness (ingestion, query, storage, retrieval).
+- Tests will fail when exercising Phase 2+ paths; these are expected failures, not Phase 1 gate failures.
+
+**Key distinction:**
+- **Phase 1-A gate:** Contract models exist, compile, have all required fields, types match (e.g., `datetime` ↔ `DateTime`)
+- **Phase 1-B gate:** Serialization round-trip test passes (Python → JSON → C# → JSON → Python)
+- **NOT P1 failures:** Integration test fails because ingestion service incomplete (Phase 2), query returns empty (Phase 2+), Neo4j empty (Phase 2+)
+
+**Implementation for Buster:**
+- Write contract definition unit tests (model instantiation, field presence, type correctness)
+- Write serialization unit tests (round-trip fidelity, JSON schema validation, DateTime formatting)
+- Skip integration tests that depend on Phase 2+ pipeline work
+- Use failure triage matrix: contract issues = P1 failure, pipeline issues = expected, skip for now
+
+**Test failure categories for P1:**
+| Symptom | P1 Action |
+|---------|-----------|
+| "Model not found" or "import fails" | FAIL (fix contract definition) |
+| "JSON key mismatch" or "type conversion fails" | FAIL (fix serialization) |
+| "Document not stored" or "query returns empty" | SKIP (expected until Phase 2+) |
+
+**Related decision:** `.squad/decisions/inbox/buster-phase1-contract-gate-clarification.md` (recorded for Scribe merge)
+
+**Key insight:** Contracts are the proof-of-concept for service integration design. Validate contract parity without waiting for full pipeline. Once contracts are locked, the pipeline work (Phase 2+) can proceed in parallel with confidence that the wire format is stable.
+
+---
+
 ### 2026-04-11 — Chat Privacy Browser Tests Must Decouple Persistence From Assistant Latency
 
 **Completed:**
