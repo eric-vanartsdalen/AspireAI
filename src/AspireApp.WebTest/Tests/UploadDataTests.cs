@@ -9,7 +9,9 @@ using Microsoft.Extensions.Logging.Abstractions;
 using System.Reflection;
 using AuthenticatedUser = web::AspireApp.Web.Services.AuthenticatedUser;
 using AuthenticationContext = web::AspireApp.Web.Services.AuthenticationContext;
+using AutomaticProcessingDispatchResult = web::AspireApp.Web.Services.AutomaticProcessingDispatchResult;
 using FileStorageService = web::AspireApp.Web.Shared.FileStorageService;
+using IDocumentProcessingCoordinator = web::AspireApp.Web.Services.IDocumentProcessingCoordinator;
 using LocalAuthService = web::AspireApp.Web.Services.LocalAuthService;
 using Tenant = web::AspireApp.Web.Data.Tenant;
 using TenantContextService = web::AspireApp.Web.Services.TenantContextService;
@@ -35,6 +37,7 @@ public sealed class UploadDataTests : IDisposable
 
         try
         {
+            var processingCoordinator = new FakeDocumentProcessingCoordinator();
             var authenticationContext = new AuthenticationContext();
             authenticationContext.SetCurrentUser(currentUser);
 
@@ -54,7 +57,8 @@ public sealed class UploadDataTests : IDisposable
             var fileStorageService = new FileStorageService(
                 context,
                 NullLogger<FileStorageService>.Instance,
-                dataDirectory);
+                dataDirectory,
+                processingCoordinator);
 
             _testContext.Services.AddSingleton<IConfiguration>(configuration);
             _testContext.Services.AddSingleton(authenticationContext);
@@ -73,6 +77,7 @@ public sealed class UploadDataTests : IDisposable
             Assert.Equal("upload", storedFile.SourceType);
             Assert.Equal("uploaded", storedFile.Status);
             Assert.True(File.Exists(Path.Combine(dataDirectory, storedFile.FileName)));
+            Assert.Equal([storedFile.Id], processingCoordinator.QueuedDocumentIds);
         }
         finally
         {
@@ -178,6 +183,22 @@ public sealed class UploadDataTests : IDisposable
             }
 
             return new MemoryStream(_content, writable: false);
+        }
+    }
+
+    private sealed class FakeDocumentProcessingCoordinator : IDocumentProcessingCoordinator
+    {
+        public List<int> QueuedDocumentIds { get; } = [];
+
+        public Task<AutomaticProcessingDispatchResult> TryStartProcessingAsync(int documentId, CancellationToken cancellationToken = default)
+        {
+            QueuedDocumentIds.Add(documentId);
+            return Task.FromResult(new AutomaticProcessingDispatchResult(true, true, "queued"));
+        }
+
+        public Task CleanupDocumentAsync(int documentId, CancellationToken cancellationToken = default)
+        {
+            return Task.CompletedTask;
         }
     }
 }

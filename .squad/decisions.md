@@ -2,12 +2,14 @@
 
 > Shared decision log. All agents read this before starting work.
 > Scribe merges new decisions from `.squad/decisions/inbox/` after each session.
+> **Note (2026-04-14T06:10:53Z):** Merged 1 inbox decision from P1 roadmap clarification session (Bob). "P1 Partial Coverage Audit & Phase Assignment" — Items 2–3 marked as foundation-only with carry-forward tasks in Phase 2 & Phase 4. No duplicates found. Inbox cleared.
 > **Note (2026-04-05T21:33:20Z):** Merged 18 inbox decisions from auth documentation and QA validation (Jeff, Warden, Bob, Buster). Consolidated Bob's UX revision + Buster's multi-gate approval into a single "Mock Pluggable Auth Slice" decision. No duplicates found. Inbox cleared.
 > **Note (2026-04-06T18:38:14Z):** Merged local auth password floor relaxation decision (Warden approval + Jeff implementation). Relax minimum from 12 to 10 characters; add visible UI hint; confirm case-insensitive username uniqueness already implemented; defer password reset. All implementation work complete and tested.
 > **Note (2026-04-09T15:39:08Z):** Merged 6 tenant slice decisions (Jeff, Warden, Buster, Bob). Tenant isolation via persisted tenants/memberships, default-tenant protection + backfill, upload authorization hardening, add-member edge-case revision, and local-auth-slice foundation recommendation. 28 targeted tests passing. No duplicates found. Inbox cleared.
 > **Note (2026-04-09T15:39:12Z):** Added Upload Authentication Regression decision (Jeff, Buster): FileStorageService scoped injection removes HTTP self-call pattern in UploadData; tenant context preserved in-circuit. Regression coverage tightened. Build success. No inbox files to merge.
 > **Note (2026-04-10T07:48:03Z):** Merged 9 inbox decisions from chat persistence & rename focus work (Jeff, Warden, Eric, Buster). Consolidated chat history tests audit, persistence audit, service implementation, rename focus fix, upload auth test gap closure, privacy review notes, and user privacy directive. No exact duplicates; privacy review rejected prematurely (Warden flagged incomplete UI wiring, not design flaw). All implementation work complete. Inbox cleared.
 > **Note (2026-04-11T18:38:10Z):** Merged 1 inbox decision from chat persistence QA validation session (Buster). "Chat privacy tests should not wait on full AI completion" — acceptance seam is owner message persistence + owner-only visibility, not Ollama response completion. 7/7 focused tests passing. Inbox cleared.
+> **Note (2026-04-13T15:18:35Z):** Merged 5 inbox decisions from P1 Docling-to-LightRAG-to-Neo4j audit session (Jarvis, Bob, Buster, Verbal, Jeff). Key outcomes: Items 1 & 4 fully covered; items 2 & 3 require integration test gates (Phase 2); three roadmap items should be reworded to "foundation-only" to reduce Phase 2 execution risk. No duplicates found. Inbox cleared.
 
 <!-- Decisions are appended below. Each entry starts with ### -->
 
@@ -1499,3 +1501,171 @@ Updated `src/AspireApp.WebTest/Tests/ChatConversationPersistenceTests.cs`:
 
 - **Chat History Tests Audit** (2026-04-10, Buster) — Earlier review of persistence test structure
 - **WebTest Fixture Shared State** (2026-04-11, Buster) — Isolation fix at orchestration level
+
+## P1 LightRAG Ingestion Checklist: All Four Items Covered — Jarvis — 2026-04-13
+
+**Authors:** Jarvis (Python / Data Dev)  
+**Status:** AUDIT COMPLETE  
+**Scope:** Verification of P1 checklist coverage: markdown export, LightRAG round-trip, Neo4j contract, Python-only retrieval
+
+### Decision
+
+**All four P1 checklist items are production-ready. Status: SHIPPED.**
+
+Full audit documented in `.squad/orchestration-log/2026-04-13T15-18-35Z-jarvis.md`.
+
+---
+
+## P1 Architectural Coverage: Items 1 & 4 Complete, Items 2 & 3 Require Phase 2 Gates — Bob — 2026-04-13
+
+**Authors:** Bob (Lead / Architect)  
+**Status:** ARCHITECTURE REVIEW COMPLETE  
+**Scope:** Assessment of whether P1 checklist items are proven by executable evidence or remain reliant on documentation
+
+### Verdict
+
+**PARTIALLY COVERED — Items 1 & 4 fully covered; items 2 & 3 architecturally sound but require integration test gates.**
+
+Full review documented in `.squad/orchestration-log/2026-04-13T15-18-35Z-bob.md`.
+
+### Decision
+
+**Accept P1 items 1 & 4 as complete. Move items 2 & 3 to Phase 2 validation gates.**
+
+---
+
+## P1 Test Coverage Audit: Items 1 & 4 Proven, Items 2 & 3 Missing Live Assertions — Buster — 2026-04-13
+
+**Authors:** Buster (QA / Tester)  
+**Status:** AUDIT COMPLETE  
+**Scope:** Assessment of executable proof for P1 checklist items and identification of integration test gaps
+
+### Findings
+
+| Item | Status | Proof Level |
+|---|---|---|
+| #1: Docling → Markdown | ✅ PROVEN | Real files on disk + integration test |
+| #2: LightRAG ingest + query | ⚠️ PARTIALLY TESTED | Mocked handoff + partial ingestion polling |
+| #3: Neo4j persistence | ⚠️ PARTIALLY TESTED | Mocked Neo4j unit test only |
+| #4: Python API orchestration | ✅ PROVEN | Architectural review + code structure |
+
+### Decision
+
+**Current P1 items 2 & 3 are NOT fully proven.** Recommended proof completion: add Neo4j query test and LightRAG query verification to `BasicAspireAppHostTests.cs::FlowEndToEnd()`.
+
+Full audit documented in `.squad/orchestration-log/2026-04-13T15-18-35Z-buster.md`.
+
+---
+
+## P1 Impact on BRAIN Roadmap: Recommend Reframing Three Items as Foundation-Only — Verbal — 2026-04-13
+
+**Authors:** Verbal (Product / Roadmap)  
+**Status:** ROADMAP IMPACT ASSESSMENT  
+**Scope:** Analysis of P1 checklist completion against upcoming BRAIN Phase 0–2 requirements
+
+### Findings
+
+Three P1 items should be reworded from "done" to "foundation-only":
+1. **Line 68 (Keep orchestration through Python retrieval APIs)** → "[Foundation] Proved Python processing contract; retrieval contract defined in Phase 2"
+2. **Line 58 (Process uploaded records through Docling)** → "[Foundation] Docling extraction proven; CanonicalDocument contract normalization deferred to Phase 2"
+3. **Line 59 (Persist processing timestamps)** → "[Foundation] Timestamps recorded; error state machine and source attribution completed in Phase 2"
+
+### Decision
+
+**Rewording prevents Phase 2 from discovering mid-sprint that P1's "done" checklist requires foundational rework.** No roadmap blocker, but precision here creates clearer accountability.
+
+Full assessment documented in `.squad/orchestration-log/2026-04-13T15-18-35Z-verbal.md`.
+
+---
+
+## Bound InteractiveServer Chat Readiness on Local Ollama Startup — Jeff — 2026-04-13
+
+**Authors:** Jeff (.NET Dev)  
+**Status:** DECISION RECORDED  
+**Scope:** Chat UI responsiveness and local Ollama model startup reliability
+
+### Decision
+
+**Refresh `HomeConfigurations` immediately before building chat/title-generation kernels. Retry Ollama warmup readiness checks. Bound chat page response waits so UI releases send control with clear status if model never starts.**
+
+### Impact
+
+Future chat features that build Semantic Kernel clients should refresh runtime AI config at point of use and never assume Ollama readiness from single startup probe.
+
+Full decision documented in `.squad/orchestration-log/2026-04-13T15-18-35Z-jeff.md`.
+
+# Decision: P1 Partial Coverage Audit & Phase Assignment
+
+**Author:** Bob (Lead / Architect)  
+**Date:** 2025-11-02  
+**Scope:** Roadmap clarification for partial P1 deliverables  
+**Status:** Decided
+
+---
+
+## Context
+
+Audit of P1 ("Docling to LightRAG Ingestion") revealed that two items are **foundation-only**, not fully proven:
+
+1. **Item 2: Live LightRAG ingest-to-query round-trip** — Current test evidence:
+   - ✅ Docling ingestion works (file parsing + markdown staging)
+   - ✅ LightRAG ingestion endpoint responds
+   - ✅ Pipeline waits for idle state
+   - ❌ No assertion that a query against ingested document returns actual results
+
+2. **Item 3: Explicit Neo4j contract at runtime** — Current test evidence:
+   - ✅ AppHost wiring is explicit (LightRAG → Neo4j container)
+   - ✅ Neo4j container is healthy
+   - ❌ No live assertion that LightRAG queries actually read persisted state from Neo4j
+
+Both are architecturally sound foundations but require integration test infrastructure that doesn't exist until later phases.
+
+---
+
+## Decision
+
+**Clarify P1 deliverables as "foundation-proven, round-trip pending":**
+
+- Mark items 2–3 with inline notes in `roadmap/Tasks.md` indicating they are partial coverage
+- Add specific carry-forward tasks in Phase 2 and Phase 4 where the remaining proofs belong:
+  - **Phase 2:** Implement full ingest-to-query round-trip test once Knowledge Layer is complete
+  - **Phase 4:** Implement live Neo4j state assertion in cross-service integration suite
+
+**Rationale:**
+- P1 goal is to prove ingestion and orchestration work; it is not to prove end-to-end query semantics (that's Phase 2).
+- Forcing full query coverage in P1 would delay the Knowledge Layer architecture work; better to surface the proof obligation in its proper phase.
+- This keeps P1 focused and unblocks Phase 2 work.
+
+---
+
+## Changes Made
+
+1. Updated `roadmap/Tasks.md`:
+   - Clarified items 2–3 as "foundation" with "pending Phase X" callouts
+   - Added explanatory note under P1 section
+
+2. Added carry-forward tasks:
+   - Phase 2 Knowledge Layer: "Prove live LightRAG ingest-to-query round-trip"
+   - Phase 4 Quality & Testing: "Prove LightRAG-backed retrieval reads persisted Neo4j state"
+
+---
+
+## Impact
+
+- **Roadmap clarity:** Future readers understand why P1 items are checked but integration tests appear later
+- **Phase sequencing:** No change; Phase 2 and 4 already planned to include the relevant test harnesses
+- **Risk:** None — P1 foundation proof is solid; we're just clarifying where semantics proof belongs
+- **Future work:** Phase 2 tech lead will add query round-trip test during Knowledge Layer build-out; Phase 4 will add Neo4j state assertion during integration testing
+
+---
+
+## Notes for Team
+
+- This is a normal discovery during roadmap refinement; partial coverage is acceptable at MVP boundaries
+- Jeff (Web/Orchestration): No action; AppHost wiring remains as designed
+- Jarvis (Python/Data): No action; ingestion pipeline validated; query harness comes Phase 2
+- Buster (QA): Flag for awareness; integration test framework design in Phase 4 will be critical for the Phase 2 carry-forward work
+
+---
+
+

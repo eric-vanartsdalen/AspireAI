@@ -9,9 +9,11 @@ using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging.Abstractions;
 using AuthenticatedUser = web::AspireApp.Web.Services.AuthenticatedUser;
 using AuthenticatedUserClaims = web::AspireApp.Web.Services.AuthenticatedUserClaims;
+using AutomaticProcessingDispatchResult = web::AspireApp.Web.Services.AutomaticProcessingDispatchResult;
 using FileMetadata = web::AspireApp.Web.Data.FileMetadata;
 using FileStorageService = web::AspireApp.Web.Shared.FileStorageService;
 using FileUploadController = web::AspireApp.Web.Controllers.FileUploadController;
+using IDocumentProcessingCoordinator = web::AspireApp.Web.Services.IDocumentProcessingCoordinator;
 using LocalAuthService = web::AspireApp.Web.Services.LocalAuthService;
 using Tenant = web::AspireApp.Web.Data.Tenant;
 using TenantManagementService = web::AspireApp.Web.Services.TenantManagementService;
@@ -187,11 +189,78 @@ public sealed class FileUploadControllerTests
                 .Select(file => file.Id)
                 .SingleAsync(TestContext.Current.CancellationToken);
 
-            var blockedDelete = await storage.DeleteFileAsync(fileId, "tenant-blocked");
-            var allowedDelete = await storage.DeleteFileAsync(fileId, "tenant-allowed");
+            var blockedDelete = await storage.DeleteFileAsync(fileId, "tenant-blocked", TestContext.Current.CancellationToken);
+            var allowedDelete = await storage.DeleteFileAsync(fileId, "tenant-allowed", TestContext.Current.CancellationToken);
 
             Assert.False(blockedDelete);
             Assert.True(allowedDelete);
+        }
+        finally
+        {
+            DeleteDirectoryIfPresent(dataDirectory);
+        }
+    }
+
+    [Fact]
+    public async Task UploadFile_QueuesAutomaticProcessing()
+    {
+        await using var context = CreateDbContext();
+        var tenantId = "tenant-allowed";
+        var currentUser = SeedTenantMembership(context, tenantId);
+        var dataDirectory = CreateDataDirectory();
+
+        try
+        {
+            var processingCoordinator = new FakeDocumentProcessingCoordinator();
+            var controller = CreateController(context, currentUser, dataDirectory, processingCoordinator);
+
+            await using var stream = new MemoryStream([1, 2, 3, 4]);
+            IFormFile file = new FormFile(stream, 0, stream.Length, "file", "notes.txt");
+
+            var result = await controller.UploadFile(file, TestContext.Current.CancellationToken);
+
+            var ok = Assert.IsAssignableFrom<ObjectResult>(result);
+            Assert.Equal(StatusCodes.Status200OK, ok.StatusCode ?? StatusCodes.Status200OK);
+            var storedFileId = await context.Datasources.Select(fileRecord => fileRecord.Id).SingleAsync(TestContext.Current.CancellationToken);
+            Assert.Equal([storedFileId], processingCoordinator.QueuedDocumentIds);
+        }
+        finally
+        {
+            DeleteDirectoryIfPresent(dataDirectory);
+        }
+    }
+
+    [Fact]
+    public async Task DeleteFile_CleansProcessedArtifactsBeforeRemovingMetadata()
+    {
+        await using var context = CreateDbContext();
+        var tenantId = "tenant-allowed";
+        var currentUser = SeedTenantMembership(context, tenantId);
+        var dataDirectory = CreateDataDirectory();
+
+        try
+        {
+            var processingCoordinator = new FakeDocumentProcessingCoordinator();
+            context.Datasources.Add(new FileMetadata
+            {
+                FileName = "processed.pdf",
+                OriginalFileName = "processed.pdf",
+                FilePath = dataDirectory,
+                FileHash = "HASH-PROCESSED",
+                SourceType = "upload",
+                Status = "processed",
+                TenantId = tenantId,
+                DoclingDocumentPath = Path.Combine(dataDirectory, "processed", "documents", "1", "document.json")
+            });
+            await context.SaveChangesAsync(TestContext.Current.CancellationToken);
+            var fileId = await context.Datasources.Select(file => file.Id).SingleAsync(TestContext.Current.CancellationToken);
+
+            var controller = CreateController(context, currentUser, dataDirectory, processingCoordinator);
+            var result = await controller.DeleteFile(fileId, TestContext.Current.CancellationToken);
+
+            var ok = Assert.IsAssignableFrom<ObjectResult>(result);
+            Assert.Equal(StatusCodes.Status200OK, ok.StatusCode ?? StatusCodes.Status200OK);
+            Assert.Equal([fileId], processingCoordinator.CleanedDocumentIds);
         }
         finally
         {
@@ -227,16 +296,26 @@ public sealed class FileUploadControllerTests
             tenantId);
     }
 
-    private static FileUploadController CreateController(UploadDbContext context, AuthenticatedUser currentUser, string dataDirectory)
+    private static FileUploadController CreateController(
+        UploadDbContext context,
+        AuthenticatedUser currentUser,
+        string dataDirectory,
+        IDocumentProcessingCoordinator? processingCoordinator = null)
     {
         var storage = new FileStorageService(
             context,
             NullLogger<FileStorageService>.Instance,
-            dataDirectory);
+            dataDirectory,
+            processingCoordinator);
         var tenantManagement = new TenantManagementService(
             context,
             NullLogger<TenantManagementService>.Instance);
-        var configuration = new ConfigurationBuilder().Build();
+        var configuration = new ConfigurationBuilder()
+            .AddInMemoryCollection(new Dictionary<string, string?>
+            {
+                ["FileUpload:DataDirectory"] = dataDirectory
+            })
+            .Build();
         var controller = new FileUploadController(
             storage,
             tenantManagement,
@@ -288,6 +367,25 @@ public sealed class FileUploadControllerTests
         if (Directory.Exists(path))
         {
             Directory.Delete(path, recursive: true);
+        }
+    }
+
+    private sealed class FakeDocumentProcessingCoordinator : IDocumentProcessingCoordinator
+    {
+        public List<int> QueuedDocumentIds { get; } = [];
+
+        public List<int> CleanedDocumentIds { get; } = [];
+
+        public Task<AutomaticProcessingDispatchResult> TryStartProcessingAsync(int documentId, CancellationToken cancellationToken = default)
+        {
+            QueuedDocumentIds.Add(documentId);
+            return Task.FromResult(new AutomaticProcessingDispatchResult(true, true, "queued"));
+        }
+
+        public Task CleanupDocumentAsync(int documentId, CancellationToken cancellationToken = default)
+        {
+            CleanedDocumentIds.Add(documentId);
+            return Task.CompletedTask;
         }
     }
 }

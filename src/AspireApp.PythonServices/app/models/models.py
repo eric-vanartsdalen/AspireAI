@@ -59,6 +59,12 @@ class BatchProcessingStartResponse(BaseModel):
     document_ids: List[int] = []
 
 
+class DocumentCleanupResponse(BaseModel):
+    message: str
+    lightrag_doc_ids: List[str] = []
+    removed_paths: List[str] = []
+
+
 class SemanticQuery(BaseModel):
     query: str
     document_ids: Optional[List[int]] = None

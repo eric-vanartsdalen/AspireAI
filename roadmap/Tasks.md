@@ -63,9 +63,11 @@ Note: This will be a living document.
 ### Docling to LightRAG Ingestion (P1)
 
 - [x] Export Docling free-text output to markdown and stage it for LightRAG document scanning
-- [x] Prove a live LightRAG ingest to query round-trip against the running container
-- [x] Confirm AppHost LightRAG graph storage stays on the explicit Neo4j contract at runtime
+- [x] **Prove a live LightRAG ingest to query round-trip** _(foundation: ingestion & idle pipeline proven; **query round-trip assertion pending P2**)_
+- [x] **Confirm AppHost LightRAG graph storage stays on explicit Neo4j contract** _(foundation: config explicit; **live Neo4j state assertion pending P4**)_
 - [x] Keep orchestration through Python retrieval APIs (no parallel retrieval path)
+
+**Partial Coverage Note:** Items 2–3 are foundation-only in P1. Live query round-trip (item 2) requires full Knowledge Layer integration in Phase 2 before round-trip can be tested end-to-end. Live Neo4j state assertion (item 3) requires integration test harness added in Phase 4 (observability & cross-service testing).
 
 ---
 
@@ -157,6 +159,7 @@ Note: This will be a living document.
 - [ ] Create Neo4j vector indexes on `Page.content` and `Claim.text` properties
 - [ ] Implement `BrainKnowledgeRetriever` (graph traversal + vector similarity + confidence scoring)
 - [ ] Implement `LightRAGRetriever` (wraps existing LightRAG query path behind `IKnowledgeRetriever`)
+- [ ] **[P1 Carry-Forward] Prove live LightRAG ingest-to-query round-trip** — ingest document, validate it appears in Neo4j graph, query it back successfully
 - [ ] Wire Gateway `POST /brain/query` to Knowledge retrieval
 - [ ] Add Ollama embedding model usage for vector index population
 
@@ -216,6 +219,7 @@ Note: This will be a living document.
 - [ ] Retrieval quality metrics - precision/recall against known test sets
 - [ ] Honest failure mode tests - verify "I don't know" for out-of-knowledge questions
 - [ ] Cross-service integration test suite (upload to ingest to validate to store to query to chat to cite)
+- [ ] **[P1 Carry-Forward] Prove LightRAG-backed retrieval reads persisted Neo4j state** — integration test verifying that Knowledge Layer queries return documents ingested via LightRAG and confirmed in Neo4j
 - [ ] Latency baselines - document acceptable response times
 
 ### Code Quality (Carried Forward)

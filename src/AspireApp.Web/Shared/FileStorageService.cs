@@ -1,18 +1,21 @@
-﻿using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore;
 using System.Security.Cryptography;
 using System.Text;
 using AspireApp.Web.Data;
+using AspireApp.Web.Services;
 
 namespace AspireApp.Web.Shared;
 
 public class FileStorageService(
     UploadDbContext context,
     ILogger<FileStorageService> logger,
-    string dataDirectory)
+    string dataDirectory,
+    IDocumentProcessingCoordinator? documentProcessingCoordinator = null)
 {
     private readonly UploadDbContext _context = context;
     private readonly ILogger<FileStorageService> _logger = logger;
     private readonly string _dataDirectory = dataDirectory;
+    private readonly IDocumentProcessingCoordinator? _documentProcessingCoordinator = documentProcessingCoordinator;
 
     public string DataDirectory => _dataDirectory;
 
@@ -290,7 +293,7 @@ public class FileStorageService(
         }
     }
 
-    public async Task<bool> DeleteFileAsync(int id, string? tenantId = null)
+    public async Task<bool> DeleteFileAsync(int id, string? tenantId = null, CancellationToken cancellationToken = default)
     {
         try
         {
@@ -309,6 +312,11 @@ public class FileStorageService(
             if (file == null)
             {
                 return false;
+            }
+
+            if (_documentProcessingCoordinator is not null && RequiresExternalCleanup(file))
+            {
+                await _documentProcessingCoordinator.CleanupDocumentAsync(file.Id, cancellationToken);
             }
 
             var fileName = file.FileName;
@@ -434,6 +442,30 @@ public class FileStorageService(
             }
             throw;
         }
+    }
+
+    public async Task<AutomaticProcessingDispatchResult> TryStartAutomaticProcessingAsync(int fileId, CancellationToken cancellationToken = default)
+    {
+        if (_documentProcessingCoordinator is null)
+        {
+            return AutomaticProcessingDispatchResult.NotAttempted();
+        }
+
+        return await _documentProcessingCoordinator.TryStartProcessingAsync(fileId, cancellationToken);
+    }
+
+    private static bool RequiresExternalCleanup(FileMetadata file)
+    {
+        if (!string.Equals(file.SourceType, "upload", StringComparison.OrdinalIgnoreCase))
+        {
+            return false;
+        }
+
+        return string.Equals(file.Status, "processing", StringComparison.OrdinalIgnoreCase)
+            || string.Equals(file.Status, "processed", StringComparison.OrdinalIgnoreCase)
+            || string.Equals(file.Status, "error", StringComparison.OrdinalIgnoreCase)
+            || !string.IsNullOrWhiteSpace(file.DoclingDocumentPath)
+            || !string.IsNullOrWhiteSpace(file.Neo4jDocumentNodeId);
     }
 
 }
