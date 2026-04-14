@@ -451,7 +451,7 @@ class BrainKnowledgeRetriever(IKnowledgeRetriever):
         semantic_retriever: IKnowledgeRetriever | None = None,
         neo4j_service: Neo4jService | None = None,
     ) -> None:
-        self._light_rag_retriever = light_rag_retriever or LightRagRetriever()
+        self._light_rag_retriever = light_rag_retriever or LightRagRetriever(neo4j_service=neo4j_service)
         self._semantic_retriever = semantic_retriever or SemanticKnowledgeRetriever(neo4j_service)
 
     async def retrieve(

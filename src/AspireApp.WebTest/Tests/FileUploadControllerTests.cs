@@ -6,6 +6,7 @@ using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
+using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging.Abstractions;
 using AuthenticatedUser = web::AspireApp.Web.Services.AuthenticatedUser;
 using AuthenticatedUserClaims = web::AspireApp.Web.Services.AuthenticatedUserClaims;
@@ -320,7 +321,8 @@ public sealed class FileUploadControllerTests
             storage,
             tenantManagement,
             NullLogger<FileUploadController>.Instance,
-            configuration);
+            configuration,
+            new NullHostApplicationLifetime());
 
         var identity = new ClaimsIdentity(authenticationType: "Test");
         AuthenticatedUserClaims.AddClaims(identity, currentUser);
@@ -387,5 +389,13 @@ public sealed class FileUploadControllerTests
             CleanedDocumentIds.Add(documentId);
             return Task.CompletedTask;
         }
+    }
+
+    private sealed class NullHostApplicationLifetime : IHostApplicationLifetime
+    {
+        public CancellationToken ApplicationStarted => CancellationToken.None;
+        public CancellationToken ApplicationStopping => CancellationToken.None;
+        public CancellationToken ApplicationStopped => CancellationToken.None;
+        public void StopApplication() { }
     }
 }

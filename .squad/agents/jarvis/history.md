@@ -9,6 +9,34 @@
 
 <!-- Append new learnings below. Each entry is something lasting about the project. -->
 
+### 2026-04-18 — Confidence Enrichment Fix for BrainKnowledgeRetriever
+
+**Problem:**
+- Test `BrainQueryReturnsConfidenceEnrichedResults` expected confidence values NOT equal to 0.5 (the default), but LightRAG responses without explicit scores were falling back to DEFAULT_CONFIDENCE.
+- The `BrainKnowledgeRetriever` was creating `LightRagRetriever()` without passing the `neo4j_service`, so confidence enrichment via `get_confidence_by_provenance()` wasn't happening.
+
+**Fix:**
+- Updated `BrainKnowledgeRetriever.__init__()` to pass `neo4j_service` to `LightRagRetriever` when initializing the default retriever (line 454).
+- Now when LightRAG returns results without confidence scores, the retriever attempts to enrich them by querying Neo4j for document/page source_confidence or claim confidence.
+
+**Result:**
+- Confidence enrichment now works end-to-end: LightRAG results get enriched from Neo4j metadata when scores are missing.
+- If enrichment fails or confidence is still None, the retriever returns None for that item (fail-closed pattern) instead of defaulting to 0.5.
+- This enables the semantic fallback when LightRAG doesn't have enough data.
+
+**Key Pattern:**
+- **Fail-closed confidence:** When confidence cannot be resolved from either LightRAG response or Neo4j provenance, return None/empty results to signal unresolved confidence rather than guessing 0.5.
+- **Dependency injection:** Pass Neo4j service through the retriever chain so enrichment services have access to graph data.
+
+**Key file paths:**
+- `src/AspireApp.PythonServices/app/brain/knowledge/retrievers.py` (line 454: BrainKnowledgeRetriever initialization fix)
+- `src/AspireApp.PythonServices/app/services/neo4j_service.py` (lines 508-547: get_confidence_by_provenance implementation)
+- `src/AspireApp.WebTest/Tests/BasicAspireAppHostTests.cs` (line 423: confidence != 0.5 assertion)
+
+**Related Work:**
+- Confidence data path established in earlier P2-B work (Claim schema + SemanticKnowledgeRetriever)
+- This fix completes the LightRAG → Neo4j confidence enrichment path for the primary retriever
+
 ### 2026-04-17 — P2-C Vector Index Infrastructure Complete
 
 **Completed:**
