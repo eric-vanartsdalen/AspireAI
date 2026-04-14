@@ -122,24 +122,24 @@ Note: This will be a living document.
 
 ### Python Contracts
 
-- [ ] Define `CanonicalDocument` Pydantic model in `app/contracts/`
+- [x] Define `CanonicalDocument` Pydantic model in `app/contracts/`
   - Fields: `tenant_id`, `document_id`, `source_type`, `source_confidence`, `pages: List[PageContent]`, `metadata: dict`
   - `PageContent`: `page_number`, `content`, `section`, `metadata`
-- [ ] Define `ValidatedDocument` Pydantic model
+- [x] Define `ValidatedDocument` Pydantic model
   - Extends CanonicalDocument with `claims: List[Claim]`, `contradictions: List[Contradiction]`, `overall_confidence: float`
   - `Claim`: `claim_id`, `text`, `confidence`, `evidence: List[Evidence]`, `source_ref`
-- [ ] Define `KnowledgeResult` Pydantic model
+- [x] Define `KnowledgeResult` Pydantic model
   - `results: List[KnowledgeItem]` with `content`, `confidence`, `source_refs`, `relevance_score`
-- [ ] Define `ReasonResponse` Pydantic model
+- [x] Define `ReasonResponse` Pydantic model
   - `answer`, `confidence`, `evidence: List[Evidence]`, `reasoning_steps: List[ReasoningStep]`, `proactive_suggestions: List[str]`
-- [ ] Define common envelope mixin: `tenant_id`, `correlation_id`
-- [ ] Define `IKnowledgeRetriever` ABC (Python)
+- [x] Define common envelope mixin: `tenant_id`, `correlation_id`
+- [x] Define `IKnowledgeRetriever` ABC (Python)
 
 ### C# Contracts (Mirror)
 
-- [ ] Define C# record types mirroring Python contracts
-- [ ] Place in `AspireApp.ApiService/Contracts/` or new shared project
-- [ ] Add `System.Text.Json` serialization attributes for JSON parity
+- [x] Define C# record types mirroring Python contracts
+- [x] Place in `AspireApp.ApiService/Contracts/` or new shared project
+- [x] Add `System.Text.Json` serialization attributes for JSON parity
 
 ### Cross-Language Validation
 
