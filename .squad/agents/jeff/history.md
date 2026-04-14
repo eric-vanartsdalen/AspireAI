@@ -9,6 +9,40 @@
 
 <!-- Append new learnings below. Each entry is something lasting about the project. -->
 
+### 2026-04-17 — P2-C Embedding Infrastructure: Python Services Now Receive Ollama Embedding Config
+
+**Status:** Implemented and validated.
+
+**Implementation Results:**
+- ✅ `AppHost.cs` now passes `OLLAMA_ENDPOINT`, `EMBEDDING_MODEL`, and `EMBEDDING_DIM` environment variables to Python services
+- ✅ Python service waits for both Ollama and the embedding model to load before starting (`WaitFor(ollama)`, `WaitFor(embeddingmodel)`)
+- ✅ Configuration follows existing Aspire parameter patterns using `AI-Embedding-Model` from appsettings.json (currently `bge-m3:latest`)
+- ✅ Embedding dimension set to 1024 for bge-m3 compatibility
+
+**Key Changes:**
+- `AppHost.cs` lines 145-153: Added three new environment variables to Python service wiring
+- `AppHost.cs` lines 153-154: Added startup dependencies on Ollama and embedding model resources
+- `roadmap/Tasks.md` line 170-173: Updated P2-C gate status to reflect AppHost config completion
+
+**Design Decision:**
+- Used `ollama.GetEndpoint("http")` for dynamic endpoint resolution instead of hardcoded URLs
+- Kept embedding dimension as static config (1024) since it's model-specific and rarely changes
+- Followed existing pattern from LightRAG configuration (lines 186-193) for consistency
+
+**Next Steps for P2-C:**
+- Jarvis owns: Create Neo4j vector index schema (CREATE VECTOR INDEX syntax)
+- Jarvis owns: Implement embedding service wrapper in Python to call Ollama
+- Jarvis owns: Populate vector indexes on Page.content and Claim.text properties
+
+**Key Paths:**
+- `src/AspireApp.AppHost/AppHost.cs` — embedding config wiring
+- `roadmap/Tasks.md` — P2-C gate status update
+
+**Cross-Agent Coordination:**
+- Jeff completed orchestration layer config (this work)
+- Jarvis unblocked for Python embedding service implementation
+- Bob's architecture already had embedding model setup (line 107); this extends it to Python
+
 ### 2026-04-15 — P2-B Confidence Scoring is a Validation Layer Blocker, Not a P2-Only Gate
 
 **Status:** Documented for team alignment.

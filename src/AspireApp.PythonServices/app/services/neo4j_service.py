@@ -29,7 +29,7 @@ class Neo4jService:
             self._driver.close()
 
     def _ensure_constraints(self):
-        """Ensure required constraints exist"""
+        """Ensure required constraints and vector indexes exist"""
         try:
             with self.get_driver().session() as session:
                 # Create constraints for unique IDs
@@ -49,8 +49,63 @@ class Neo4jService:
                     except Exception as e:
                         # Constraint might already exist
                         print(f"Constraint creation info: {e}")
+                
+                # Create vector indexes for semantic search
+                # P2-C: Vector indexes for embedding-backed retrieval
+                self._ensure_vector_indexes(session)
         except Exception as e:
             print(f"Warning: Could not create Neo4j constraints: {e}")
+
+    @staticmethod
+    def _get_embedding_dimension() -> int:
+        return int(
+            os.getenv("EMBEDDING_DIM")
+            or os.getenv("EMBEDDING_DIMENSION")
+            or "384"
+        )
+
+    def _ensure_vector_indexes(self, session):
+        """
+        Create vector indexes on Page.content and Claim.text for semantic search.
+        Uses Neo4j 5.x vector index syntax. Idempotent - safe to run on existing indexes.
+        """
+        # Vector dimension must match embedding model output
+        # Default: 384 dimensions for sentence-transformers/all-MiniLM-L6-v2
+        # Will be configurable via environment in future
+        embedding_dimension = self._get_embedding_dimension()
+        
+        vector_indexes = [
+            # Page content vector index for document passage retrieval
+            f"""
+            CREATE VECTOR INDEX page_content_vector IF NOT EXISTS
+            FOR (p:Page) ON (p.content_embedding)
+            OPTIONS {{
+                indexConfig: {{
+                    `vector.dimensions`: {embedding_dimension},
+                    `vector.similarity_function`: 'cosine'
+                }}
+            }}
+            """,
+            
+            # Claim text vector index for claim-based semantic search
+            f"""
+            CREATE VECTOR INDEX claim_text_vector IF NOT EXISTS
+            FOR (cl:Claim) ON (cl.text_embedding)
+            OPTIONS {{
+                indexConfig: {{
+                    `vector.dimensions`: {embedding_dimension},
+                    `vector.similarity_function`: 'cosine'
+                }}
+            }}
+            """
+        ]
+        
+        for idx_query in vector_indexes:
+            try:
+                session.run(idx_query)
+            except Exception as e:
+                # Index might already exist or Neo4j version may not support vector indexes
+                print(f"Vector index creation info: {e}")
 
     def create_document_node(self, document: Document | CanonicalDocument) -> str:
         """Create a document node in Neo4j and return the node ID"""
@@ -357,6 +412,95 @@ class Neo4jService:
             """, {
                 "query": query,
                 "limit": limit
+            })
+            
+            return [dict(record) for record in result]
+    
+    def search_claims_vector(
+        self, 
+        query_embedding: List[float], 
+        limit: int = 10,
+        similarity_threshold: float = 0.7
+    ) -> List[Dict[str, Any]]:
+        """
+        Vector-based semantic search over Claim nodes using Neo4j vector index.
+        
+        Args:
+            query_embedding: Embedding vector for the query (must match index dimensions)
+            limit: Maximum number of results to return
+            similarity_threshold: Minimum cosine similarity score (0.0 to 1.0)
+        
+        Returns:
+            List of claims with similarity scores, sorted by relevance
+        
+        Note: Requires claim_text_vector index and Claim.text_embedding property populated.
+        P2-C gate: This method is ready but won't return results until embeddings are populated.
+        """
+        with self.get_driver().session() as session:
+            # Neo4j 5.x vector similarity search syntax
+            result = session.run("""
+                CALL db.index.vector.queryNodes('claim_text_vector', $limit, $query_embedding)
+                YIELD node AS cl, score
+                WHERE score >= $similarity_threshold
+                MATCH (cl)<-[:CONTAINS_CLAIM]-(p:Page)<-[:CONTAINS]-(d:Document)
+                RETURN cl.text as content,
+                       cl.confidence as confidence,
+                       score as relevance_score,
+                       p.page_number as page_number,
+                       d.filename as filename,
+                       d.id as document_id,
+                       d.source_confidence as source_confidence,
+                       'claim' as result_type
+                ORDER BY score DESC, cl.confidence DESC
+                LIMIT $limit
+            """, {
+                "query_embedding": query_embedding,
+                "limit": limit,
+                "similarity_threshold": similarity_threshold
+            })
+            
+            return [dict(record) for record in result]
+    
+    def search_pages_vector(
+        self, 
+        query_embedding: List[float], 
+        limit: int = 10,
+        similarity_threshold: float = 0.7
+    ) -> List[Dict[str, Any]]:
+        """
+        Vector-based semantic search over Page nodes using Neo4j vector index.
+        
+        Args:
+            query_embedding: Embedding vector for the query (must match index dimensions)
+            limit: Maximum number of results to return
+            similarity_threshold: Minimum cosine similarity score (0.0 to 1.0)
+        
+        Returns:
+            List of pages with similarity scores, sorted by relevance
+        
+        Note: Requires page_content_vector index and Page.content_embedding property populated.
+        P2-C gate: This method is ready but won't return results until embeddings are populated.
+        """
+        with self.get_driver().session() as session:
+            result = session.run("""
+                CALL db.index.vector.queryNodes('page_content_vector', $limit, $query_embedding)
+                YIELD node AS p, score
+                WHERE score >= $similarity_threshold
+                MATCH (p)<-[:CONTAINS]-(d:Document)
+                RETURN p.content as content,
+                       p.page_number as page_number,
+                       d.filename as filename,
+                       d.id as document_id,
+                       d.source_confidence as source_confidence,
+                       coalesce(d.source_confidence, 0.5) as confidence,
+                       score as relevance_score,
+                       'page' as result_type
+                ORDER BY score DESC
+                LIMIT $limit
+            """, {
+                "query_embedding": query_embedding,
+                "limit": limit,
+                "similarity_threshold": similarity_threshold
             })
             
             return [dict(record) for record in result]

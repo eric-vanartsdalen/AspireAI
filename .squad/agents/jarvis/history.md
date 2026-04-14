@@ -9,6 +9,38 @@
 
 <!-- Append new learnings below. Each entry is something lasting about the project. -->
 
+### 2026-04-17 — P2-C Vector Index Infrastructure Complete
+
+**Completed:**
+- Created Neo4j vector indexes for semantic search: `page_content_vector` (Page.content_embedding) and `claim_text_vector` (Claim.text_embedding)
+- Implemented vector search methods: `search_claims_vector()` and `search_pages_vector()` in `Neo4jService`
+- Built `EmbeddingService` with sentence-transformers support, lazy-loading, batch encoding, and graceful degradation
+- Added comprehensive test coverage: `test_vector_infrastructure.py` (8/8 tests passing)
+
+**Key patterns:**
+- **Idempotent index creation:** Vector indexes created with `IF NOT EXISTS` in `_ensure_vector_indexes()`, safe to run on every Neo4j service initialization
+- **Neo4j 5.x vector syntax:** Uses `db.index.vector.queryNodes()` with cosine similarity function; 384-dimensional embeddings (default for sentence-transformers/all-MiniLM-L6-v2)
+- **Foundation-first approach:** Infrastructure (indexes, search methods, embedding service) implemented before population pipeline. Enables embedding integration to proceed in parallel with Phase 3 agent work
+- **Graceful degradation:** `EmbeddingService` handles missing sentence-transformers gracefully; returns `None` instead of crashing when model unavailable
+- **Test-driven:** All infrastructure validated without requiring live embeddings; mocks prove query structure and parameter passing
+
+**Remaining P2-C work:**
+- Populate `content_embedding` and `text_embedding` properties during document ingestion
+- Wire vector search into `SemanticKnowledgeRetriever` (vector-first retrieval with text fallback)
+- Coordinate with Jeff on Ollama embedding endpoint configuration (if switching from sentence-transformers)
+
+**Key file paths:**
+- `src/AspireApp.PythonServices/app/services/neo4j_service.py` (lines 31-96: vector index creation; lines 410-495: vector search methods)
+- `src/AspireApp.PythonServices/app/services/embedding_service.py` (embedding generation service)
+- `src/AspireApp.PythonServices/tests/test_vector_infrastructure.py` (8 tests validating index creation, search methods, embedding service)
+- `roadmap/Tasks.md` (P2-C status updated to "Infrastructure Complete")
+
+**Architecture decisions:**
+- Vector indexes created at Neo4j service initialization, not via separate migration scripts (simplifies deployment)
+- Embedding dimension configurable via `EMBEDDING_DIMENSION` env var (default: 384)
+- Similarity threshold exposed as parameter (default: 0.7) for retrieval tuning
+- Search methods return standard result shape matching text-based search (content, confidence, document_id, page_number) for easy integration
+
 ### 2025-01-11 — Phase 2 Knowledge Layer: Claim Schema + Confidence Data Path
 
 **Completed:**

@@ -144,12 +144,17 @@ public partial class Program
             .WithEnvironment("NEO4J_URI", neo4jBoltUri)                            // Pass Neo4j connection info to Python services
             .WithEnvironment("NEO4J_USER", neo4jUser.Resource)                     // Neo4j username for Python services
             .WithEnvironment("NEO4J_PASSWORD", neo4jPass.Resource)                 // Neo4j password for Python services
+            .WithEnvironment("OLLAMA_ENDPOINT", ollama.GetEndpoint("http"))        // Ollama HTTP endpoint for embeddings
+            .WithEnvironment("EMBEDDING_MODEL", aiEmbeddings.Resource)             // Embedding model name for vector operations
+            .WithEnvironment("EMBEDDING_DIM", "1024")                              // Embedding dimension for bge-m3
             .WithEnvironment("PIP_CACHE_DIR", "/root/.cache/pip")                  // Use persistent pip cache
             .WithEnvironment("DOCKER_BUILDKIT", "1")                               // Enable BuildKit for better caching
             .WithHttpHealthCheck("/health")
             .WaitFor(postgres)  // Ensure Postgres starts before Python service
             .WaitFor(redis)     // Ensure Redis starts before Python service
-            .WaitFor(neo4jDb);  // Ensure Neo4j starts before Python service
+            .WaitFor(neo4jDb)   // Ensure Neo4j starts before Python service
+            .WaitFor(ollama)    // Ensure Ollama starts before Python (for embedding model)
+            .WaitFor(embeddingmodel);  // Ensure embedding model loads before Python service
 
         var pythonRunAsRoot = builder.Configuration.GetValue<bool>("PYTHON_RUN_AS_ROOT");
         if (pythonRunAsRoot)

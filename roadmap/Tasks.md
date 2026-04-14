@@ -6,7 +6,7 @@ Working task breakdown for the [BRAIN Plan](Plan.md). Tracks what's been accompl
 
 Note: This will be a living document.
 
-**Last Updated:** 2026-04-17 — **P2-B COMPLETE:** `LightRagRetriever` enriches from Neo4j when provenance exists; unresolved confidence fails closed (no DEFAULT_CONFIDENCE fallback). **P2-C UNBLOCKED:** Vector index implementation ready to start. **Next:** (P2) Finish contradiction detection + integration docs; (P3) Select agent framework & unblock Gates P3-A–P3-G.
+**Last Updated:** 2026-04-17 — **P2-B COMPLETE:** `LightRagRetriever` enriches from Neo4j when provenance exists; unresolved confidence fails closed (no DEFAULT_CONFIDENCE fallback). **P2-C IN PROGRESS:** Vector index foundation implemented (indexes created, search methods ready, embedding config wired). **Next:** Populate embeddings for stored Pages/Claims; integrate vector search into retrievers; (P2) finish integration docs + contract round-trip coverage; (P3) select the agent framework and move contradiction detection into the Critic Agent slice.
 
 ---
 
@@ -167,10 +167,13 @@ Note: This will be a living document.
 - [x] Extend Neo4j schema - add `Claim`, `Evidence`, `Concept`, `Entity` node labels with `IS UNIQUE` constraints on `(label).id` properties
   - **Unblocks P2-B:** Schema constraints implemented in `neo4j_service.py`
   - Claims can now be stored with their own confidence scores
-- [ ] **[P2-C GATE]** Create Neo4j vector indexes on `Page.content` and `Claim.text` properties
-  - Requires: Ollama embedding model setup + Neo4j vector index SQL syntax
-  - Blocked: Awaiting embedding infrastructure configuration
-  - **Next Owner:** Jarvis (coordinate Ollama embeddings with deployment config)
+- [x] **[P2-C FOUNDATION]** Create Neo4j vector indexes on `Page.content_embedding` and `Claim.text_embedding` properties
+  - ✅ **Vector indexes implemented** (Jarvis 2026-04-17): `page_content_vector` and `claim_text_vector` are created in `_ensure_vector_indexes()` (idempotent on Neo4jService startup)
+  - ✅ **Vector search methods ready** (Jarvis 2026-04-17): `search_claims_vector()` and `search_pages_vector()` use Neo4j 5.x vector similarity syntax
+  - ✅ **EmbeddingService foundation** (Jarvis 2026-04-17): consumes Aspire `OLLAMA_ENDPOINT` / `EMBEDDING_MODEL` config when present, with local fallback for direct Python runs
+  - ✅ **AppHost embedding config complete** (Jeff 2026-04-17): Python services receive `OLLAMA_ENDPOINT`, `EMBEDDING_MODEL`, `EMBEDDING_DIM` via Aspire environment variables
+  - ⏳ **Remaining P2-C work:** Populate `content_embedding` and `text_embedding` properties during document ingestion; wire vector search into `SemanticKnowledgeRetriever`
+  - **Next Owner:** Jarvis (embedding population pipeline)
 - [x] Implement `BrainKnowledgeRetriever` orchestration seam
   - [x] Interface implemented, LightRAG-first + fallback pattern tested (proves contract and routing)
   - [x] Confidence scoring from stored claims — `SemanticKnowledgeRetriever` queries Claims first, falls back to Pages
@@ -186,7 +189,7 @@ Note: This will be a living document.
 
 **P2-B STATUS: ✅ COMPLETE.** Claim-based confidence scoring implemented. `SemanticKnowledgeRetriever` queries Claim nodes first, falls back to Page nodes. Claim extraction wired into ingestion pipeline. LightRAG-first path enriches unscored results via `Neo4jService.get_confidence_by_provenance()` when provenance exists. When enrichment fails, results filtered out (fail-closed) forcing semantic fallback. Tests verify enrichment, fail-closed filtering, and explicit score preservation.
 
-**P2-C STATUS: 🔓 UNBLOCKED.** Schema supports Claim nodes and vector-index-ready structure. Vector index creation syntax and embedding infrastructure setup are the blocking dependencies — ready to proceed.
+**P2-C STATUS: 🟡 IN PROGRESS.** Vector indexes (`page_content_vector`, `claim_text_vector`) are created and query helpers exist. Python services now receive embedding config from AppHost, and `EmbeddingService` consumes that Ollama path with a local fallback for direct Python runs. **Remaining work:** Populate embeddings during ingestion and wire vector search into retrievers before claiming live vector-backed retrieval.
 
 ### Validation Layer (Basic) (Jarvis lead)
 
@@ -318,7 +321,7 @@ Note: This will be a living document.
 | P1-B | Serialization round-trip test passes | Complete | 1 |
 | P2-A | Upload to CanonicalDocument to Neo4j storage end-to-end | Complete | 2 |
 | P2-B | `/brain/query` returns confidence-scored results (no default fallback) | ✅ **COMPLETE** — LightRAG enriches from Neo4j when provenance exists; unresolved confidence fails closed. Live proof: `BasicAspireAppHostTests.BrainQueryReturnsConfidenceEnrichedResults`. | 2 |
-| P2-C | Neo4j vector indexes queryable | 🔓 **UNBLOCKED** — Schema supports Claim nodes; vector index implementation blocked on embedding infrastructure setup (Ollama + Neo4j config). Awaiting next sprint prioritization. | 2 |
+| P2-C | Neo4j vector indexes queryable | 🟡 **IN PROGRESS** — Vector indexes are created (`page_content_vector`, `claim_text_vector`) and search helpers exist. Embedding config is wired, but live vector retrieval still depends on populating embedding properties during ingestion and routing retrievers through the new vector path. | 2 |
 | P3-A | `/brain/chat` returns evidence-backed response | **Blocked on agent framework selection** (due end of sprint 2026-04-24). Once framework chosen, implement Retriever + Synthesizer agents. | 3 |
 | P3-B | Multi-step reasoning visible | Blocked on P3-A (agent framework + base agents). Requires Planner + Critic agent implementations. | 3 |
 | P3-C | Proactive Monitor flags contradiction | Blocked on P3-A. Requires background agent monitoring Claim nodes for conflicts. | 3 |

@@ -9,6 +9,77 @@
 
 <!-- Append new learnings below. Each entry is something lasting about the project. -->
 
+### 2026-04-17 — P2-C Vector Infrastructure Review: APPROVED with Honest Foundation-First Status
+
+**Task:** Review P2-C uncommitted working tree changes for correctness and roadmap honesty.
+
+**Verdict:** ✅ **APPROVED** — P2-C foundation work is honestly scoped and correctly claimed.
+
+**What Was Reviewed:**
+1. `AppHost.cs` — Embedding config passed to Python services (OLLAMA_ENDPOINT, EMBEDDING_MODEL, EMBEDDING_DIM)
+2. `neo4j_service.py` — Vector index creation (`_ensure_vector_indexes()`) + search methods (`search_claims_vector()`, `search_pages_vector()`)
+3. `embedding_service.py` — New service with Ollama-first/local-fallback pattern
+4. `test_vector_infrastructure.py` — 11 tests validating infrastructure (all passing)
+5. `roadmap/Tasks.md` — P2-C status updated to "IN PROGRESS" with clear remaining work
+
+**Why This Is Honest:**
+- **Roadmap correctly states "foundation implemented"** — Does NOT claim vector retrieval is live
+- **Clear separation:** Infrastructure (indexes, search helpers, embedding service) vs. population pipeline (not started)
+- **Tests validate infrastructure contracts:** Index creation is idempotent; search methods use correct Neo4j 5.x vector syntax; embedding service consumes Aspire config
+- **Status wording:** "🟡 IN PROGRESS" instead of "✅ COMPLETE" — accurate signal that embedding population + retrieval integration remains
+- **No overclaim:** Tasks.md line 173 explicitly states "Remaining P2-C work: Populate embeddings ... wire vector search into retrievers"
+
+**Specific Validation:**
+- ✅ Vector indexes created with `IF NOT EXISTS` (idempotent, safe on startup)
+- ✅ Search methods use `db.index.vector.queryNodes()` with cosine similarity (Neo4j 5.x syntax)
+- ✅ Embedding dimension configurable via `EMBEDDING_DIM` env var (1024 for bge-m3, 384 for MiniLM fallback)
+- ✅ AppHost wires `OLLAMA_ENDPOINT`, `EMBEDDING_MODEL`, `EMBEDDING_DIM` to Python services
+- ✅ Python service waits for `ollama` and `embeddingmodel` before starting
+- ✅ `EmbeddingService` gracefully handles missing dependencies (returns None instead of crashing)
+- ✅ 11/11 tests pass (`test_vector_infrastructure.py`)
+- ✅ Related tests still pass (28/28 in `test_lightrag_retriever.py`, `test_knowledge_retriever.py`, `test_rag_semantic_search.py`)
+
+**Correctness Checks:**
+- **Config wiring:** `AppHost.cs` correctly retrieves `aiEmbeddings` from `AI-Embedding-Model` parameter, passes to Python via `EMBEDDING_MODEL` env var
+- **Dependency ordering:** Python service correctly waits for both Ollama container AND embedding model resource before starting
+- **Index syntax:** Vector index queries use correct Neo4j 5.x syntax (`CREATE VECTOR INDEX ... IF NOT EXISTS`, `vector.dimensions`, `vector.similarity_function: 'cosine'`)
+- **Dimension consistency:** `EMBEDDING_DIM=1024` matches bge-m3 model output; fallback to 384 for sentence-transformers/MiniLM is documented
+- **Search contract:** `search_claims_vector()` and `search_pages_vector()` return standard result shape (content, confidence, document_id, page_number, relevance_score) compatible with existing retrievers
+
+**No Bugs Found:**
+- No config mismatches
+- No missing dependencies in AppHost wiring
+- No test gaps for infrastructure contracts
+- No overclaims in roadmap wording
+
+**Contrast With Earlier P2-B Review:**
+- **P2-B (2026-11-02):** Rejected for overclaiming "done" when blocker existed (confidence scoring gap)
+- **P2-C (2026-04-17):** Approved because roadmap honestly says "foundation complete, population pending"
+- **Key difference:** P2-C uses "🟡 IN PROGRESS" with explicit remaining work list; P2-B marked items "[x] done" without flagging blockers in the section
+
+**What This Proves:**
+- Vector index infrastructure is ready for embedding population
+- Search methods are tested and will work when embeddings exist
+- AppHost correctly wires embedding config to Python services
+- Team can proceed with embedding population pipeline in parallel with Phase 3 agent work
+
+**What This Does NOT Prove:**
+- That embeddings are actually populated in Neo4j (explicitly deferred)
+- That vector search is integrated into retrievers (explicitly deferred)
+- That vector retrieval returns better results than text search (Phase 4 evaluation work)
+
+**Key Learning:**
+- **Foundation-first pattern works well:** Implementing infrastructure (indexes, helpers, config) before population pipeline enables parallel work and validates contracts early
+- **Honest "IN PROGRESS" status:** Roadmap correctly signals partial completion instead of false "done" — builds trust and prevents confusion
+- **Test-driven infrastructure:** All vector index and search methods validated without requiring live embeddings — proves correctness of contracts before integration
+
+**Related Files:**
+- `src/AspireApp.AppHost/AppHost.cs` (lines 145-157: embedding config wiring)
+- `src/AspireApp.PythonServices/app/services/neo4j_service.py` (lines 51-96: vector indexes; lines 418-505: vector search)
+- `src/AspireApp.PythonServices/app/services/embedding_service.py` (new file: Ollama-first/local-fallback embedding service)
+- `src/AspireApp.PythonServices/tests/test_vector_infrastructure.py` (new file: 11 tests)
+- `roadmap/Tasks.md` (lines 170-178: P2-C status update)
+
 ### 2026-04-14 — P2-B Live Proof: Confidence Validation via Aspire Integration Test
 
 **Task:** Create live validation proof for the next Knowledge Layer slice (P2-B confidence-enrichment).
