@@ -36,7 +36,11 @@ class Neo4jService:
                 constraints = [
                     "CREATE CONSTRAINT doc_id IF NOT EXISTS FOR (d:Document) REQUIRE d.id IS UNIQUE",
                     "CREATE CONSTRAINT page_id IF NOT EXISTS FOR (p:Page) REQUIRE p.id IS UNIQUE",
-                    "CREATE CONSTRAINT chunk_id IF NOT EXISTS FOR (c:Chunk) REQUIRE c.id IS UNIQUE"
+                    "CREATE CONSTRAINT chunk_id IF NOT EXISTS FOR (c:Chunk) REQUIRE c.id IS UNIQUE",
+                    "CREATE CONSTRAINT claim_id IF NOT EXISTS FOR (cl:Claim) REQUIRE cl.id IS UNIQUE",
+                    "CREATE CONSTRAINT evidence_id IF NOT EXISTS FOR (e:Evidence) REQUIRE e.id IS UNIQUE",
+                    "CREATE CONSTRAINT concept_id IF NOT EXISTS FOR (con:Concept) REQUIRE con.id IS UNIQUE",
+                    "CREATE CONSTRAINT entity_id IF NOT EXISTS FOR (en:Entity) REQUIRE en.id IS UNIQUE"
                 ]
                 
                 for constraint in constraints:
@@ -156,40 +160,38 @@ class Neo4jService:
                 })
 
     def delete_document_graph(self, document_id: int) -> Dict[str, int]:
-        """Delete a document graph and any page nodes for the document."""
+        """Delete a document graph, including pages and claim nodes for the document."""
         with self.get_driver().session() as session:
-            document_row = session.run(
+            deletion_row = session.run(
                 """
                 MATCH (d:Document {id: $document_id})
-                RETURN count(d) AS deleted_documents
+                OPTIONAL MATCH (d)-[:CONTAINS]->(p:Page)
+                OPTIONAL MATCH (p)-[:CONTAINS_CLAIM]->(cl:Claim)
+                RETURN count(DISTINCT d) AS deleted_documents,
+                       count(DISTINCT p) AS deleted_pages,
+                       count(DISTINCT cl) AS deleted_claims
                 """,
                 {"document_id": document_id},
             ).single()
             session.run(
                 """
                 MATCH (d:Document {id: $document_id})
-                DETACH DELETE d
-                """,
-                {"document_id": document_id},
-            )
-            page_row = session.run(
-                """
-                MATCH (p:Page {document_id: $document_id})
-                RETURN count(p) AS deleted_pages
-                """,
-                {"document_id": document_id},
-            ).single()
-            session.run(
-                """
-                MATCH (p:Page {document_id: $document_id})
-                DETACH DELETE p
+                OPTIONAL MATCH (d)-[:CONTAINS]->(p:Page)
+                OPTIONAL MATCH (p)-[:CONTAINS_CLAIM]->(cl:Claim)
+                WITH collect(DISTINCT cl) AS claims,
+                     collect(DISTINCT p) AS pages,
+                     collect(DISTINCT d) AS documents
+                FOREACH (claim IN claims | DETACH DELETE claim)
+                FOREACH (page IN pages | DETACH DELETE page)
+                FOREACH (document IN documents | DETACH DELETE document)
                 """,
                 {"document_id": document_id},
             )
 
             return {
-                "deleted_documents": document_row["deleted_documents"] if document_row else 0,
-                "deleted_pages": page_row["deleted_pages"] if page_row else 0,
+                "deleted_documents": deletion_row["deleted_documents"] if deletion_row else 0,
+                "deleted_pages": deletion_row["deleted_pages"] if deletion_row else 0,
+                "deleted_claims": deletion_row["deleted_claims"] if deletion_row else 0,
             }
 
     def search_similar_content(self, query: str, limit: int = 10) -> List[Dict[str, Any]]:
@@ -283,3 +285,78 @@ class Neo4jService:
                 return result.single()["test"] == 1
         except Exception:
             return False
+
+    def create_claim_nodes(
+        self, 
+        claims: List[Dict[str, Any]], 
+        page_node_id: str, 
+        document_id: int,
+        page_number: int
+    ) -> List[str]:
+        """Create claim nodes and link them to the page"""
+        claim_node_ids = []
+        
+        with self.get_driver().session() as session:
+            for i, claim in enumerate(claims):
+                claim_id = f"{document_id}_p{page_number}_claim{i}"
+                result = session.run("""
+                    CREATE (cl:Claim {
+                        id: $claim_id,
+                        text: $text,
+                        confidence: $confidence,
+                        document_id: $document_id,
+                        page_number: $page_number,
+                        claim_index: $claim_index,
+                        source_type: $source_type,
+                        metadata: $metadata
+                    })
+                    RETURN elementId(cl) as node_id
+                """, {
+                    "claim_id": claim_id,
+                    "text": claim.get("text", ""),
+                    "confidence": claim.get("confidence", 0.7),
+                    "document_id": document_id,
+                    "page_number": page_number,
+                    "claim_index": i,
+                    "source_type": claim.get("source_type", "extraction"),
+                    "metadata": json.dumps(claim.get("metadata", {}))
+                })
+                
+                claim_node_id = result.single()["node_id"]
+                claim_node_ids.append(claim_node_id)
+                
+                # Link claim to page
+                session.run("""
+                    MATCH (p:Page), (cl:Claim)
+                    WHERE elementId(p) = $page_id AND elementId(cl) = $claim_id
+                    CREATE (p)-[:CONTAINS_CLAIM]->(cl)
+                """, {
+                    "page_id": page_node_id,
+                    "claim_id": claim_node_id
+                })
+        
+        return claim_node_ids
+
+    def search_claims(self, query: str, limit: int = 10) -> List[Dict[str, Any]]:
+        """Search for claims (basic text matching for now)"""
+        with self.get_driver().session() as session:
+            result = session.run("""
+                MATCH (cl:Claim)
+                WHERE cl.text CONTAINS $query
+                MATCH (cl)<-[:CONTAINS_CLAIM]-(p:Page)<-[:CONTAINS]-(d:Document)
+                RETURN cl.text as content,
+                       cl.confidence as confidence,
+                       cl.confidence as relevance_score,
+                       p.page_number as page_number,
+                       d.filename as filename,
+                       d.id as document_id,
+                       d.source_confidence as source_confidence,
+                       'claim' as result_type
+                ORDER BY cl.confidence DESC, p.page_number
+                LIMIT $limit
+            """, {
+                "query": query,
+                "limit": limit
+            })
+            
+            return [dict(record) for record in result]

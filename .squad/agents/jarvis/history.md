@@ -9,6 +9,30 @@
 
 <!-- Append new learnings below. Each entry is something lasting about the project. -->
 
+### 2025-01-11 — Phase 2 Knowledge Layer: Claim Schema + Confidence Data Path
+
+**Completed:**
+- Extended Neo4j schema with Claim, Evidence, Concept, Entity node constraints (`neo4j_service.py` lines 31-50)
+- Implemented `ClaimExtractionService` for sentence-based claim extraction with confidence heuristics (Phase 2 baseline; LLM extraction deferred)
+- Added `create_claim_nodes()` and `search_claims()` methods to Neo4jService for Claim storage and retrieval
+- Updated `SemanticKnowledgeRetriever` to query Claim nodes first (confidence-backed), then fall back to Page nodes
+- Verified confidence data path: semantic fallback no longer collapses to `DEFAULT_CONFIDENCE=0.5`; retrieves real confidence from Neo4j
+- Added comprehensive tests: `test_knowledge_retriever.py` (10 tests), `test_claim_extraction.py` (5 tests)
+
+**Key pattern:**
+- **P2-B blocker resolved (partially):** The confidence data path now works end-to-end for stored claims. Semantic retrieval queries `Claim` nodes with extraction-quality confidence, falling back to `Page` nodes with document `source_confidence`.
+- **Remaining P2-B work:** Wire `ClaimExtractionService` into the ingestion pipeline so claims are actually extracted and stored during document processing.
+- **Claim extraction strategy:** Phase 2 uses simple sentence splitting with length/completeness heuristics. Phase 3 will upgrade to LLM-powered extraction.
+- **Retrieval prioritization:** `SemanticKnowledgeRetriever.retrieve()` tries Claims first (higher precision), then Pages (broader coverage).
+
+**Key file paths:**
+- `src/AspireApp.PythonServices/app/services/neo4j_service.py` (lines 31-50: constraints; lines 289-363: Claim CRUD)
+- `src/AspireApp.PythonServices/app/services/claim_extraction_service.py` (sentence-based extraction logic)
+- `src/AspireApp.PythonServices/app/brain/knowledge/retrievers.py` (lines 286-332: Claim-first retrieval)
+- `src/AspireApp.PythonServices/tests/test_knowledge_retriever.py` (lines 289-365: Claim retrieval tests)
+- `src/AspireApp.PythonServices/tests/test_claim_extraction.py` (extraction service tests)
+- `roadmap/Tasks.md` (Phase 2 Knowledge Layer + Validation Layer status updated)
+
 ### 2026-11-02 — Roadmap Precision: Separating Proven from Deferred in Phase 2 BRAIN Work
 
 **Completed:**

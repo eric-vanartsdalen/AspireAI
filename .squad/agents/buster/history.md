@@ -1139,3 +1139,44 @@ The behavior being tested (legacy schema detection with detailed diagnostics) st
 - Session logged: .squad/log/2026-04-11T17-53-25-auth-test-fixes.md
 
 ---
+
+### 2025-11-02: Phase 2 Knowledge Layer Review
+
+**Reviewed:** Jarvis's Phase 2-B Knowledge Layer implementation slice
+
+**Key Files:**
+- `src/AspireApp.PythonServices/app/brain/knowledge/retrievers.py` - Retrieval orchestration
+- `src/AspireApp.PythonServices/app/services/neo4j_service.py` - Neo4j query layer with claim support
+- `src/AspireApp.PythonServices/app/services/claim_extraction_service.py` - Claim extraction logic
+- `src/AspireApp.PythonServices/app/routers/processing.py` - Processing pipeline
+- `src/AspireApp.PythonServices/tests/test_claim_extraction.py` - Unit tests (5/5 passing)
+- `src/AspireApp.PythonServices/tests/test_knowledge_retriever.py` - Integration tests (10/10 passing)
+
+**Testing Verdict:**
+1. ✅ **Semantic fallback confidence fixed** - `SemanticKnowledgeRetriever.retrieve()` now queries Neo4j `search_claims()` first (returns `cl.confidence`), then falls back to `search_similar_content()` which returns `d.source_confidence`. No more hardcoded `DEFAULT_CONFIDENCE=0.5` when Neo4j data exists.
+   - Validated by `test_semantic_retriever_uses_real_source_confidence_from_neo4j()` - passes with 0.9 confidence from Neo4j
+   - Validated by `test_semantic_retriever_queries_claims_before_pages()` - confirms claim-first query order
+
+2. ❌ **Claims NOT persisted end-to-end** - `ClaimExtractionService` exists and is unit-tested (5/5 passing), BUT:
+   - `processing.py:process_document_task()` does NOT call `ClaimExtractionService.extract_claims()`
+   - `processing.py` does NOT call `neo4j_service.create_claim_nodes()` after page creation
+   - Claims are **scaffolded and tested in isolation only** - no live pipeline integration
+   - Real queries against Neo4j will hit empty `Claim` nodes and fall back to `Page` nodes every time
+
+3. ⚠️ **Roadmap status overstates P2-B progress** - Tasks.md line 184 says "P2-B can advance once basic claim extraction is wired into the ingestion pipeline" but also marks semantic fallback as `[x]` complete. The actual blocker (wiring claim extraction into `processing.py`) is still open at line 193.
+
+**Architecture Notes:**
+- `SemanticKnowledgeRetriever` correctly implements claim-first strategy - code is production-ready
+- `ClaimExtractionService` uses simple sentence-splitting heuristics (good for Phase 2 baseline)
+- Neo4j schema constraints for `Claim` nodes exist and are enforced at startup
+- Test coverage on retrieval layer is excellent (claim fallback, empty result handling, confidence propagation)
+
+**Blockers for P2-B Gate:**
+- **CRITICAL:** Wire claim extraction into `processing.py:process_document_task()` after line 76 (page node creation)
+- Add call: `claim_extraction_service.extract_claims(page.content, source_confidence=canonical_document.source_confidence)`
+- Add call: `neo4j_service.create_claim_nodes(claims, page_node_id, document_id, page_number)` for each page
+- Add integration test validating live claim persistence through full pipeline
+
+**Quality Standard:** If it's not tested end-to-end with real data flow, it doesn't work. The retrieval layer is solid, but claims are phantom infrastructure until the pipeline populates them.
+
+**Decision Document:** `.squad/decisions/inbox/buster-p2b-knowledge-layer-verdict.md`

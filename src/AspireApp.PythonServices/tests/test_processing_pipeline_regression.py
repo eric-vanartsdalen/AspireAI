@@ -69,6 +69,7 @@ class FakeNeo4jService:
     def __init__(self):
         self.deleted_document_ids: list[int] = []
         self.created_documents: list[object] = []
+        self.created_claims: list[dict] = []
 
     def create_document_node(self, document):
         self.created_documents.append(document)
@@ -82,6 +83,15 @@ class FakeNeo4jService:
 
     def create_sequential_relationships(self, page_node_ids):
         return None
+    
+    def create_claim_nodes(self, claims, page_node_id, document_id, page_number):
+        self.created_claims.append({
+            "claims": claims,
+            "page_node_id": page_node_id,
+            "document_id": document_id,
+            "page_number": page_number
+        })
+        return [f"claim-node-{i}" for i in range(len(claims))]
 
     def delete_document_graph(self, document_id: int):
         self.deleted_document_ids.append(document_id)
@@ -162,8 +172,8 @@ class ProcessingPipelineRegressionTests(unittest.TestCase):
                     processing_metadata={"markdown_path": "/app/data/processed/documents/42/output.md"},
                 ),
                 [
-                    SimpleNamespace(page_number=1, content="Page 1", metadata={"page": 1}),
-                    SimpleNamespace(page_number=2, content="Page 2", metadata={"page": 2}),
+                    SimpleNamespace(page_number=1, content="The Earth revolves around the Sun. This is a well-established fact.", metadata={"page": 1}),
+                    SimpleNamespace(page_number=2, content="Water is essential for life. All living organisms require water to survive.", metadata={"page": 2}),
                 ],
             )
         )
@@ -184,9 +194,27 @@ class ProcessingPipelineRegressionTests(unittest.TestCase):
         self.assertEqual(1, len(db.processing_updates))
         self.assertEqual(2, len(db.saved_pages))
         self.assertEqual("page-node-1", db.saved_pages[0]["neo4j_node_id"])
-        self.assertEqual("Page 2", db.saved_pages[1]["content"])
+        self.assertEqual("Water is essential for life. All living organisms require water to survive.", db.saved_pages[1]["content"])
         self.assertEqual(0.9, db.ingestion_updates[0]["source_confidence"])
         self.assertIsInstance(neo4j.created_documents[0], CanonicalDocument)
+        
+        # Verify claim extraction was called
+        self.assertGreater(len(neo4j.created_claims), 0, "Claims should be extracted from pages")
+        self.assertEqual(2, len(neo4j.created_claims), "Should extract claims from both pages")
+        
+        # Verify claims were extracted for page 1
+        page1_claims = neo4j.created_claims[0]
+        self.assertEqual(42, page1_claims["document_id"])
+        self.assertEqual(1, page1_claims["page_number"])
+        self.assertEqual("page-node-1", page1_claims["page_node_id"])
+        self.assertGreater(len(page1_claims["claims"]), 0, "Page 1 should have extracted claims")
+        
+        # Verify claims were extracted for page 2
+        page2_claims = neo4j.created_claims[1]
+        self.assertEqual(42, page2_claims["document_id"])
+        self.assertEqual(2, page2_claims["page_number"])
+        self.assertEqual("page-node-2", page2_claims["page_node_id"])
+        self.assertGreater(len(page2_claims["claims"]), 0, "Page 2 should have extracted claims")
 
     def test_process_document_task_marks_error_when_docling_fails(self):
         document = SimpleNamespace(

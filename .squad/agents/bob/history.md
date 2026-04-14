@@ -33,6 +33,25 @@
 
 <!-- Append new learnings below. Each entry is something lasting about the project. -->
 
+### 2026-04-15 (Updated 2025-11-02) — Phase 2 Knowledge Layer: P2-B Confidence Scoring Slice Scoped
+
+**Scope:** Architecture decision on smallest next slice to unblock P2-B gate (confidence scoring).
+
+**Key Finding:** Jarvis is on the right track with retrievers and Validation Layer foundation. However, P2-B gate specifically measures **confidence scoring in semantic retrieval**, not full Validation Layer completeness. These are separate concerns.
+
+**Decision:** P2-B unblocking slice = persist `source_confidence` on Neo4j `Page` nodes during ingestion + surface it in `SemanticKnowledgeRetriever.retrieve()`. This is ~90 min of work, unblocks gate measurement, and lets Phase 3 Validation Layer (claim extraction, evidence chains) proceed in parallel.
+
+**Architecture Boundary:** Page-level confidence (P2-B) vs. Claim-based confidence (Phase 3). Validate this separation before Jarvis starts; it's the seam between retrieval hardening and validation reasoning.
+
+**Key Files:**
+- `src/AspireApp.PythonServices/app/brain/knowledge/retrievers.py` (confidence extraction logic already present; just needs Neo4j to return it)
+- `src/AspireApp.PythonServices/app/services/neo4j_service.py` (schema extension: `source_confidence` on `Page` nodes)
+- `src/AspireApp.WebTest/Tests/BrainGatewayPhase2Tests.cs` (extend with semantic confidence test)
+
+**Risk Reduction:** Splits P2-B measurement from Validation Layer complexity. Gateway now returns real confidence (not defaults), unblocking P2-C vector index work.
+
+**Decision Recorded:** `.squad/decisions/inbox/bob-phase2-knowledge-layer-next-slice.md`
+
 ### 2026-04-15 — Phase 2 Architecture Review: Retriever Interfaces Live, Confidence Scoring Gap Identified
 
 **Scope:** Architectural review of Phase 2 Knowledge Layer implementation against Tasks.md roadmap.

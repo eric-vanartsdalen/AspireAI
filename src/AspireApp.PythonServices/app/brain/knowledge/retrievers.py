@@ -299,20 +299,26 @@ class SemanticKnowledgeRetriever(_KnowledgeItemFactory, IKnowledgeRetriever):
         **options: Any,
     ) -> KnowledgeResult:
         resolved_limit = max(limit, 1)
-        raw_results = await asyncio.to_thread(
-            self._neo4j_service.search_similar_content,
+
+        document_ids = options.get("document_ids")
+
+        # Try claims first (Validation Layer output)
+        claim_results = await asyncio.to_thread(
+            self._neo4j_service.search_claims,
             query,
             resolved_limit,
         )
 
-        document_ids = options.get("document_ids")
-        if isinstance(document_ids, list) and document_ids:
-            allowed_ids = {document_id for document_id in document_ids if isinstance(document_id, int)}
-            raw_results = [
-                result
-                for result in raw_results
-                if result.get("document_id") in allowed_ids
-            ]
+        raw_results = self._filter_results_by_document_ids(claim_results, document_ids)
+
+        # Fall back to page search if no scoped claims found
+        if not raw_results:
+            page_results = await asyncio.to_thread(
+                self._neo4j_service.search_similar_content,
+                query,
+                resolved_limit,
+            )
+            raw_results = self._filter_results_by_document_ids(page_results, document_ids)
 
         items = [
             item
@@ -327,6 +333,24 @@ class SemanticKnowledgeRetriever(_KnowledgeItemFactory, IKnowledgeRetriever):
             correlation_id=correlation_id or uuid.uuid4().hex,
             results=items,
         )
+
+    @staticmethod
+    def _filter_results_by_document_ids(
+        results: list[Mapping[str, Any]] | list[dict[str, Any]],
+        document_ids: Any,
+    ) -> list[Mapping[str, Any]] | list[dict[str, Any]]:
+        if not isinstance(document_ids, list) or not document_ids:
+            return results
+
+        allowed_ids = {document_id for document_id in document_ids if isinstance(document_id, int)}
+        if not allowed_ids:
+            return results
+
+        return [
+            result
+            for result in results
+            if isinstance(result, Mapping) and result.get("document_id") in allowed_ids
+        ]
 
 
 class BrainKnowledgeRetriever(IKnowledgeRetriever):

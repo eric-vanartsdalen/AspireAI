@@ -101,6 +101,35 @@ class RagSemanticSearchTests(unittest.TestCase):
         self.assertEqual(0.88, results[0]["confidence"])
         self.assertEqual(0.88, results[0]["relevance_score"])
 
+    def test_delete_document_graph_removes_claim_nodes(self):
+        service = Neo4jService(uri="bolt://test", user="neo4j", password="secret")
+        session = MagicMock()
+        session.run.side_effect = [
+            MagicMock(single=MagicMock(return_value={
+                "deleted_documents": 1,
+                "deleted_pages": 2,
+                "deleted_claims": 3,
+            })),
+            MagicMock(),
+        ]
+
+        driver = MagicMock()
+        driver.session.return_value.__enter__.return_value = session
+        driver.session.return_value.__exit__.return_value = False
+        service._driver = driver
+
+        result = service.delete_document_graph(42)
+
+        self.assertEqual(1, result["deleted_documents"])
+        self.assertEqual(2, result["deleted_pages"])
+        self.assertEqual(3, result["deleted_claims"])
+        self.assertEqual(2, session.run.call_count)
+        count_query = session.run.call_args_list[0].args[0]
+        delete_query = session.run.call_args_list[1].args[0]
+        self.assertIn("CONTAINS_CLAIM", count_query)
+        self.assertIn("deleted_claims", count_query)
+        self.assertIn("FOREACH (claim IN claims | DETACH DELETE claim)", delete_query)
+
 
 if __name__ == "__main__":
     unittest.main()

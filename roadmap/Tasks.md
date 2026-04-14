@@ -6,7 +6,7 @@ Working task breakdown for the [BRAIN Plan](Plan.md). Tracks what's been accompl
 
 Note: This will be a living document.
 
-**Last Updated:** 2026-04-15 — Phase 2 architectural review; P2-B blocker identified (confidence scoring); Neo4j schema extension tasks clarified.
+**Last Updated:** 2026-04-15 — Claim persistence wired into Phase 2 processing; semantic fallback now uses stored confidence; P2-B remains open on the LightRAG-first score gap.
 
 ---
 
@@ -164,38 +164,41 @@ Note: This will be a living document.
 
 ### Knowledge Layer (Jarvis lead)
 
-- [ ] Extend Neo4j schema - add `Claim`, `Evidence`, `Concept`, `Entity` node labels with `IS UNIQUE` constraints on `(label).id` properties
-  - **Blocks P2-B gate:** Semantic fallback requires real confidence from stored claims, not defaults
-  - **Blocks P2-C gate:** Vector indexes require schema extension
+- [x] Extend Neo4j schema - add `Claim`, `Evidence`, `Concept`, `Entity` node labels with `IS UNIQUE` constraints on `(label).id` properties
+  - **Unblocks P2-B:** Schema constraints implemented in `neo4j_service.py`
+  - Claims can now be stored with their own confidence scores
 - [ ] Create Neo4j vector indexes on `Page.content` and `Claim.text` properties (coordinate with Ollama embedding model setup)
+  - **Blocks P2-C gate:** Vector indexes require embedding infrastructure
 - [x] Implement `BrainKnowledgeRetriever` orchestration seam
   - [x] Interface implemented, LightRAG-first + fallback pattern tested (proves contract and routing)
-  - [ ] Confidence scoring from stored claims (Validation Layer blocker)
-  - [ ] Graph traversal and vector similarity ranking (Validation Layer blocker, P2-C gate)
+  - [x] Confidence scoring from stored claims — `SemanticKnowledgeRetriever` queries Claims first, falls back to Pages
+  - [ ] Graph traversal and vector similarity ranking (P2-C gate: requires vector indexes)
 - [x] Implement `LightRAGRetriever` (wraps existing LightRAG query path behind `IKnowledgeRetriever`)
 - [x] **[P1 Carry-Forward] Prove live LightRAG ingest-to-query round-trip** — covered by `BasicAspireAppHostTests.LiveLightRagNeo4jQueryRoundTrip` (upload/process → LightRAG scan → Neo4j graph checks → live `/brain/query`)
 - [x] Wire Gateway `POST /brain/query` to contract-shaped Python retrieval seam (LightRAG-first + Neo4j fallback)
   - [x] HTTP contract verified via `BrainGatewayPhase2Tests.QueryKnowledgeAsync_MapsContractShapedKnowledgeResult_FromPythonQueryRoute`
   - [ ] Full gateway orchestration (Reasoning Layer, Evidence synthesis) — deferred to Phase 3
 - [ ] Add Ollama embedding model usage for vector index population (Jarvis + Ollama config coordination)
-- [ ] Implement semantic fallback confidence scoring — currently collapses to `DEFAULT_CONFIDENCE=0.5` when LightRAG returns no score; require real confidence values from Neo4j page/chunk retrieval
+- [x] Implement semantic fallback confidence scoring — `SemanticKnowledgeRetriever` now retrieves real confidence from Neo4j Claim/Page nodes
+- [ ] Close the LightRAG-first confidence gap — when LightRAG omits score metadata, enrich `/brain/query` results from stored confidence or fail closed instead of defaulting to `DEFAULT_CONFIDENCE=0.5`
 
-**P2-B Dependency:** The semantic fallback path must supply real confidence values for P2-B completion. Currently, confidence values are hard-coded (`DEFAULT_CONFIDENCE=0.5`) when LightRAG fails. **This is a Validation Layer blocker: P2-B requires the Validation Layer (claim extraction and confidence scoring) to kickoff during Phase 2 to enable source-backed confidence scores.** Neo4j schema extension (Claim/Evidence nodes) must also complete to store and retrieve real confidence values.
+**P2-B Progress:** Claim-based confidence scoring is now implemented on the Neo4j semantic fallback path. `SemanticKnowledgeRetriever` queries Claim nodes with extraction-quality confidence first, falling back to Page nodes with document `source_confidence`. Claim extraction is now wired into the ingestion pipeline — `processing.py` calls `ClaimExtractionService.extract_claims()` and `neo4j_service.create_claim_nodes()` after page creation. Regression coverage in `test_processing_pipeline_regression.py` verifies the processing pipeline invokes claim persistence. **Remaining P2-B blocker:** `/brain/query` is still LightRAG-first, and `LightRagRetriever` still defaults to `DEFAULT_CONFIDENCE=0.5` when LightRAG omits score metadata.
 
 ### Validation Layer (Basic) (Jarvis lead)
 
-**STATUS:** All items incomplete. **Blocks P2-B gate.** Validation Layer work must start Phase 2 to enable P2-B closure (confidence scoring, claim extraction, contradiction detection).
+**STATUS:** Foundational claim pipeline wired. Semantic fallback now uses stored confidence, but P2-B remains open until the LightRAG-first path stops defaulting unscored results to `0.5`.
 
-- [ ] Implement basic claim extraction using Ollama LLM (prompt template + extraction logic) — deliver as part of ingest pipeline, persist claims to Neo4j `Claim` nodes, assign confidence scores based on extraction quality
+- [x] Implement basic claim extraction service — `ClaimExtractionService` extracts sentence-based claims with confidence heuristics (Phase 2 baseline; LLM extraction deferred to Phase 3)
 - [ ] Implement basic contradiction detection against existing Neo4j claims (graph query pattern) — query `Claim` nodes for semantic conflicts
-- [ ] **[P2-B Gate Blocker]** Confidence scoring strategy for semantic retrieval — when LightRAG fails over to Neo4j semantic search, the fallback must surface real confidence values from stored claim/page source confidence, not defaults
-- [ ] Wire: Ingestion → Validation → Knowledge storage path (Jarvis: orchestrate; Jeff: expose as internal pipeline)
-- [ ] Extend Neo4j schema to support Claim/Evidence/Concept/Entity nodes with confidence properties and vector indexes
+- [x] **[P2-B Gate Foundation]** Confidence scoring strategy for semantic retrieval — `SemanticKnowledgeRetriever` now surfaces real confidence from stored Claim/Page nodes (tested in `test_knowledge_retriever.py`)
+- [x] Wire: Ingestion → Validation → Knowledge storage path — integrate `ClaimExtractionService` into processing pipeline, call `neo4j_service.create_claim_nodes()` after page creation (**COMPLETED 2026-04-15** — `processing.py` now extracts claims after page nodes; regression coverage added)
+- [x] Extend Neo4j schema to support Claim/Evidence/Concept/Entity nodes with confidence properties — schema constraints implemented (vector indexes deferred to P2-C)
 
 ### Cross-Layer Integration (Jeff + Jarvis)
 
 - [ ] Ensure all contract round-trips serialize consistently (use Phase 1 round-trip test as regression)
 - [ ] Document the Ingest → Validate → Store → Retrieve contract surface for Phase 3 agents
+- [ ] Add live Aspire/WebTest proof that Phase 2 ingestion persists Claim nodes to Neo4j and that `/brain/query` can surface claim-backed confidence without `DEFAULT_CONFIDENCE=0.5` (Phase 4 validation gate input)
 
 ---
 
@@ -300,8 +303,8 @@ Note: This will be a living document.
 | P1-A | All BRAIN contracts defined (Python + C#) | Complete | 1 |
 | P1-B | Serialization round-trip test passes | Complete | 1 |
 | P2-A | Upload to CanonicalDocument to Neo4j storage end-to-end | Complete | 2 |
-| P2-B | `/brain/query` returns confidence-scored results (no default fallback) | **Blocked** — Requires Validation Layer (Claim extraction + confidence assignment strategy). Neo4j semantic retrieval must emit real source_confidence from stored claims, not defaults. | 2 |
-| P2-C | Neo4j vector indexes queryable | **Blocked by P2-B** — Requires Neo4j schema extension (Claim/Evidence/Concept/Entity labels + vector indexes) and Validation Layer confidence infrastructure. | 2 |
+| P2-B | `/brain/query` returns confidence-scored results (no default fallback) | **In progress** — Claim extraction is wired into ingestion and Neo4j semantic fallback uses stored Claim/Page confidence, but the LightRAG-first path still defaults to `0.5` when upstream results omit scores. | 2 |
+| P2-C | Neo4j vector indexes queryable | **Unblocked** — Schema supports Claim nodes; vector index implementation ready to proceed. | 2 |
 | P3-A | `/brain/chat` returns evidence-backed response | Not started | 3 |
 | P3-B | Multi-step reasoning visible | Not started | 3 |
 | P3-C | Proactive Monitor flags contradiction | Not started | 3 |
@@ -315,7 +318,7 @@ Note: This will be a living document.
 
 ## Implementation Challenges and Revisit Items
 
-- **[P2-B Blocker: Confidence Scoring]** The Gateway `/brain/query` endpoint currently returns results. However, when LightRAG fails or returns empty, the semantic fallback path (`SemanticKnowledgeRetriever.retrieve()`) hard-codes confidence to `DEFAULT_CONFIDENCE=0.5`. To meet P2-B gate, semantic retrieval must return real confidence scores. This is a **Validation Layer dependency**: P2-B requires Claim extraction and contradiction detection infrastructure (Phase 2–3 boundary) to assign source-backed confidence to semantic results. The confidence strategy must surface stored `source_confidence` from `Page` nodes and/or computed confidence from Claim evidence chains. **Action:** Defer P2-B completion to Phase 2–3 checkpoint after Validation Layer kickoff; unblock P2-A and Gateway wiring now.
+- **[P2-B Remaining Gap]** Claim extraction is now wired into the document processing pipeline (`processing.py`), and `SemanticKnowledgeRetriever` retrieves real confidence from stored Claim/Page nodes on the Neo4j fallback path. However, `/brain/query` is still LightRAG-first, and `LightRagRetriever` continues to default to `DEFAULT_CONFIDENCE=0.5` when LightRAG omits score metadata. Regression coverage currently proves the processing pipeline invokes claim persistence, but a live Aspire/WebTest proof for claim-backed confidence remains outstanding.
 
 - **[Agent Framework Selection]** LangGraph, CrewAI, and Autogen are all viable. Selection should happen early in Phase 3 based on: ease of tool integration, multi-agent conversation support, and Python ecosystem maturity. Prototype with 2 candidates before committing.
 

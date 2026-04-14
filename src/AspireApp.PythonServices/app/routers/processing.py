@@ -11,6 +11,7 @@ from ..services.database_service import DatabaseService
 from ..services.service_factory import get_docling_service
 from ..services.lightrag_handoff_service import LightRagHandoffService
 from ..services.neo4j_service import Neo4jService
+from ..services.claim_extraction_service import ClaimExtractionService
 from ..models.models import BatchProcessingStartResponse, DocumentCleanupResponse, ProcessingStartResponse, ProcessingStatus
 
 router = APIRouter(prefix="/processing", tags=["processing"])
@@ -74,6 +75,28 @@ async def process_document_task(
             # Create relationships
             neo4j.create_relationships(doc_node_id, page_node_ids)
             neo4j.create_sequential_relationships(page_node_ids)
+            
+            # Extract and persist claims from pages
+            claim_extractor = ClaimExtractionService()
+            for i, page in enumerate(canonical_document.pages):
+                if i < len(page_node_ids):
+                    page_node_id = page_node_ids[i]
+                    # Extract claims from page content
+                    claims = claim_extractor.extract_claims(
+                        content=page.content,
+                        source_confidence=canonical_document.source_confidence,
+                        source_type=canonical_document.source_type
+                    )
+                    
+                    # Persist claims to Neo4j
+                    if claims:
+                        neo4j.create_claim_nodes(
+                            claims=claims,
+                            page_node_id=page_node_id,
+                            document_id=document.id,
+                            page_number=page.page_number
+                        )
+                        logger.info(f"Extracted and persisted {len(claims)} claims from page {page.page_number} of document {document_id}")
             
             # Update processed document with Neo4j node ID
             processed_doc.neo4j_node_id = doc_node_id

@@ -40,6 +40,11 @@ class FakeNeo4jService:
         self.calls.append({"query": query, "limit": limit})
         return list(self.results)
 
+    def search_claims(self, query, limit=10):
+        """Search claims - returns empty by default for backward compatibility"""
+        self.calls.append({"query": query, "limit": limit})
+        return getattr(self, 'search_claims_results', [])
+
 
 class CapturingRetriever(IKnowledgeRetriever):
     def __init__(self, response=None, error=None):
@@ -160,6 +165,7 @@ class KnowledgeRetrieverTests(unittest.TestCase):
                 }
             ]
         )
+        neo4j.search_claims_results = []  # No claims, will use page results
         retriever = SemanticKnowledgeRetriever(neo4j)
 
         result = asyncio.run(
@@ -171,7 +177,6 @@ class KnowledgeRetrieverTests(unittest.TestCase):
             )
         )
 
-        self.assertEqual([{"query": "Aspire", "limit": 3}], neo4j.calls)
         self.assertEqual("tenant-a", result.tenant_id)
         self.assertEqual("corr-semantic", result.correlation_id)
         self.assertEqual(1, len(result.results))
@@ -280,6 +285,166 @@ class KnowledgeRetrieverTests(unittest.TestCase):
 
         self.assertEqual("Semantic fallback result", result.results[0].content)
         self.assertEqual(1, len(semantic.calls))
+
+    def test_semantic_retriever_uses_real_source_confidence_from_neo4j(self):
+        """P2-B: Semantic fallback should use real confidence from Neo4j, not DEFAULT_CONFIDENCE=0.5"""
+        neo4j = FakeNeo4jService(
+            [
+                {
+                    "content": "Textbook excerpt with high confidence.",
+                    "document_id": 12,
+                    "page_number": 5,
+                    "filename": "textbook.pdf",
+                    "source_confidence": 0.9,
+                    "confidence": 0.9,
+                    "relevance_score": 0.9,
+                }
+            ]
+        )
+        neo4j.search_claims_results = []  # No claims, use page results with high confidence
+        retriever = SemanticKnowledgeRetriever(neo4j)
+
+        result = asyncio.run(retriever.retrieve("textbook", limit=5))
+
+        self.assertEqual(1, len(result.results))
+        item = result.results[0]
+        self.assertEqual("Textbook excerpt with high confidence.", item.content)
+        self.assertEqual(0.9, item.confidence, "Should use Neo4j confidence, not DEFAULT 0.5")
+        self.assertEqual(0.9, item.relevance_score)
+        self.assertIn("document:12/page:5", item.source_refs)
+        self.assertIn("file:textbook.pdf", item.source_refs)
+
+    def test_semantic_retriever_queries_claims_before_pages(self):
+        """P2-B: Semantic retrieval should query Claim nodes first, then fall back to Page nodes"""
+        neo4j = FakeNeo4jService([])
+        # Mock both search methods
+        neo4j.search_claims_results = [
+            {
+                "content": "Aspire orchestrates services declaratively.",
+                "confidence": 0.85,
+                "relevance_score": 0.85,
+                "document_id": 3,
+                "page_number": 1,
+                "filename": "guide.pdf",
+                "result_type": "claim"
+            }
+        ]
+        neo4j.search_page_results = [
+            {
+                "content": "Page-level fallback content.",
+                "confidence": 0.6,
+                "document_id": 3,
+                "page_number": 1,
+            }
+        ]
+        
+        # Update fake to return claims first
+        def search_claims(query, limit):
+            neo4j.calls.append({"method": "search_claims", "query": query, "limit": limit})
+            return neo4j.search_claims_results
+        
+        def search_similar_content(query, limit):
+            neo4j.calls.append({"method": "search_similar_content", "query": query, "limit": limit})
+            return neo4j.search_page_results
+        
+        neo4j.search_claims = search_claims
+        neo4j.search_similar_content = search_similar_content
+        
+        retriever = SemanticKnowledgeRetriever(neo4j)
+        result = asyncio.run(retriever.retrieve("Aspire", limit=3))
+        
+        # Should query claims first
+        self.assertEqual("search_claims", neo4j.calls[0]["method"])
+        # Should NOT query pages because claims returned results
+        self.assertEqual(1, len(neo4j.calls), "Should only call search_claims when claims exist")
+        
+        # Should return claim-based results with higher confidence
+        self.assertEqual(1, len(result.results))
+        self.assertEqual("Aspire orchestrates services declaratively.", result.results[0].content)
+        self.assertEqual(0.85, result.results[0].confidence)
+
+    def test_semantic_retriever_falls_back_to_pages_when_no_claims(self):
+        """P2-B: Semantic retrieval should fall back to pages when no claims found"""
+        neo4j = FakeNeo4jService([])
+        neo4j.search_claims_results = []  # No claims
+        neo4j.search_page_results = [
+            {
+                "content": "Page-level fallback content.",
+                "confidence": 0.6,
+                "document_id": 4,
+                "page_number": 2,
+                "filename": "fallback.pdf",
+            }
+        ]
+        
+        def search_claims(query, limit):
+            neo4j.calls.append({"method": "search_claims", "query": query, "limit": limit})
+            return neo4j.search_claims_results
+        
+        def search_similar_content(query, limit):
+            neo4j.calls.append({"method": "search_similar_content", "query": query, "limit": limit})
+            return neo4j.search_page_results
+        
+        neo4j.search_claims = search_claims
+        neo4j.search_similar_content = search_similar_content
+        
+        retriever = SemanticKnowledgeRetriever(neo4j)
+        result = asyncio.run(retriever.retrieve("query", limit=3))
+        
+        # Should try claims first, then fall back to pages
+        self.assertEqual(2, len(neo4j.calls))
+        self.assertEqual("search_claims", neo4j.calls[0]["method"])
+        self.assertEqual("search_similar_content", neo4j.calls[1]["method"])
+        
+        # Should return page-based results
+        self.assertEqual(1, len(result.results))
+        self.assertEqual("Page-level fallback content.", result.results[0].content)
+        self.assertEqual(0.6, result.results[0].confidence)
+
+    def test_semantic_retriever_falls_back_to_pages_when_claims_are_out_of_scope(self):
+        """Scoped retrieval should still fall back when claim hits are for other documents."""
+        neo4j = FakeNeo4jService([])
+        neo4j.search_claims_results = [
+            {
+                "content": "Out-of-scope claim result.",
+                "confidence": 0.82,
+                "document_id": 999,
+                "page_number": 1,
+                "filename": "other.pdf",
+                "result_type": "claim",
+            }
+        ]
+        neo4j.search_page_results = [
+            {
+                "content": "Scoped page fallback content.",
+                "confidence": 0.67,
+                "document_id": 7,
+                "page_number": 4,
+                "filename": "scoped.pdf",
+            }
+        ]
+
+        def search_claims(query, limit):
+            neo4j.calls.append({"method": "search_claims", "query": query, "limit": limit})
+            return neo4j.search_claims_results
+
+        def search_similar_content(query, limit):
+            neo4j.calls.append({"method": "search_similar_content", "query": query, "limit": limit})
+            return neo4j.search_page_results
+
+        neo4j.search_claims = search_claims
+        neo4j.search_similar_content = search_similar_content
+
+        retriever = SemanticKnowledgeRetriever(neo4j)
+        result = asyncio.run(retriever.retrieve("Aspire", limit=3, document_ids=[7]))
+
+        self.assertEqual(2, len(neo4j.calls))
+        self.assertEqual("search_claims", neo4j.calls[0]["method"])
+        self.assertEqual("search_similar_content", neo4j.calls[1]["method"])
+        self.assertEqual(1, len(result.results))
+        self.assertEqual("Scoped page fallback content.", result.results[0].content)
+        self.assertEqual(0.67, result.results[0].confidence)
+        self.assertEqual(["document:7/page:4", "file:scoped.pdf"], result.results[0].source_refs)
 
 
 if __name__ == "__main__":
