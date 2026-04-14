@@ -145,6 +145,12 @@
 - C# context: `src/AspireApp.Web/Shared/UploadDbContext.cs` (lines 60-61 tenant indexes)
 - Decision: `.squad/decisions/inbox/jarvis-tenant-schema-fix.md`
 
+### 2026-04-18 — Batch Embedding Population Regression Proof
+
+**Completed:**
+- `process_document_task` now batches page/claim embeddings via `EmbeddingService.embed_batch` and persists them with `Neo4jService.populate_page_embedding` / `populate_claim_embedding`.
+- Regression coverage validates batch calls and embedding persistence during the real processing path with faked services.
+
 ## Core Context
 
 **Key architectural learnings from active development (Feb-Apr 2026):**

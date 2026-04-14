@@ -6,7 +6,7 @@ Working task breakdown for the [BRAIN Plan](Plan.md). Tracks what's been accompl
 
 Note: This will be a living document.
 
-**Last Updated:** 2026-04-17 — **P2-B COMPLETE:** `LightRagRetriever` enriches from Neo4j when provenance exists; unresolved confidence fails closed (no DEFAULT_CONFIDENCE fallback). **P2-C IN PROGRESS:** Vector index foundation implemented (indexes created, search methods ready, embedding config wired). **Next:** Populate embeddings for stored Pages/Claims; integrate vector search into retrievers; (P2) finish integration docs + contract round-trip coverage; (P3) select the agent framework and move contradiction detection into the Critic Agent slice.
+**Last Updated:** 2026-04-18 — **P2-B COMPLETE:** `LightRagRetriever` enriches from Neo4j when provenance exists; unresolved confidence fails closed (no DEFAULT_CONFIDENCE fallback). **P2-C IN PROGRESS:** Vector index foundation implemented (indexes created, search methods ready, embedding config wired); ingestion now batches and persists page/claim embeddings with regression coverage. **Next:** Wire vector search into retrievers; (P2) finish integration docs + contract round-trip coverage; (P3) select the agent framework and move contradiction detection into the Critic Agent slice.
 
 ---
 
@@ -172,7 +172,8 @@ Note: This will be a living document.
   - ✅ **Vector search methods ready** (Jarvis 2026-04-17): `search_claims_vector()` and `search_pages_vector()` use Neo4j 5.x vector similarity syntax
   - ✅ **EmbeddingService foundation** (Jarvis 2026-04-17): consumes Aspire `OLLAMA_ENDPOINT` / `EMBEDDING_MODEL` config when present, with local fallback for direct Python runs
   - ✅ **AppHost embedding config complete** (Jeff 2026-04-17): Python services receive `OLLAMA_ENDPOINT`, `EMBEDDING_MODEL`, `EMBEDDING_DIM` via Aspire environment variables
-  - ⏳ **Remaining P2-C work:** Populate `content_embedding` and `text_embedding` properties during document ingestion; wire vector search into `SemanticKnowledgeRetriever`
+  - ✅ **Embedding population during ingestion** (Jarvis 2026-04-18): `process_document_task` batches page/claim embeddings and persists them via `populate_page_embedding` / `populate_claim_embedding` with regression coverage.
+  - ⏳ **Remaining P2-C work:** Wire vector search into `SemanticKnowledgeRetriever` and prove live vector-backed retrieval.
   - **Next Owner:** Jarvis (embedding population pipeline)
 - [x] Implement `BrainKnowledgeRetriever` orchestration seam
   - [x] Interface implemented, LightRAG-first + fallback pattern tested (proves contract and routing)
@@ -189,7 +190,7 @@ Note: This will be a living document.
 
 **P2-B STATUS: ✅ COMPLETE.** Claim-based confidence scoring implemented. `SemanticKnowledgeRetriever` queries Claim nodes first, falls back to Page nodes. Claim extraction wired into ingestion pipeline. LightRAG-first path enriches unscored results via `Neo4jService.get_confidence_by_provenance()` when provenance exists. When enrichment fails, results filtered out (fail-closed) forcing semantic fallback. Tests verify enrichment, fail-closed filtering, and explicit score preservation.
 
-**P2-C STATUS: 🟡 IN PROGRESS.** Vector indexes (`page_content_vector`, `claim_text_vector`) are created and query helpers exist. Python services now receive embedding config from AppHost, and `EmbeddingService` consumes that Ollama path with a local fallback for direct Python runs. **Remaining work:** Populate embeddings during ingestion and wire vector search into retrievers before claiming live vector-backed retrieval.
+**P2-C STATUS: 🟡 IN PROGRESS.** Vector indexes (`page_content_vector`, `claim_text_vector`) are created and query helpers exist. Python services receive embedding config from AppHost, and `EmbeddingService` consumes that Ollama path with a local fallback for direct Python runs. **Embedding population now runs during ingestion (batch page/claim embeddings persisted, regression covered).** Remaining work: wire vector search into retrievers and prove live vector-backed retrieval.
 
 ### Validation Layer (Basic) (Jarvis lead)
 
@@ -321,7 +322,7 @@ Note: This will be a living document.
 | P1-B | Serialization round-trip test passes | Complete | 1 |
 | P2-A | Upload to CanonicalDocument to Neo4j storage end-to-end | Complete | 2 |
 | P2-B | `/brain/query` returns confidence-scored results (no default fallback) | ✅ **COMPLETE** — LightRAG enriches from Neo4j when provenance exists; unresolved confidence fails closed. Live proof: `BasicAspireAppHostTests.BrainQueryReturnsConfidenceEnrichedResults`. | 2 |
-| P2-C | Neo4j vector indexes queryable | 🟡 **IN PROGRESS** — Vector indexes are created (`page_content_vector`, `claim_text_vector`) and search helpers exist. Embedding config is wired, but live vector retrieval still depends on populating embedding properties during ingestion and routing retrievers through the new vector path. | 2 |
+| P2-C | Neo4j vector indexes queryable | 🟡 **IN PROGRESS** — Vector indexes are created (`page_content_vector`, `claim_text_vector`) and search helpers exist. Ingestion now populates page/claim embeddings in batch, but live vector retrieval still depends on routing retrievers through the vector path and proving results. | 2 |
 | P3-A | `/brain/chat` returns evidence-backed response | **Blocked on agent framework selection** (due end of sprint 2026-04-24). Once framework chosen, implement Retriever + Synthesizer agents. | 3 |
 | P3-B | Multi-step reasoning visible | Blocked on P3-A (agent framework + base agents). Requires Planner + Critic agent implementations. | 3 |
 | P3-C | Proactive Monitor flags contradiction | Blocked on P3-A. Requires background agent monitoring Claim nodes for conflicts. | 3 |

@@ -557,3 +557,51 @@ class Neo4jService:
                     return float(doc_record["confidence"])
             
             return None
+    
+    def populate_page_embedding(
+        self, 
+        page_node_id: str, 
+        embedding: List[float]
+    ) -> None:
+        """
+        Populate content_embedding on an existing Page node.
+        
+        Args:
+            page_node_id: Neo4j element ID of the page node
+            embedding: Embedding vector to store (must match index dimensions)
+        
+        Note: This is the P2-C gate for enabling vector search on stored pages.
+        """
+        with self.get_driver().session() as session:
+            session.run("""
+                MATCH (p:Page)
+                WHERE elementId(p) = $page_id
+                SET p.content_embedding = $embedding
+            """, {
+                "page_id": page_node_id,
+                "embedding": embedding
+            })
+    
+    def populate_claim_embedding(
+        self, 
+        claim_node_id: str, 
+        embedding: List[float]
+    ) -> None:
+        """
+        Populate text_embedding on an existing Claim node.
+        
+        Args:
+            claim_node_id: Neo4j element ID of the claim node
+            embedding: Embedding vector to store (must match index dimensions)
+        
+        Note: This is the P2-C gate for enabling vector search on stored claims.
+        """
+        with self.get_driver().session() as session:
+            session.run("""
+                MATCH (cl:Claim)
+                WHERE elementId(cl) = $claim_id
+                SET cl.text_embedding = $embedding
+            """, {
+                "claim_id": claim_node_id,
+                "embedding": embedding
+            })

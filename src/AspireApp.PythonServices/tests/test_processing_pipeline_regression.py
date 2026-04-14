@@ -70,6 +70,8 @@ class FakeNeo4jService:
         self.deleted_document_ids: list[int] = []
         self.created_documents: list[object] = []
         self.created_claims: list[dict] = []
+        self.page_embeddings: dict[str, list[float]] = {}
+        self.claim_embeddings: dict[str, list[float]] = {}
 
     def create_document_node(self, document):
         self.created_documents.append(document)
@@ -91,11 +93,51 @@ class FakeNeo4jService:
             "document_id": document_id,
             "page_number": page_number
         })
-        return [f"claim-node-{i}" for i in range(len(claims))]
+        return [f"claim-node-{page_number}-{i}" for i in range(len(claims))]
+    
+    def populate_page_embedding(self, page_node_id: str, embedding: list[float]) -> None:
+        """Store page embedding in fake storage"""
+        self.page_embeddings[page_node_id] = embedding
+    
+    def populate_claim_embedding(self, claim_node_id: str, embedding: list[float]) -> None:
+        """Store claim embedding in fake storage"""
+        self.claim_embeddings[claim_node_id] = embedding
 
     def delete_document_graph(self, document_id: int):
         self.deleted_document_ids.append(document_id)
         return {"deleted_documents": 1, "deleted_pages": 2}
+
+
+class FakeEmbeddingService:
+    def __init__(self, embedding_dimension: int = 384):
+        self.embedding_dimension = embedding_dimension
+        self.batch_calls: list[list[str]] = []
+
+    def is_available(self) -> bool:
+        return True
+
+    def embed_batch(self, texts: list[str], batch_size: int = 32, show_progress: bool = False):
+        self.batch_calls.append(list(texts))
+        return [[float(i)] * self.embedding_dimension for i in range(len(texts))]
+
+    def embed_text(self, text: str):
+        raise AssertionError("embed_text should not be called when batch embedding is available")
+
+
+class FakeClaimExtractionService:
+    def extract_claims(self, content: str, source_confidence: float, source_type: str):
+        return [
+            {
+                "text": f"{content} claim 1",
+                "confidence": source_confidence,
+                "source_type": source_type,
+            },
+            {
+                "text": f"{content} claim 2",
+                "confidence": source_confidence,
+                "source_type": source_type,
+            },
+        ]
 
 
 class FakeLightRagHandoffService:
@@ -177,16 +219,20 @@ class ProcessingPipelineRegressionTests(unittest.TestCase):
                 ],
             )
         )
+        fake_embedding_service = FakeEmbeddingService()
+        fake_claim_extractor = FakeClaimExtractionService()
 
-        asyncio.run(
-            processing.process_document_task(
-                document_id=42,
-                db=db,
-                docling=docling,
-                neo4j=neo4j,
-                lightrag_handoff=FakeLightRagHandoffService(),
+        with patch("app.routers.processing.EmbeddingService", return_value=fake_embedding_service), \
+            patch("app.routers.processing.ClaimExtractionService", return_value=fake_claim_extractor):
+            asyncio.run(
+                processing.process_document_task(
+                    document_id=42,
+                    db=db,
+                    docling=docling,
+                    neo4j=neo4j,
+                    lightrag_handoff=FakeLightRagHandoffService(),
+                )
             )
-        )
 
         self.assertEqual((42, "processing", None), db.status_updates[0])
         self.assertEqual((42, "processed", None), db.status_updates[-1])
@@ -215,6 +261,20 @@ class ProcessingPipelineRegressionTests(unittest.TestCase):
         self.assertEqual(2, page2_claims["page_number"])
         self.assertEqual("page-node-2", page2_claims["page_node_id"])
         self.assertGreater(len(page2_claims["claims"]), 0, "Page 2 should have extracted claims")
+        
+        # Verify embedding generation and persistence
+        self.assertEqual(3, len(fake_embedding_service.batch_calls), "Expected batch embeddings for pages and claims")
+        expected_page_texts = [
+            "The Earth revolves around the Sun. This is a well-established fact.",
+            "Water is essential for life. All living organisms require water to survive.",
+        ]
+        self.assertEqual(expected_page_texts, fake_embedding_service.batch_calls[0])
+        self.assertEqual(2, len(neo4j.page_embeddings))
+        self.assertIn("page-node-1", neo4j.page_embeddings)
+        self.assertIn("page-node-2", neo4j.page_embeddings)
+        self.assertEqual(4, len(neo4j.claim_embeddings))
+        for embedding in neo4j.claim_embeddings.values():
+            self.assertEqual(384, len(embedding))
 
     def test_process_document_task_marks_error_when_docling_fails(self):
         document = SimpleNamespace(
