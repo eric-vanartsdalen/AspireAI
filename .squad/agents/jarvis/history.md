@@ -653,3 +653,28 @@
 **Orchestration Log:** Created for session context at 20260405T143735Z-jarvis.md
 
 ---
+
+### 2026-04-15 — Phase 2 LightRAG Confidence Enrichment: Provenance-Based Fallback
+
+**Completed:**
+- Implemented Neo4jService.get_confidence_by_provenance() to query stored confidence by document_id + optional page_number (tries Claim nodes first, then Page/Document nodes)
+- Extended LightRagRetriever to accept optional 
+eo4j_service for confidence enrichment when LightRAG omits score metadata
+- Added _enrich_confidence_from_provenance() to _KnowledgeItemFactory to parse provenance from document_id/page_number fields or source_refs and query Neo4j
+- Updated _build_item() to accept nrich_confidence flag; when True and confidence is missing, attempts Neo4j enrichment before falling back to DEFAULT_CONFIDENCE=0.5
+- Wired Neo4j service through /rag/lightrag-query and /rag/query endpoints via dependency injection
+- Added 6 regression tests in 	est_lightrag_retriever.py verifying enrichment, ref parsing, explicit score preservation, and fallback behavior
+
+**Key pattern:**
+- **P2-B gap partially closed:** When LightRAG returns unscored results but provenance (document_id/page_number) is resolvable, LightRagRetriever now enriches confidence from stored Neo4j Claim/Page data instead of immediately defaulting to  .5.
+- **Provenance parsing:** The retriever parses both structured fields (document_id, page_number) and source_refs strings ("document:7/page:2") to resolve provenance for enrichment.
+- **Honest fallback:** When Neo4j cannot resolve confidence (no matching nodes or provenance unparseable), the retriever falls back to DEFAULT_CONFIDENCE=0.5 — this is still the P2-B blocker.
+- **Remaining P2-B work:** Fail closed to semantic fallback when confidence is unresolvable instead of surfacing synthetic  .5 confidence on the LightRAG path.
+
+**Key file paths:**
+- src/AspireApp.PythonServices/app/services/neo4j_service.py (lines 364-418: get_confidence_by_provenance())
+- src/AspireApp.PythonServices/app/brain/knowledge/retrievers.py (lines 18-97: enrichment logic in _KnowledgeItemFactory; lines 272-279: LightRagRetriever.__init__ with neo4j_service)
+- src/AspireApp.PythonServices/app/routers/rag.py (lines 23-25: wired Neo4j service to get_knowledge_retriever())
+- src/AspireApp.PythonServices/tests/test_lightrag_retriever.py (6 new tests: enrichment, ref parsing, fallback scenarios)
+- oadmap/Tasks.md (updated P2-B progress: enrichment implemented, fail-closed behavior still deferred)
+

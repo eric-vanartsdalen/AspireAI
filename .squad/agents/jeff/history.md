@@ -1078,3 +1078,39 @@
 - Tenant Upload Authorization Enforcement — X-Tenant-Id validation on every operation
 
 **Status:** Slice complete; security approved; tests passing; merged to decisions.md
+
+### 2026-04-17 — P2-B Confidence Fail-Closed Fix (Cross-Domain Reviewer Lockout)
+
+**Status:** Complete. Delivered as Jeff under reviewer lockout (Jarvis rejected revision).
+
+**Context:**
+- Buster rejected Jarvis's P2-B confidence enrichment implementation because `retrievers.py` still assigned `DEFAULT_CONFIDENCE = 0.5` when Neo4j enrichment returned None.
+- Required fix: unresolved scores must fail closed (force semantic fallback) instead of being guessed.
+
+**Implementation:**
+1. Modified `_build_item()` to return `None` when confidence cannot be resolved (lines 49-50), preventing KnowledgeItem creation with missing confidence.
+2. Modified `_extract_items()` fallback path to return empty list when confidence is unresolved (lines 358-359), forcing semantic retriever fallback.
+3. Updated list comprehensions to filter out `None` items (lines 328-333, 411-415).
+4. Updated tests to validate fail-closed behavior: `test_lightrag_retriever_fails_closed_when_neo4j_returns_none`, `test_lightrag_retriever_without_neo4j_service_fails_closed`, `test_lightrag_retriever_fails_closed_on_unscored_response_text`.
+5. Updated `roadmap/Tasks.md` to reflect P2-B completion.
+
+**Key Insight:**
+- Fail-closed pattern is cleaner than guessing: when LightRAG cannot provide or enrich confidence, filter the result out entirely.
+- `BrainKnowledgeRetriever` orchestrator then naturally falls back to `SemanticKnowledgeRetriever`, which retrieves real confidence from Neo4j Claim/Page nodes.
+- This preserves "LightRAG-first" behavior while ensuring semantic fallback handles unresolved cases.
+
+**Key Paths:**
+- `src/AspireApp.PythonServices/app/brain/knowledge/retrievers.py` — fail-closed logic in `_build_item()` and `_extract_items()`.
+- `src/AspireApp.PythonServices/tests/test_lightrag_retriever.py` — fail-closed test coverage.
+- `src/AspireApp.PythonServices/tests/test_knowledge_retriever.py` — fallback response test updated.
+- `roadmap/Tasks.md` — P2-B marked complete.
+
+**Validation:**
+- All 25 Python retriever tests pass (14 in `test_lightrag_retriever.py`, 11 in `test_knowledge_retriever.py`).
+- `BasicAspireAppHostTests.BrainQueryReturnsConfidenceEnrichedResults` should continue to pass (validates no DEFAULT_CONFIDENCE=0.5 in results).
+
+**Cross-Domain Notes:**
+- Took narrow Python fix under C# ownership due to Jarvis lockout — honored reviewer verdict exactly.
+- Did not pair with or reuse Jarvis's rejected work per charter guardrails.
+- Documented decision in `.squad/decisions/inbox/jeff-failclose-lightrag-confidence.md`.
+

@@ -9,6 +9,33 @@
 
 <!-- Append new learnings below. Each entry is something lasting about the project. -->
 
+### 2026-04-14 — P2-B Live Proof: Confidence Validation via Aspire Integration Test
+
+**Task:** Create live validation proof for the next Knowledge Layer slice (P2-B confidence-enrichment).
+
+**What I Did:**
+- Added `BasicAspireAppHostTests.BrainQueryReturnsConfidenceEnrichedResults` — a Priority(2) live proof that uploads a document, waits for processing + LightRAG ingestion, then queries `/brain/query` and asserts results for the uploaded document do NOT carry DEFAULT_CONFIDENCE (0.5).
+- Updated `roadmap/Tasks.md` to reflect that live proof now exists but implementation remains incomplete.
+- Test currently scaffolds the expected behavior; will FAIL until Jarvis implements confidence-enrichment in `LightRagRetriever`.
+
+**Why This Matters:**
+- **Honest proof before implementation:** Test defines what "done" means for P2-B without pretending the feature is already complete.
+- **Minimal addition to existing test suite:** Leverages the same upload → process → query workflow as `LiveLightRagNeo4jQueryRoundTrip`, adding only the confidence assertion.
+- **Clear blocker signal:** Test will fail until confidence-enrichment logic is added; failure message will pinpoint exactly which results have placeholder scores.
+
+**What This Test Proves:**
+- `/brain/query` results for uploaded documents have real confidence values (not 0.5 default).
+
+**What This Test Does NOT Prove:**
+- That confidence values are *accurate* or *calibrated* (that's Phase 4 evaluation work).
+- That all confidence-scoring paths work (only validates uploaded-document retrieval path).
+- That semantic fallback confidence works (already covered by `test_knowledge_retriever.py`).
+
+**Coordination Notes:**
+- Test uses existing `WaitForKnowledgeQueryResultAsync` helper, filters results to uploaded document via source_refs, and asserts Confidence != 0.5.
+- No new test infrastructure required; integrates cleanly with Priority ordering.
+- Marked with `[Trait("Category", "P2-B")]` for easy filtering during focused P2-B work.
+
 ### 2026-11-02 — REJECT: Tasks.md Overstates Completion & Masks P2-B Blocker
 
 **Task:** Review Tasks.md against actual code/tests. Verdict: **REJECT**—roadmap marks items done that are incomplete or are misleading about completion state.

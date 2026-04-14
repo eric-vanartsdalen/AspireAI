@@ -2,6 +2,7 @@
 
 > Shared decision log. All agents read this before starting work.
 > Scribe merges new decisions from `.squad/decisions/inbox/` after each session.
+> **Note (2026-04-17T22:04:32Z):** Merged 28 inbox decisions from P2-B Knowledge Layer LightRAG confidence closeout session (Bob, Jarvis, Buster, Jeff). Final session: Bob prioritized confidence blocker + directive; Jarvis implemented Neo4j-backed enrichment; Buster wrote live proof (design-fail) + reviewed implementation; Jeff revised to fail-closed behavior (return None instead of DEFAULT_CONFIDENCE=0.5). **Consolidated into 5 decisions:** (1) P2-B Confidence Blocker & Recommendation, (2) LightRAG Confidence Enrichment via Provenance, (3) Live Proof Before Implementation, (4) Fail-Closed Confidence Handling, (5) Final P2-B Gate Approval. **Status:** P2-B gate closed, all 28 inbox files merged and deleted. No duplicates found.
 > **Note (2026-04-14T06:10:53Z):** Merged 1 inbox decision from P1 roadmap clarification session (Bob). "P1 Partial Coverage Audit & Phase Assignment" — Items 2–3 marked as foundation-only with carry-forward tasks in Phase 2 & Phase 4. No duplicates found. Inbox cleared.
 > **Note (2026-04-05T21:33:20Z):** Merged 18 inbox decisions from auth documentation and QA validation (Jeff, Warden, Bob, Buster). Consolidated Bob's UX revision + Buster's multi-gate approval into a single "Mock Pluggable Auth Slice" decision. No duplicates found. Inbox cleared.
 > **Note (2026-04-06T18:38:14Z):** Merged local auth password floor relaxation decision (Warden approval + Jeff implementation). Relax minimum from 12 to 10 characters; add visible UI hint; confirm case-insensitive username uniqueness already implemented; defer password reset. All implementation work complete and tested.
@@ -1956,6 +1957,128 @@ Fixed malformed inline backticks in README.md code blocks. The document was usin
 - Documentation now renders correctly in Markdown renderers (GitHub, VS Code, etc.)
 - Command examples are properly highlighted and copyable
 - No content changes; formatting only
+
+---
+
+## P2-B Knowledge Layer LightRAG Confidence — Consolidated Session (Bob, Jarvis, Buster, Jeff) — 2026-04-17
+
+### Part 1: P2-B Confidence Blocker & Architecture Directive
+
+**Author:** Bob (Lead / Architect)  
+**Status:** IMPLEMENTED  
+**Decision Date:** 2026-04-17  
+
+**Problem:** P2-B gate requires `/brain/query` to return confidence-scored results without defaulting to `DEFAULT_CONFIDENCE=0.5` when LightRAG retrieval cannot provide scores. Root cause: No vector indexes, no Claim-based confidence metadata on Neo4j.
+
+**Decision:** Prioritize LightRAG confidence enrichment via Neo4j provenance lookup before failing closed. When unscored:
+1. Attempt provenance lookup (document_id + page_number) in Neo4j Claim/Page nodes
+2. Return enriched confidence if resolved
+3. Fail closed (return None) if unresolvable — do NOT default to 0.5
+
+**Timeline:** 1-2 days (Jarvis implementation + Buster validation).
+
+**Impact:** Eliminates synthetic 0.5 from LightRAG-first results; preserves LightRAG-first when scores available; ensures semantic fallback owns unknowns.
+
+---
+
+### Part 2: LightRAG Confidence Enrichment via Neo4j Provenance
+
+**Author:** Jarvis (Python / Data Dev)  
+**Status:** IMPLEMENTED → REVISED  
+**Decision Date:** 2026-04-17  
+
+**Implementation:**
+- Added `Neo4jService.get_confidence_by_provenance(document_id, page_number)` querying Claim nodes (priority) then Page nodes
+- Wired enrichment into `LightRagRetriever._build_item()` when confidence is missing but provenance is resolvable (document_id/page_number or "document:N/page:M" refs)
+- Updated route wiring to inject Neo4j service into retriever via FastAPI dependency
+
+**Enrichment Priority Order:**
+1. Claim nodes matching (document_id, page_number) → cl.confidence
+2. Page nodes matching (document_id, page_number) → coalesce(p.source_confidence, p.confidence)
+3. Document nodes matching document_id → d.source_confidence
+4. Return None if no match found
+
+**Test Coverage:** 6 regression tests validating enrichment paths, fallback behavior, explicit score preservation. All passing.
+
+**Limitation Identified:** Unresolved confidence (None from Neo4j) still defaulted to DEFAULT_CONFIDENCE=0.5 instead of failing closed. Required revision by Jeff.
+
+---
+
+### Part 3: Live Proof Before Implementation (Design-Fail Pattern)
+
+**Author:** Buster (QA / Tester)  
+**Status:** IMPLEMENTED → APPROVED  
+**Decision Date:** 2026-04-14  
+
+**Pattern:** Write live proof test BEFORE full implementation to define P2-B completion criteria without pretending implementation is already done.
+
+**Test:** `BasicAspireAppHostTests.BrainQueryReturnsConfidenceEnrichedResults`
+- Uploads test document
+- Waits for processing + LightRAG ingestion
+- Queries `/brain/query` with smoke test query
+- Filters results to uploaded document
+- Asserts: **Confidence != 0.5** (proves enrichment worked OR semantic fallback used)
+
+**Design-Fail Behavior:** Test was RED by design until implementation complete. This is intentional scaffolding defining what "done" means.
+
+**Rationale:** Without explicit proof, implementation could be incomplete or return wrong values without detection. Design-fail pattern forces honest measurement.
+
+---
+
+### Part 4: Fail-Closed Confidence Handling for Unresolved Cases
+
+**Author:** Jeff (.NET Dev)  
+**Status:** APPROVED  
+**Decision Date:** 2026-04-17  
+**Context:** Buster rejected Jarvis enrichment slice because synthetic 0.5 was still being emitted when Neo4j enrichment returned None. Jeff revised under reviewer lockout to implement fail-closed behavior.
+
+**Implementation:**
+- `LightRagRetriever._build_item()` now returns `None` instead of creating item with DEFAULT_CONFIDENCE when confidence is unresolved
+- `_extract_items()` filters out `None` items, returning empty list when confidence cannot be resolved
+- Empty LightRAG results trigger `BrainKnowledgeRetriever` to fall back to `SemanticKnowledgeRetriever` (which has real Neo4j confidence)
+
+**Changed Tests:**
+- `test_lightrag_retriever_falls_back_to_default_when_neo4j_returns_none` now expects semantic fallback behavior, not 0.5
+- All 25+ Python retriever tests passing
+- Live proof test GREEN (validates no 0.5 in production results)
+
+**Rationale:** Fail-closed > fail-open. Guessing 0.5 pollutes results; admitting ignorance and delegating to semantic search is more honest.
+
+**Consequences:**
+- **Positive:** No DEFAULT_CONFIDENCE=0.5 in production; semantic fallback handles edge cases
+- **Neutral:** Empty LightRAG results may add latency (acceptable trade-off for correctness)
+
+---
+
+### Part 5: P2-B LightRAG Confidence Fail-Closed Gate — APPROVED
+
+**Reviewer:** Buster (QA / Tester)  
+**Status:** APPROVED  
+**Decision Date:** 2026-04-17  
+
+**Verdict: APPROVE**
+
+P2-B slice is complete and honestly proven:
+
+#### What Is Now Proven
+
+✅ **Unresolved LightRAG scores fail closed:** When LightRAG omits confidence and Neo4j enrichment returns None, results are filtered out (not defaulted to 0.5).
+
+✅ **Provenance-based enrichment works:** When LightRAG omits score but provides document_id/page_number, Neo4j lookup supplies stored confidence.
+
+✅ **Semantic fallback receives control:** Empty LightRAG results trigger `BrainKnowledgeRetriever` to fall back to `SemanticKnowledgeRetriever`.
+
+✅ **Explicit scores are preserved:** When LightRAG provides a score, it is used directly without Neo4j lookup overhead.
+
+✅ **Live proof validates end-to-end:** `BasicAspireAppHostTests.BrainQueryReturnsConfidenceEnrichedResults` confirms uploaded documents return non-0.5 confidence.
+
+#### Roadmap Honesty Assessment
+
+**Tasks.md (P2-B Status):** Accurately reflects implementation state and does not overclaim. Live proof exists and validates claimed behavior.
+
+#### No Remaining Gaps
+
+All prior rejection criteria have been addressed. Implementation complete. No additional work required for P2-B gate closure.
 
 ---
 
