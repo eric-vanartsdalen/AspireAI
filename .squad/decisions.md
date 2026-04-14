@@ -1668,4 +1668,241 @@ Both are architecturally sound foundations but require integration test infrastr
 
 ---
 
+> **Note (2025-11-02T00:00:00Z):** Merged 6 inbox decisions from Phase 0 BRAIN pivot session (Bob, Jarvis, Jeff, Buster). BRAIN architectural pivot approved; Python scaffolding complete; .NET gateway repurposed; QA gate assessment documented; README formatting fixed. Roadmap restructured: legacy phases 0–8 superseded by BRAIN phases 0–6. Phase 0 is implementation-ready, process gates pending (Docker strategy, decision recording). No duplicates found. Inbox cleared.
+
+---
+
+## BRAIN Pivot Decision — Reframe Product as Agentic Knowledge Assistant — Bob — 2026-07-15
+
+**Authors:** Bob (Lead / Architect)  
+**Date:** 2026-07-15  
+**Status:** APPROVED (Eric checkout of brain-pivot branch + documentation update)  
+**Scope:** Phase 0 Reframe Product — architectural direction, product positioning, roadmap restructuring
+
+### Context
+
+AspireAI's original roadmap (Phases 0–8) tracked incremental chat + RAG features. However, Eric's BRAIN vision — a domain-agnostic agentic knowledge assistant — represents a fundamental pivot in product architecture and team narrative. The pivot requires:
+
+1. **Architectural shift:** From single-interface chat with embedded RAG to multi-layer reasoning engines (ingestion, validation, knowledge, reasoning) with chat as one interface.
+2. **Roadmap restructuring:** Legacy phases 0–8 replaced by new BRAIN phases 0–6, each with clear acceptance gates.
+3. **Team alignment:** Explicit decision documentation so all agents understand the new north star.
+
+### Decision
+
+**Approve the BRAIN pivot as the official product direction for AspireAI, effective immediately on the `brain-pivot` feature branch.**
+
+#### What Changes
+
+1. **Product narrative:** "Agentic knowledge assistant" replaces "chat assistant platform."
+2. **Roadmap:** Legacy phases 0–8 superseded by BRAIN phases 0–6:
+   - **Phase 0:** Reframe Product (branch setup, API Gateway scaffold, README update)
+   - **Phase 1:** Core Contracts (Python + C# shared models, serialization round-trip validation)
+   - **Phase 2:** Ingestion + Knowledge Baseline (CanonicalDocument → Neo4j via BRAIN schema)
+   - **Phase 3:** Ship MVP Agentic Slice (multi-step agents, Proactive Monitor, Blazor integration)
+   - **Phase 4:** Evaluate + Harden (observability, evaluation suite, integration tests)
+   - **Phase 5:** Prove Reusability (second connector type, domain specialization)
+   - **Phase 6:** Scale Deliberately (multi-tenancy, auth, plugin ecosystem)
+
+3. **Architecture:** New layer stack:
+   - **Ingestion Layer** — Docling + connectors normalize documents to `CanonicalDocument` contract
+   - **Validation Layer** — Claim extraction, confidence scoring, contradiction detection
+   - **Knowledge Layer** — Neo4j graph + vector indexes, pluggable retrievers (`IKnowledgeRetriever`)
+   - **Reasoning Layer** — Agent orchestration (Retriever, Synthesizer, Critic, Proactive Monitor)
+   - **Chat Interface** — Blazor UI routed through Gateway `/brain/chat` (not direct Ollama)
+
+4. **Governance:** Feature branch `brain-pivot` protects main while phases 0–1 stabilize. Merge to main after Phase 1 contracts are locked and Phase 2 ingest path proven.
+
+#### What Stays
+
+- Aspire orchestration and container strategy (Neo4j, Ollama, Python services)
+- Blazor chat UI foundation and speech I/O patterns
+- Docling document parsing and Python FastAPI framework
+- SQLite operational schema and health check patterns
+- LightRAG integration (retained as `LightRAGRetriever` behind `IKnowledgeRetriever` abstraction)
+
+#### What Supersedes
+
+| Original | BRAIN Replacement |
+|----------|-------------------|
+| Phase 4: Flat Vector RAG | Phase 2: Knowledge Baseline with Neo4j vector indexes |
+| Phase 5: LightRAG/GraphRAG | Phase 2 (pluggable retrieval) + Phase 3 (agent reasoning) |
+| Phase 6: Plugin Ecosystem | Phase 6: Scale Deliberately (redesigned for BRAIN plugin types) |
+| Phase 7: Testing/Deployment | Phase 4: Evaluate + Harden |
+| Phase 8: Advanced Features | Phases 3–6 (distributed across BRAIN phases) |
+
+### Rationale
+
+#### Why BRAIN Is Better Than Incremental Chat
+
+1. **Clear north star** — Agentic reasoning is not a "future nice-to-have"; it's the core value.
+2. **Contract-first design** — Phases 1–2 establish shared contracts before implementation sprawl.
+3. **Modular extensibility** — `IKnowledgeRetriever` and agent abstractions allow connectors and domain modules to plug in without core rewrites (Phase 5 proof point).
+4. **Honest failure modes** — Agents know what they know and how well they know it; confidence scoring embedded from ingestion through response.
+5. **Stakeholder clarity** — Simpler narrative ("we reason about what we ingest") beats "chat + maybe graphs + maybe agents later."
+
+#### Acceptance Gates as Risk Mitigation
+
+Phases are structured so each can stand alone:
+- **Phase 0-A:** Branch + directory structure exist.
+- **Phase 1-B:** Serialization round-trip test passes (proves contracts are real).
+- **Phase 2-A:** Upload → CanonicalDocument → Neo4j end-to-end (proves data flow).
+- **Phase 3-A:** `/brain/chat` returns evidence-backed response (proves agentic reasoning works).
+
+Early-phase gates fail fast if architecture is wrong. Late phases (5–6) are truly future-scope.
+
+### Risk Register
+
+| # | Risk | Severity | Mitigation |
+|---|------|----------|------------|
+| 1 | Scope creep — BRAIN vision is larger than available effort | High | MVP acceptance gates are hard constraints; each phase stands alone; explicit deferral of Phases 5–6 |
+| 2 | Agent framework immaturity | Medium | Build against BRAIN's own contracts (CanonicalDocument, KnowledgeResult), not framework-specific APIs; allow framework swap |
+| 3 | Confidence scoring heuristics | Medium | Start with source-type heuristics; add LLM-based scoring incrementally; Phase 4 evaluation gate catches miscalibration early |
+| 4 | Neo4j vector index limitations | Low | Abstracted behind `IKnowledgeRetriever`; can swap to Qdrant if needed without core changes |
+| 5 | LightRAG divergence | Medium | LightRAG investment capped at "legacy integration"; BRAIN schema is primary from Phase 2; consider deprecation if schema conflicts emerge |
+
+### Sign-Off
+
+- **Bob:** Architecture approved; phase gates are executable.
+- **Eric:** Branch checkout and documentation update confirm intent.
+- **Scribe:** Merge into `.squad/decisions.md` after session completion.
+
+---
+
+## Phase 0 Scaffolding Decision — Python BRAIN Project Structure — Jarvis — 2025-11-02
+
+**Author:** Jarvis (Python / Data Dev)  
+**Date:** 2025-11-02  
+**Status:** IMPLEMENTED  
+**Scope:** BRAIN Python project structure and dependency management
+
+### Decision
+
+Track the repo-root `contracts/` directory with a placeholder file and land the initial BRAIN Python decomposition as empty packages only.
+
+### Rationale
+
+Phase 0 needs commit-safe structure now so Phase 1 contract models can be added without mixing scaffolding with implementation logic. Shared contracts have an explicit home at the repo root; Python work can grow under `app.brain` and `app.contracts` without forcing service extraction before contracts stabilize.
+
+### Implementation
+
+- ✅ `contracts/` directory at repo root (with `.gitkeep`)
+- ✅ `app/brain/` package with all four submodules: `ingestion/`, `validation/`, `knowledge/`, `reasoning/`
+- ✅ `app/contracts/` package for shared Pydantic models
+- ✅ All packages initialized with `__init__.py` files
+- ✅ `requirements.txt` pinned to minor version; CUDA packages excluded
+
+### Checkpoint
+
+**Phase 0 "Project Structure and Branch Setup" is structurally complete.**
+
+- ✅ Roadmap checkpoint passed
+- ✅ Ready for Phase 1 contract definitions without path conflicts
+- ✅ No implementation yet (directories empty, only `__init__.py` files)
+
+### Next Steps (Phase 1)
+
+- Define `CanonicalDocument`, `ValidatedDocument`, `KnowledgeResult`, `ReasonResponse` Pydantic models in `app/contracts/`
+- Add corresponding C# contracts to `AspireApp.ApiService/Contracts/`
+- Wire Gateway endpoints to route through Python pipeline
+
+---
+
+## Phase 0 Gateway Repurpose & Configuration Standardization — Jeff — 2025-11-02
+
+**Author:** Jeff (.NET Dev)  
+**Date:** 2025-11-02  
+**Status:** IMPLEMENTED  
+**Scope:** BRAIN Phase 0 gateway repurpose and related .NET cleanup
+
+### Decision
+
+- Keep `AspireApp.ApiService` and repurpose it as the BRAIN gateway instead of deleting the project.
+- Standardize the .NET surface on `AI-Model` for the primary chat model while keeping `AI-Embedding-Model` separate.
+- Remove the leftover weather sample surface from the .NET app so the gateway role is the clearest API direction in Aspire.
+
+### Implementation
+
+- ✅ Weather stub deleted; `/brain/health` scaffolded; Phase 2–3 endpoints stubbed (501)
+- ✅ `Microsoft.Extensions.AI` added; Semantic Kernel removed
+- ✅ `AI-Model` standardized across AppHost, Web, and API Gateway
+- ✅ AppHost orchestration updated; `brain-gateway` wired as entry point
+- ✅ `dotnet build` succeeds: 0 warnings, 0 errors
+
+### Impact
+
+- AppHost, Web, and test code treat the former API sample as the `brain-gateway` resource
+- Future C# gateway work can build on `/brain/*` stubs and `Microsoft.Extensions.AI` without legacy code
+- 87 unit/service tests pass; 17 integration tests fail (Docker daemon unavailable — environmental)
+
+---
+
+## Phase 0 QA Review & Merge Gate Assessment — Buster — 2025-11-02
+
+**Author:** Buster (QA / Tester)  
+**Date:** 2025-11-02  
+**Status:** CRITICAL GAPS IDENTIFIED  
+**Recommendation:** Phase 0 is IMPLEMENTATION-READY but PROCESS-INCOMPLETE
+
+### Summary
+
+Build succeeds. Core scaffolding is in place. However, 17 integration tests fail due to Docker daemon unavailability, and one roadmap item remains unchecked (decision recording).
+
+This is NOT a code quality issue—it's a test infrastructure blocker and a process gate.
+
+### Critical Gaps
+
+1. **Integration Tests Blocked by Docker**
+   - Finding: 87/104 tests pass; 17 fail with `DistributedApplicationException: Container runtime 'docker' was found but appears to be unhealthy`
+   - Root Cause: Test fixture requires Docker for Aspire orchestration; Docker daemon not running in CI context
+   - Impact: Cannot validate that API Gateway, Web, Python, and Neo4j work together end-to-end
+   - Recommendation: Document as known limitation; establish Docker-enabled test track before Phase 1 merge
+
+2. **Roadmap Item: BRAIN Pivot Decision Not Recorded**
+   - Finding: `Tasks.md` line 113 shows `[ ] Update .squad/decisions.md with BRAIN pivot decision` — still unchecked
+   - Impact: Future team members won't know why Phase 0 restructured from "upload/process/retrieve" to "ingest/validate/reason"
+   - Action: Record decision entry to `.squad/decisions.md` before merge
+
+3. **API Gateway Health Endpoint Verification Pending**
+   - Finding: `GET /brain/health` is defined and returns 200; no test coverage yet
+   - Risk Level: LOW (it's a stub; will be enhanced in Phase 2)
+
+4. **Cross-Service Contract Baseline Not Established**
+   - Finding: `app/contracts/` exists but is empty; no Pydantic models defined yet
+   - Risk Level: MEDIUM (OK for Phase 0, blocker for Phase 1)
+   - Not a Phase 0 blocker, but flag for Phase 1 planning
+
+### Acceptance Criteria for Phase 0 → Phase 1 Gate
+
+**BEFORE Phase 0 branch merges to main:**
+- [ ] **Docker-based CI:** Establish test environment with Docker available OR document integration tests as local-only
+- [ ] **Decisions recorded:** BRAIN pivot decision added to `.squad/decisions.md`
+- [ ] **Roadmap bookkeeping:** Mark line 113 as ✅ complete
+
+---
+
+## README.md Markdown Code Fence Fixes — Bob — 2025-11-02
+
+**Author:** Bob (Lead / Architect)  
+**Date:** 2025-11-02  
+**Status:** COMPLETED  
+**Scope:** Markdown formatting corrections in README.md
+
+### Summary
+
+Fixed malformed inline backticks in README.md code blocks. The document was using single backticks with inline language hints (`` `ash ``, `` `powershell ``) instead of proper triple-backtick fenced code blocks (` ``` `).
+
+### Changes
+
+- **Getting Started** section: Corrected bash code block to use ` ```bash ` ... ` ``` ` format
+- **Adding Secrets** section: Three PowerShell blocks already use ` ```powershell ` ... ` ``` ` format
+- Verified all code fences now use standard Markdown triple-backtick syntax
+
+### Impact
+
+- Documentation now renders correctly in Markdown renderers (GitHub, VS Code, etc.)
+- Command examples are properly highlighted and copyable
+- No content changes; formatting only
+
+---
+
 
