@@ -57,14 +57,11 @@ async def process_document_task(
         processed_doc, pages = docling.process_document(document, resolved_file_path)
         canonical_document = build_canonical_document(document, pages)
         _persist_canonical_document(processed_doc, canonical_document)
-        _attempt_lightrag_handoff(
-            document=document,
-            processed_doc=processed_doc,
-            lightrag_handoff=lightrag_handoff or LightRagHandoffService(),
-        )
-        _persist_processing_metadata(processed_doc)
-        
-        # Create Neo4j nodes
+
+        # Create Neo4j nodes and generate embeddings BEFORE triggering LightRAG.
+        # LightRAG ingestion also calls Ollama; running both concurrently saturates
+        # the single Ollama instance and causes embedding timeouts that push total
+        # processing time past the test polling window.
         page_node_ids = []
         try:
             # Create document node
@@ -161,6 +158,16 @@ async def process_document_task(
         except Exception as neo4j_error:
             logger.warning(f"Neo4j processing failed for document {document_id}: {neo4j_error}")
             # Continue without Neo4j - the document is still processed
+
+        # All Ollama-dependent work is finished.  Hand off to LightRAG now so its
+        # own Ollama calls (LLM entity extraction + embedding) don't compete with
+        # the page/claim embedding batches above.
+        _attempt_lightrag_handoff(
+            document=document,
+            processed_doc=processed_doc,
+            lightrag_handoff=lightrag_handoff or LightRagHandoffService(),
+        )
+        _persist_processing_metadata(processed_doc)
 
         db.update_file_ingestion_metadata(
             file_id=document_id,
