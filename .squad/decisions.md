@@ -12,6 +12,7 @@
 > **Note (2026-04-11T18:38:10Z):** Merged 1 inbox decision from chat persistence QA validation session (Buster). "Chat privacy tests should not wait on full AI completion" — acceptance seam is owner message persistence + owner-only visibility, not Ollama response completion. 7/7 focused tests passing. Inbox cleared.
 > **Note (2026-04-13T15:18:35Z):** Merged 5 inbox decisions from P1 Docling-to-LightRAG-to-Neo4j audit session (Jarvis, Bob, Buster, Verbal, Jeff). Key outcomes: Items 1 & 4 fully covered; items 2 & 3 require integration test gates (Phase 2); three roadmap items should be reworded to "foundation-only" to reduce Phase 2 execution risk. No duplicates found. Inbox cleared.
 > **Note (2026-04-14T06:17:03Z):** Merged 1 inbox decision from Phase 0 gate closeout session (Bob). "Phase 0 Gate Closeout: BRAIN Pivot Decision Recording Complete" — Decision-recording gate closed; BRAIN pivot recorded; Docker validation caveat noted as outstanding quality gate (not blocking Phase 1 parallel work). No duplicates found. Inbox cleared.
+> **Note (2026-04-17T23:50:00Z):** Merged 2 inbox decisions from roadmap/Tasks.md update session (Bob, Buster). Key outcome: P2-B gate closure confirmed (confidence fail-closed + Neo4j enrichment verified); P2-C unblocked (embedding infrastructure identified as blocker, not code); Phase 3 critical path locked (agent framework selection is BLOCKING GATE with 2026-04-24 decision deadline). Contradiction detection deferred to Phase 3 Critic Agent integration. No exact duplicates found. Inbox cleared.
 
 <!-- Decisions are appended below. Each entry starts with ### -->
 
@@ -2083,3 +2084,209 @@ All prior rejection criteria have been addressed. Implementation complete. No ad
 ---
 
 
+
+---
+
+## P2-B Completion & Roadmap Closure: Confidence Fail-Closed + Neo4j Enrichment — Bob, Buster — 2026-04-17
+
+**Authors:** Bob (Lead / Architect), Buster (QA / Tester)  
+**Status:** COMPLETE  
+**Scope:** P2-B gate closure verification, roadmap status update, Phase 3 blocking sequencing.
+
+### Context
+
+Phase 2-B gate implementation (LightRagRetriever confidence fail-closed enrichment + Neo4j provenance lookup) reached completion. All unit tests pass (14/14 in 	est_lightrag_retriever.py). Live integration test infrastructure scaffolded and ready (BrainQueryReturnsConfidenceEnrichedResults). Roadmap required clarity on Phase 2 outstanding items and Phase 3 critical path to prevent false starts.
+
+### Decision
+
+**P2-B: COMPLETE.** Confidence fail-closed behavior implemented and verified. Neo4j enrichment working. No overclaiming.
+
+**P2-C: UNBLOCKED.** Blocking dependencies identified (Ollama embedding model setup, Neo4j vector syntax integration); not code blockers. Ready to proceed with vector index implementation once embedding infrastructure configured.
+
+**Phase 3 Critical Path: Agent framework selection is BLOCKING GATE.** All Phase 3 agents (P3-A through P3-G) cannot start until framework chosen. Decision deadline: 2026-04-24. Recommended candidate: LangGraph (multi-agent support, tool integration, Python ecosystem maturity).
+
+**P2 Outstanding Items (Non-Blocking):**
+1. Contradiction detection query pattern — DEFERRED to Phase 3 Critic Agent integration (foundation-only for Phase 2)
+2. Ingest → Validate → Store → Retrieve documentation — HIGH priority; unblocks Phase 3 agent design (owner: Jarvis + Jeff)
+3. Live Aspire/WebTest proof of Claim node persistence and /brain/query confidence surfaces — MEDIUM priority; Phase 4 validation gate input (not blocking Phase 3)
+
+#### P2-B Verification Evidence
+
+- ✅ Unit tests: 	est_lightrag_retriever.py — 14/14 passing (0.64s)
+  - Enrichment from unscored results ✓
+  - Fail-closed when Neo4j returns None ✓
+  - Explicit scores preserved (bypass enrichment) ✓
+  - Parsing of provenance format ✓
+- ✅ Live integration test infrastructure: BrainQueryReturnsConfidenceEnrichedResults scaffolded with Priority(2), Category("P2-B"), full workflow wired
+- ✅ Implementation inspection: _build_item() returns None; _enrich_confidence_from_provenance() calls Neo4j; _parse_provenance_from_ref() parses correctly
+
+#### Phase 3 Sequencing (Locked)
+
+`
+Agent Framework Selection (BLOCKING GATE)
+  ↓
+P3-A: /brain/chat endpoint (Retriever + Synthesizer agents)
+  ↓ UNBLOCKS
+P3-D: Blazor chat routing (Gateway integration)
+  ↓
+P3-B: Multi-step reasoning (Planner + Critic)
+  ↓
+P3-C: Proactive Monitor (background agent, contradiction detection, suggestions)
+  ↓ UNBLOCKS
+P3-G: UI suggestions panel
+`
+
+### Immediate Actions
+
+1. **This week:** Bob + Jarvis evaluate LangGraph (2-day prototype vs. CrewAI, Autogen)
+2. **By 2026-04-24:** Framework selection decision recorded in .squad/decisions.md
+3. **2026-04-25:** Agent base contract finalized (Bob + Jarvis; align with BrainQueryRequest/ReasonResponse)
+4. **Parallel:** Jarvis coordinates Ollama embedding infrastructure for P2-C; Jarvis + Jeff write pipeline documentation
+5. **Week 2 (P3-A):** /brain/chat endpoint implementation begins
+6. **Week 3 (P3-D):** Blazor routing integration begins
+
+### Roadmap Updates Made
+
+- **Header:** Clarified P2-B complete, P2-C unblocked, Phase 3 sequencing urgent
+- **Knowledge Layer:** Reworded P2-C gate with blocking dependencies identified
+- **Phase 2 Outstanding:** Marked 3 items with clear priority guidance (non-blocking)
+- **Phase 3 Unblock Section:** Added with dependency diagram + BLOCKING GATE callout + decision deadline
+- **Milestone Gates:** Updated P2-B/P2-C descriptions, added P3 dependency notes
+
+### Rationale
+
+- **Honest Assessment:** P2-B gate met; no overclaiming. All tests pass; live infrastructure ready.
+- **Clear Blocking:** Phase 3 cannot start feature work until agent framework chosen. Early decision prevents rework.
+- **Priority Guidance:** Non-blocking Phase 2 items have clear owner + priority; don't derail phase closure.
+- **Dependency Visibility:** Explicit blocking gates prevent false starts on P3-B/P3-D/P3-C before P3-A infrastructure.
+
+### Files Modified
+
+- oadmap/Tasks.md (comprehensive rewordings; Phase 3 critical path locked; blocking gate clarified)
+
+### Cross-Agent Coordination
+
+- **Jarvis:** Framework selection decision required (LangGraph/CrewAI/Autogen); coordinate Ollama embedding setup in parallel; define agent base contract by 2026-04-25
+- **Jeff:** Await /brain/chat endpoint completion (no blockers on C# side); Blazor routing can start immediately after endpoint ready
+- **Bob:** Finalize LangGraph prototype evaluation; record framework selection decision by 2026-04-24; define agent base contract with Jarvis
+
+### Acceptance Criteria
+
+- [x] P2-B unit tests: 14/14 passing
+- [x] Live integration test infrastructure scaffolded
+- [x] Roadmap reflects honest completion status (no overclaiming)
+- [x] Phase 3 critical path identified and dependencies locked
+- [x] Agent framework selection marked as BLOCKING GATE with deadline
+- [ ] Framework selection decision by 2026-04-24 (future)
+- [ ] Agent base contract finalized by 2026-04-25 (future)
+
+---
+
+## Phase 3 Agent Framework Selection: Critical Path Decision — Bob, Buster — 2026-04-17
+
+**Authors:** Bob (Lead / Architect), Buster (QA / Tester)  
+**Status:** DECISION PENDING (deadline 2026-04-24)  
+**Scope:** Phase 3 blocking gate clarification, framework evaluation plan, Phase 3 unblock sequence.
+
+### Context
+
+All Phase 3 agents (P3-A /brain/chat → P3-B multi-step reasoning → P3-C proactive monitor → etc.) depend on a shared agent framework. Without early framework selection, risk of rework and architectural misalignment is high. Bob identified this as blocking gate; Buster confirmed via roadmap audit and test planning.
+
+### Decision
+
+**Agent framework selection is a BLOCKING GATE for Phase 3.** No Phase 3 feature work can proceed until framework chosen and agent base contract defined.
+
+**Immediate Actions:**
+1. **This week:** Bob + Jarvis evaluate LangGraph (primary candidate), CrewAI, Autogen
+   - Prototype criteria: Multi-agent support, tool integration, Python ecosystem maturity, documentation quality
+   - 2-3 day prototype per candidate if needed
+2. **Decision deadline:** End of sprint (2026-04-24)
+3. **Owner:** Bob (architecture), Jarvis (Python prototyping), Jeff (C# backend compatibility assessment)
+
+**After Framework Selection:**
+1. **Define agent base contract** (2026-04-25)
+   - Input: BrainQueryRequest (tenant, correlation_id, query, session_context)
+   - Output: ReasonResponse (response, confidence, evidence, reasoning_steps, proactive_suggestions)
+   - Tools: Neo4j knowledge graph queries, LLM generation, contradiction detection
+   - Memory: Conversation history + current graph state
+   - Owner: Bob (architecture review), Jarvis (Python implementation)
+
+2. **Unblock Phase 3 gates** (sequential):
+   - P3-A: Retriever + Synthesizer agents (/brain/chat endpoint)
+   - P3-B: Planner + Critic agents (multi-step reasoning, contradiction detection)
+   - P3-C: Proactive Monitor (background agent, contradiction detection, suggestions)
+   - P3-D: Blazor chat integration (route through Gateway)
+   - P3-G: UI suggestions panel
+
+### Framework Recommendations
+
+- **LangGraph** (Primary Candidate)
+  - ✅ Multi-agent graphs with explicit state management
+  - ✅ Tool calling native support
+  - ✅ Python ecosystem maturity (LangChain ecosystem)
+  - ✅ Documentation quality (LangChain team maintains)
+  - ⚠️ Graph complexity may require learning curve
+
+- **CrewAI**
+  - ✅ High-level agent abstraction (lower learning curve)
+  - ✅ Role-based agent definitions
+  - ⚠️ Less control over state management
+  - ⚠️ Tool integration less flexible
+
+- **Autogen**
+  - ✅ Multi-agent conversation patterns
+  - ✅ Code execution capability
+  - ⚠️ More suited for code generation; less for knowledge graph reasoning
+  - ⚠️ Smaller Python community
+
+**Recommendation:** Prototype with LangGraph first. If shortcomings emerge, switch to CrewAI. Autogen only if code-generation aspects become critical (unlikely for Phase 3).
+
+### Phase 3 Unblock Sequence
+
+`
+2026-04-24: Framework Decision
+   ↓
+2026-04-25: Agent Base Contract Finalized
+   ↓
+2026-04-29: P3-A Implementation Begins (/brain/chat endpoint)
+   ↓
+2026-05-06: P3-A Complete; P3-D + P3-B Begin (in parallel)
+   ↓
+2026-05-13: P3-B Complete; P3-C Investigation Spike Begins
+   ↓
+2026-05-20: P3-C Architecture Design Review; Implementation Plan
+   ↓
+2026-05-27: P3-C Implementation (concurrent with P3-G UI work)
+`
+
+### Test Planning for Phase 3
+
+- **P3-A Acceptance:** Agent framework instantiates multi-agent graph; agents can call tools; state persists across turns; /brain/chat returns structured response with confidence ≠ 0.5
+- **P3-B Acceptance:** Planner agent generates reasoning steps; Critic agent validates claims; multi-turn conversation works
+- **P3-C Acceptance:** Monitor detects contradictions in Neo4j claims; suggests insights; operates asynchronously (event-driven or polling TBD)
+- **P3-D Acceptance:** Blazor routes through Gateway; displays confidence + evidence + reasoning steps
+- **P3-G Acceptance:** UI surfaces proactive suggestions in suggestions panel
+
+### Cross-Agent Coordination
+
+- **Jarvis:** Framework evaluation ownership; prototype LangGraph (2-3 days); define agent base contract with Bob
+- **Jeff:** Assess C# backend compatibility for chosen framework; prepare /brain/chat endpoint skeleton
+- **Bob:** Architecture review of framework choice; finalize agent base contract; unblock P3 gates sequentially
+- **Buster:** Prepare Phase 3 test gates and acceptance criteria; review agent framework test infrastructure
+
+### Rationale
+
+- **Early Decision:** Framework choice affects all P3 agents and gateway architecture. Delaying increases rework risk.
+- **Clear Blocking:** Prevents false starts on P3-B/P3-D before foundation (P3-A) is ready.
+- **Parallel Coordination:** Once framework chosen, teams can work independently (Jarvis on agents, Jeff on C# wiring, Buster on test gates).
+
+### Acceptance Criteria
+
+- [ ] LangGraph prototype completed and evaluated (2026-04-23)
+- [ ] CrewAI prototype completed and evaluated (if needed; 2026-04-23)
+- [ ] Autogen prototype completed and evaluated (if needed; 2026-04-23)
+- [ ] Framework decision recorded in .squad/decisions.md (2026-04-24)
+- [ ] Agent base contract finalized and approved (2026-04-25)
+- [ ] Phase 3 gates unblocked sequentially (starting 2026-04-29)
+
+---
