@@ -45,9 +45,44 @@ if (app.Environment.IsDevelopment())
 var brain = app.MapGroup("/brain")
     .WithTags("Brain");
 
-brain.MapPost("/chat", () => BrainFeatureNotReady("chat", phase: 3))
+brain.MapPost("/chat", async Task<IResult> (
+        BrainChatRequest request,
+        IBrainBackendClient backendClient,
+        CancellationToken cancellationToken) =>
+    {
+        var normalizedRequest = NormalizeChatRequest(request);
+        if (string.IsNullOrWhiteSpace(normalizedRequest.Query))
+        {
+            return Results.ValidationProblem(new Dictionary<string, string[]>
+            {
+                ["query"] = ["query is required."]
+            });
+        }
+
+        if (normalizedRequest.TopK <= 0 || normalizedRequest.TopK > 25)
+        {
+            return Results.ValidationProblem(new Dictionary<string, string[]>
+            {
+                ["top_k"] = ["top_k must be between 1 and 25."]
+            });
+        }
+
+        try
+        {
+            var response = await backendClient.ChatAsync(normalizedRequest, cancellationToken);
+            return TypedResults.Ok(response);
+        }
+        catch (BrainGatewayProblemException ex)
+        {
+            return ToProblemResult(ex);
+        }
+    })
     .WithName("BrainChat")
-    .ProducesProblem(StatusCodes.Status501NotImplemented);
+    .Accepts<BrainChatRequest>("application/json")
+    .Produces<ReasonResponse>(StatusCodes.Status200OK)
+    .ProducesValidationProblem()
+    .ProducesProblem(StatusCodes.Status501NotImplemented)
+    .ProducesProblem(StatusCodes.Status502BadGateway);
 
 brain.MapPost("/ingest", async Task<IResult> (
         BrainIngestRequest request,
@@ -130,12 +165,6 @@ app.MapDefaultEndpoints();
 
 await app.RunAsync();
 
-static IResult BrainFeatureNotReady(string capability, int phase) =>
-    Results.Problem(
-        statusCode: StatusCodes.Status501NotImplemented,
-        title: $"BRAIN {capability} is not implemented yet",
-        detail: $"POST /brain/{capability} is scaffolded for Phase {phase} and currently returns 501 by design.");
-
 static string EnsureTrailingSlash(string baseAddress) =>
     baseAddress.EndsWith("/", StringComparison.Ordinal) ? baseAddress : $"{baseAddress}/";
 
@@ -147,6 +176,13 @@ static BrainIngestRequest NormalizeIngestRequest(BrainIngestRequest request) =>
     };
 
 static BrainQueryRequest NormalizeQueryRequest(BrainQueryRequest request) =>
+    request with
+    {
+        TenantId = NormalizeTenantId(request.TenantId),
+        CorrelationId = NormalizeCorrelationId(request.CorrelationId)
+    };
+
+static BrainChatRequest NormalizeChatRequest(BrainChatRequest request) =>
     request with
     {
         TenantId = NormalizeTenantId(request.TenantId),

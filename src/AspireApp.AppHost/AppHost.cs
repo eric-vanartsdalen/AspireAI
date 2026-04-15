@@ -145,6 +145,7 @@ public partial class Program
             .WithEnvironment("NEO4J_USER", neo4jUser.Resource)                     // Neo4j username for Python services
             .WithEnvironment("NEO4J_PASSWORD", neo4jPass.Resource)                 // Neo4j password for Python services
             .WithEnvironment("OLLAMA_ENDPOINT", ollama.GetEndpoint("http"))        // Ollama HTTP endpoint for embeddings
+            .WithEnvironment("CHAT_MODEL", aiModel.Resource)                         // Chat model name for LLM completions
             .WithEnvironment("EMBEDDING_MODEL", aiEmbeddings.Resource)             // Embedding model name for vector operations
             .WithEnvironment("EMBEDDING_DIM", "1024")                              // Embedding dimension for bge-m3
             .WithEnvironment("PIP_CACHE_DIR", "/root/.cache/pip")                  // Use persistent pip cache
@@ -154,7 +155,8 @@ public partial class Program
             .WaitFor(redis)     // Ensure Redis starts before Python service
             .WaitFor(neo4jDb)   // Ensure Neo4j starts before Python service
             .WaitFor(ollama)    // Ensure Ollama starts before Python (for embedding model)
-            .WaitFor(embeddingmodel);  // Ensure embedding model loads before Python service
+            .WaitFor(embeddingmodel)  // Ensure embedding model loads before Python service
+            .WaitFor(appmodel);  // Ensure chat model loads before Python service (brain chat)
 
         var pythonRunAsRoot = builder.Configuration.GetValue<bool>("PYTHON_RUN_AS_ROOT");
         if (pythonRunAsRoot)

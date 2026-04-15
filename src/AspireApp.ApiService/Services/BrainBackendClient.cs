@@ -11,6 +11,8 @@ public interface IBrainBackendClient
     Task<BrainIngestResponse> TriggerIngestionAsync(BrainIngestRequest request, CancellationToken cancellationToken = default);
 
     Task<KnowledgeResult> QueryKnowledgeAsync(BrainQueryRequest request, CancellationToken cancellationToken = default);
+
+    Task<ReasonResponse> ChatAsync(BrainChatRequest request, CancellationToken cancellationToken = default);
 }
 
 public sealed class BrainGatewayProblemException(int statusCode, string title, string detail, Exception? innerException = null)
@@ -75,6 +77,25 @@ public sealed class PythonBrainBackendClient(HttpClient httpClient, ILogger<Pyth
             string.IsNullOrWhiteSpace(payload.TenantId) ? request.TenantId : payload.TenantId,
             string.IsNullOrWhiteSpace(payload.CorrelationId) ? request.CorrelationId : payload.CorrelationId,
             payload.Results is { Count: > 0 } results ? results : []);
+    }
+
+    public async Task<ReasonResponse> ChatAsync(
+        BrainChatRequest request,
+        CancellationToken cancellationToken = default)
+    {
+        var payload = await PostForResponseAsync<BrainChatRequest, ReasonResponse>(
+            "brain/chat",
+            request,
+            cancellationToken);
+
+        return new ReasonResponse(
+            string.IsNullOrWhiteSpace(payload.TenantId) ? request.TenantId : payload.TenantId,
+            string.IsNullOrWhiteSpace(payload.CorrelationId) ? request.CorrelationId : payload.CorrelationId,
+            payload.Answer,
+            payload.Confidence,
+            payload.Evidence ?? [],
+            payload.ReasoningSteps ?? [],
+            payload.ProactiveSuggestions ?? []);
     }
 
     private async Task<TResponse> PostForResponseAsync<TRequest, TResponse>(

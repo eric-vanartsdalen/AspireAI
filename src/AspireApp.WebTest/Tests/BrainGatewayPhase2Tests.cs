@@ -395,6 +395,14 @@ public sealed class BrainGatewayPhase2Tests
                 QueryResponse
                 ?? new ApiContracts.KnowledgeResult(request.TenantId, request.CorrelationId, []));
         }
+
+        public Task<ApiContracts.ReasonResponse> ChatAsync(
+            ApiContracts.BrainChatRequest request,
+            CancellationToken cancellationToken = default)
+        {
+            return Task.FromResult(new ApiContracts.ReasonResponse(
+                request.TenantId, request.CorrelationId, "stub answer", 0.5, [], [], []));
+        }
     }
 
     private sealed class StubHttpMessageHandler(IEnumerable<HttpResponseMessage> responses) : HttpMessageHandler
