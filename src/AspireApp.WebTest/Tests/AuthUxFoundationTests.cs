@@ -144,20 +144,26 @@ public class AuthUxFoundationTests : IClassFixture<TestFixture>
         await providerChoice!.ClickAsync();
         await WaitForPageLoadCompletion(page);
 
+        var mockUserForm = page.Locator("[data-testid='auth-mock-user-form']").First;
+        await WaitForVisibleAsync(mockUserForm, "Mock sign-in did not render the demo account form after provider selection.");
+
         await SelectFirstMockUserIfPresentAsync(page);
 
-        var submitControl = await FindVisibleAsync(page,
+        var submitControl = await FindVisibleAsync(
+            mockUserForm,
             current => current.Locator("[data-testid='auth-submit-sign-in']"),
             current => current.GetByRole(AriaRole.Button, new() { NameRegex = SignInRegex }),
             current => current.GetByRole(AriaRole.Link, new() { NameRegex = SignInRegex }));
 
-        if (submitControl is not null)
-        {
-            await submitControl.ClickAsync();
-            await WaitForPageLoadCompletion(page);
-        }
+        Assert.NotNull(submitControl);
+
+        var redirectToAuthenticatedShell = WaitForNavigationAwayFromSignInAsync(page);
+        await submitControl!.ClickAsync();
+        await redirectToAuthenticatedShell;
+        await WaitForPageLoadCompletion(page);
 
         await WaitForAuthenticatedShellAsync(page);
+        await NavigateToProtectedRouteAndAssertAccessibleAsync(page, "upload", "Upload Data", "Document Upload");
     }
 
     private async Task SelectFirstMockUserIfPresentAsync(IPage page)
@@ -311,6 +317,41 @@ public class AuthUxFoundationTests : IClassFixture<TestFixture>
         Assert.Fail($"Sign-in did not transition into an authenticated shell. Final URL: {page.Url}");
     }
 
+    private static async Task WaitForNavigationAwayFromSignInAsync(IPage page)
+    {
+        if (!page.Url.Contains("/signin", StringComparison.OrdinalIgnoreCase))
+        {
+            return;
+        }
+
+        try
+        {
+            await page.WaitForURLAsync(
+                url => !url.Contains("/signin", StringComparison.OrdinalIgnoreCase),
+                new PageWaitForURLOptions { Timeout = 15_000 });
+        }
+        catch (TimeoutException)
+        {
+            Assert.Fail($"Mock sign-in never left the sign-in route. Final URL: {page.Url}");
+        }
+    }
+
+    private static async Task WaitForVisibleAsync(ILocator locator, string failureMessage)
+    {
+        try
+        {
+            await locator.WaitForAsync(new LocatorWaitForOptions
+            {
+                State = WaitForSelectorState.Visible,
+                Timeout = 10_000
+            });
+        }
+        catch (TimeoutException)
+        {
+            Assert.Fail(failureMessage);
+        }
+    }
+
     private static async Task<string?> TryReadVisibleTenantAsync(IPage page)
     {
         var explicitTenant = page.Locator("[data-testid='auth-current-tenant']");
@@ -358,6 +399,29 @@ public class AuthUxFoundationTests : IClassFixture<TestFixture>
         foreach (var candidateFactory in candidates)
         {
             var candidate = candidateFactory(page).First;
+            try
+            {
+                if (await candidate.IsVisibleAsync())
+                {
+                    return candidate;
+                }
+            }
+            catch (PlaywrightException)
+            {
+            }
+            catch (TimeoutException)
+            {
+            }
+        }
+
+        return null;
+    }
+
+    private static async Task<ILocator?> FindVisibleAsync(ILocator root, params Func<ILocator, ILocator>[] candidates)
+    {
+        foreach (var candidateFactory in candidates)
+        {
+            var candidate = candidateFactory(root).First;
             try
             {
                 if (await candidate.IsVisibleAsync())
