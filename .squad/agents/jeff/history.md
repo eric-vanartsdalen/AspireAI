@@ -1306,3 +1306,65 @@ The failing UI test checks `Assert.Equal("uploaded", uploadedFile.Status)` at li
 - FastAPI background tasks must be truly async; sync-heavy work blocks the event loop
 - Thread-pool workers are appropriate for CPU-bound tasks within an async context
 - Client-side timeouts during service startup are transient; polling helpers should be resilient
+
+### 2026-04-15 — ChatConversationPersistenceTests Test Intermittency Due to AI Response Timing
+
+**Status:** Diagnosed; test works but is flaky under slow AI conditions.
+
+**Problem:**
+- SignedInUserCanSaveRenameResumeAndDeleteConversation passed on first run after clean build, but failed on second run with "The chat send button stayed disabled longer than expected."
+- Test uses 90-second timeout waiting for send button to re-enable after AI response (WaitForControlEnabledAsync at line 205 of test helper).
+- Send button is controlled by IsAIResponsing flag in Chat.razor.cs, which is properly managed in inally block (line 1040) to always reset.
+- AI response has 3-minute internal timeout (line 977), so button can legitimately stay disabled for up to 180 seconds.
+
+**Root Cause:**
+- Test timeout (90s) is shorter than the AI's internal response timeout (3min), creating a race condition.
+- When Ollama is slow (model loading, GPU contention, system load), the test times out before the legitimate response completes.
+- This is environmental flakiness, not a product bug—IsAIResponsing management is correct.
+
+**Recommendation:**
+- Test timing should be addressed by Buster:
+  1. Increase WaitForControlEnabledAsync timeout to match or exceed AI response timeout (180s+), or
+  2. Mock AI responses in test scenarios to eliminate timing variability, or
+  3. Add explicit AI warmup phase before conversation tests run.
+
+**Key Insight:**
+- Product code correctly manages button state through exception handlers and finally block.
+- All data-testid hooks are properly in place (validated: chat-send, chat-conversations-shell, chat-conversation-list, etc.).
+- Test infrastructure requires timing alignment with production AI behavior or controlled test doubles.
+
+**Key Paths:**
+- src\AspireApp.WebTest\Tests\ChatConversationPersistenceTests.cs line 516-530 — WaitForControlEnabledAsync with 90s timeout
+- src\AspireApp.Web\Components\Pages\Chat.razor.cs lines 972-1046 — CallBackgroundAI with 3min timeout and proper finally cleanup
+- src\AspireApp.Web\Components\Pages\Chat.razor line 884 — send button disabled condition includes IsAIResponsing
+
+**Validation:**
+- First run: Passed after clean build (1m 48s runtime)
+- Second run: Failed at 91s with button still disabled (AI still responding)
+- Product behavior is correct; test needs timing adjustment
+
+**Cross-Agent Handoff:**
+- Jeff validated product code correctness and testid infrastructure
+- Buster should address test timing strategy (increase timeout or add mocks)
+
+
+
+## 2026-04-15T17-41-59 — Chat Persistence Test Investigation & P2-C AppHost Config (Scribe collaboration)
+
+**Role:** .NET dev (ChatConversationPersistenceTests analysis + P2-C embedding orchestration)
+**Outcome:** No product defect; test timeout race identified; P2-C embedding config complete
+**Output:**
+- Analyzed Chat.razor.cs timing assumptions vs Ollama response latency  
+- Product code verified correct (AI response management sound)
+- Identified 90s test timeout races with legitimate slow AI responses
+- Approved P2-C embedding infrastructure (vector indexes, Neo4j integration)
+- Delegated test strategy hardening to Buster
+
+**Learning:** Large language model response times are variable; test suites must account for this in E2E scenarios.
+
+**Cross-Agent:** Collaborated with Buster (timing investigation), Bob (architecture), Jarvis (embedding pipeline).
+
+**Files:**
+- .squad/orchestration-log/2026-04-15T17-41-59-jeff.md (session log)
+- .squad/decisions/inbox/jeff-*.md → merged to decisions.md
+

@@ -1,4 +1,4 @@
-# Decisions
+﻿# Decisions
 
 > Shared decision log. All agents read this before starting work.
 > Scribe merges new decisions from `.squad/decisions/inbox/` after each session.
@@ -15,8 +15,9 @@
 > **Note (2026-04-17T23:55:30Z):** Merged 0 new inbox decisions from roadmap/Tasks.md cleanup session (Bob, Buster). Session summary: Bob updated Tasks.md and highlighted Phase 2/3 sequencing; Buster verified honesty against test evidence and approved; Bob performed surgical cleanup (removed duplicate contradiction-detection entry and stale outstanding Phase 2 proof item); Buster rechecked for internal consistency and approved final state. Roadmap now internally consistent. No inbox files generated. See session log `20260417-roadmap-cleanup.md` for details.
 > **Note (2026-04-17T23:50:00Z):** Merged 2 inbox decisions from roadmap/Tasks.md update session (Bob, Buster). Key outcome: P2-B gate closure confirmed (confidence fail-closed + Neo4j enrichment verified); P2-C unblocked (embedding infrastructure identified as blocker, not code); Phase 3 critical path locked (agent framework selection is BLOCKING GATE with 2026-04-24 decision deadline). Contradiction detection deferred to Phase 3 Critic Agent integration. No exact duplicates found. Inbox cleared.
 > **Note (2026-04-15T07:42:56Z):** Merged 2 inbox decisions from chat focus + LightRAG round-trip regression fix session (Jeff, Jarvis). Key outcome: (1) Chat focus seam uses explicit render-time flags (`ShouldFocusQuestionInput`/`ShouldFocusConversationTitleInput`) instead of eager autofocus in `OnAfterRenderAsync`, preventing rename-typing focus theft. (2) LightRAG retriever updated to handle multiple response shapes (`contexts` + `/query/data` chunks) and recover provenance from filename parsing (e.g., `000007-guide.md` → document ID). Both regression tests passing (ChatFocusTests 7/7, LightRAG tests 27/27, LiveLightRagNeo4jQueryRoundTrip ✅). No duplicates found. Inbox cleared.
+> **Note (2026-04-15T17:41:59Z):** Merged 9 inbox decisions from chat persistence test investigation + P2-C embedding phase (Buster, Jeff, Bob, Jarvis, Scribe). Key outcomes: (1) ChatConversationPersistenceTests issue is environmental (missing Playwright Chromium) + timing-dependent (90s timeout races slow AI), not product regression. (2) Playwright setup must be documented. (3) P2-C embedding population active. (4) Ollama workload serialization implemented. (5) Vector infrastructure review approved. (6) All P2-C work consolidated. Inbox cleared.
 
-<!-- Decisions are appended below. Each entry starts with ### -->
+<!-- Decisions are appended below. Each entry starts with ## -->
 
 ## Local Auth Password Floor 12→10 + Visible UI Requirement — Warden, Jeff — 2026-04-06
 
@@ -763,3 +764,622 @@ This update bridges the gap: retriever accepts both shapes, extracts provenance 
 - **No Impact:** C# API, Blazor, chat, auth, tenant isolation
 
 ---
+
+
+# Decision: Roadmap Cleanup After P2-B Knowledge Layer Closure
+
+**Date:** 2025-11-02
+**Owner:** Bob (Lead Architect)
+**Context:** Post-P2-B cleanup of `roadmap/Tasks.md` following consolidated LightRAG confidence session (2026-04-17)
+
+## Problem
+
+After P2-B knowledge layer closure (confidence scoring + live proof via `BasicAspireAppHostTests.BrainQueryReturnsConfidenceEnrichedResults`), roadmap contained:
+
+1. **Duplicate contradiction detection entries** in Validation Layer section:
+   - Line 196: Original P2 Outstanding (marked non-blocking, low priority)
+   - Line 200: Revised entry marked DEFERRED to Phase 3 Critic Agent (better context)
+
+2. **Stale outstanding item** in Cross-Layer Integration:
+   - Line 206: "Add live Aspire/WebTest proof that `/brain/query` can surface claim-backed confidence without DEFAULT_CONFIDENCE=0.5"
+   - Status: Now **COMPLETE** (live proof exists; P2-B gate closed 2026-04-17)
+
+## Decision
+
+**Rationale:**
+- Keep one honest contradiction detection entry: the Phase 3-contextualized version from line 200 (now repositioned as single entry)
+- Remove stale "add live proof" item; P2-B already proven with `BrainQueryReturnsConfidenceEnrichedResults` test
+- Preserve Bob/Buster-approved sequencing for Phase 2 and Phase 3 items
+
+**Changes:**
+- **Validation Layer section:** Remove duplicate. Rewrite single contradiction item as `[P3 Outstanding → Phase 3 Critic Agent]` to clarify it's Phase 3 work, not P2 blocker
+- **Cross-Layer Integration section:** Remove line 206 (stale proof requirement); keep two legitimate P2 documentation items
+- No other items modified; sequencing preserved
+
+## Impact
+
+- Roadmap now reflects true P2-B closure (confidence scoring + live proof)
+- Eliminates confusion about contradiction detection priority/timing
+- Single source of truth for Phase 3 validation layer roadmap
+- Team context: Contradiction detection is Phase 3 work (Critic Agent scope), not P2 blocker
+
+## Approval
+
+✅ Ready for merge by Bob (architect decision authority)
+
+
+
+# Ollama Contention: Serialize Pipeline Workloads — Bob — 2026-04-18
+
+**Author:** Bob (Lead / Architect)
+**Status:** IMPLEMENTED
+**Scope:** Processing pipeline ordering in `process_document_task`
+
+## Context
+
+FlowEndToEnd and LiveLightRagNeo4jQueryRoundTrip tests were timing out during processing. Root cause: `process_document_task` triggered LightRAG ingestion (which calls Ollama for LLM + embeddings) *before* completing its own Ollama embedding work (page + claim vectors). Both consumers competed for a single Ollama instance configured with `MAX_ASYNC=1`. The serial queuing pushed total processing time past the 2-minute test polling window.
+
+## Decision
+
+**Defer LightRAG handoff until after all Python-side Ollama embedding work completes.** This is a pure operation reorder — no logic or interface changes. The metadata dict still accumulates identically; it's persisted to disk slightly later in the pipeline.
+
+## Rationale
+
+- Ollama serves one request at a time; concurrent consumers create a serial queue.
+- Each embedding batch call has a 60-second timeout; queuing behind LightRAG LLM calls can exceed this.
+- Sequencing eliminates the contention window entirely.
+
+## Architectural Rule
+
+When multiple pipeline stages share a single-instance AI model server (Ollama), orchestrate them sequentially. This applies to any future processing step that calls Ollama — do not add concurrent Ollama consumers without increasing `MAX_ASYNC` or adding model-level isolation.
+
+## Files Changed
+
+- `src/AspireApp.PythonServices/app/routers/processing.py`
+
+
+
+# P2-C Vector Infrastructure Review — APPROVED
+
+**Author:** Buster (QA/Tester)  
+**Date:** 2026-04-17  
+**Status:** APPROVED  
+
+## Context
+
+Review of uncommitted P2-C working tree changes for correctness and roadmap honesty. Focus areas: AppHost embedding config, Neo4j vector indexes, embedding service, and test coverage.
+
+## Decision
+
+**P2-C vector infrastructure foundation is honestly scoped and correctly implemented.**
+
+### What Was Delivered
+
+1. **AppHost embedding config** (Jeff): Python services receive `OLLAMA_ENDPOINT`, `EMBEDDING_MODEL`, `EMBEDDING_DIM` via environment variables; wait for Ollama + embedding model before starting
+2. **Neo4j vector indexes** (Jarvis): `page_content_vector` and `claim_text_vector` created via `_ensure_vector_indexes()` using Neo4j 5.x syntax with `IF NOT EXISTS` (idempotent)
+3. **Vector search methods** (Jarvis): `search_claims_vector()` and `search_pages_vector()` use `db.index.vector.queryNodes()` with cosine similarity
+4. **EmbeddingService** (Jarvis): Ollama-first with local sentence-transformers fallback; graceful degradation when dependencies unavailable
+5. **Test coverage** (Jarvis): 11/11 tests passing in `test_vector_infrastructure.py`; all related tests still pass (28/28)
+
+### Why This Is Honest
+
+- **Roadmap status:** "🟡 IN PROGRESS" instead of "✅ COMPLETE" — accurate signal
+- **Explicit remaining work:** Tasks.md line 173 states "Populate embeddings ... wire vector search into retrievers"
+- **Foundation-first approach:** Infrastructure (indexes, helpers, config) implemented before population pipeline
+- **No overclaim:** Does NOT claim vector retrieval is live; only that infrastructure is ready
+
+### Correctness Validation
+
+- ✅ Config wiring matches Aspire parameter patterns
+- ✅ Dependency ordering correct (wait for Ollama + embedding model)
+- ✅ Vector index syntax uses Neo4j 5.x conventions
+- ✅ Embedding dimension (1024 for bge-m3) matches model output
+- ✅ Search methods return standard result shape compatible with existing retrievers
+- ✅ All tests pass (build, pytest suite)
+
+### Contrast With P2-B Review
+
+- **P2-B (2026-11-02):** Rejected for marking items "done" when blocker existed
+- **P2-C (2026-04-17):** Approved because roadmap honestly states "foundation complete, population pending"
+
+### Recommendation
+
+**APPROVED for merge.** P2-C gate can remain "🟡 IN PROGRESS" until embedding population and retriever integration are complete. Foundation work enables parallel progress on Phase 3 agent selection while embedding pipeline is built.
+
+## Impact
+
+- Unblocks embedding population work
+- Validates vector search contracts before integration
+- Enables honest roadmap tracking (foundation vs. full feature)
+
+
+
+# Decision: Playwright Browser Installation Required for WebTest Suite
+
+**Date:** 2025-02-05  
+**Author:** Buster (QA/Tester)  
+**Status:** Active
+
+## Context
+
+`AspireApp.WebTest` uses Playwright for end-to-end testing of the Blazor UI. Playwright requires browser binaries (Chromium, Firefox, or WebKit) to be installed locally, which are **not** committed to the repository.
+
+## Problem
+
+After a fresh clone or environment change, tests fail with:
+```
+Microsoft.Playwright.PlaywrightException : Driver not found: 
+C:\Users\...\AspireApp.WebTest\bin\.playwright\node\win32_x64\node.exe
+```
+
+This manifests as test crashes in the fixture initialization (`TestFixture.InitializeAsync`).
+
+## Decision
+
+**All developers must install Playwright browsers before running WebTest suite.**
+
+### Required Setup Steps
+
+1. Install Playwright CLI (once per machine):
+   ```powershell
+   dotnet tool update --global Microsoft.Playwright.CLI
+   ```
+
+2. Install Chromium browser (required for tests):
+   ```powershell
+   playwright install chromium
+   ```
+
+### Why Not Automate This?
+
+- Playwright browser binaries are ~200MB and not suitable for repository storage
+- Playwright's design expects local installation per environment
+- CI/CD pipelines already handle this via GitHub Actions or Azure DevOps tasks
+- Manual install is one-time setup, acceptable for local development
+
+## Verification
+
+After installation, verify with:
+```powershell
+dotnet test src\AspireApp.WebTest\AspireApp.WebTest.csproj --filter "FullyQualifiedName~SignedInUserCanSaveRenameResumeAndDeleteConversation"
+```
+
+Test should pass in ~107 seconds (depending on Aspire startup time).
+
+## Documentation Location
+
+This should be added to:
+- `README.md` — Prerequisites section
+- `docs/development-setup.md` — If such a file exists
+- CI/CD documentation — Already handled by pipeline scripts
+
+## Related
+
+- Playwright documentation: https://playwright.dev/dotnet/docs/browsers
+- GitHub Actions setup: Uses `mcr.microsoft.com/playwright/dotnet` Docker image with browsers pre-installed
+
+
+
+# P2-C Embedding Population Finish
+
+**Date:** 2026-04-18  
+**Owner:** Jarvis  
+**Status:** Implemented
+
+## Context
+Embedding population during ingestion needed a real-path regression proof, and per-item embedding calls were adding unnecessary overhead.
+
+## Decision
+Batch page and claim embeddings with `EmbeddingService.embed_batch` inside `process_document_task`, then persist them with `Neo4jService.populate_page_embedding` and `Neo4jService.populate_claim_embedding`. Add regression coverage that exercises the real processing flow with faked collaborators to prove batch calls and persistence.
+
+## Implementation
+- `src/AspireApp.PythonServices/app/routers/processing.py`
+- `src/AspireApp.PythonServices/tests/test_processing_pipeline_regression.py`
+
+## Validation
+- `python -m pytest -q tests/test_processing_pipeline_regression.py tests/test_embedding_population_pipeline.py`
+
+
+
+# P2-C Vector Index Infrastructure — Foundation Complete
+
+**Date:** 2026-04-17  
+**Author:** Jarvis  
+**Status:** ✅ Implemented  
+**Phase:** P2-C (Knowledge Layer — Vector Search Readiness)
+
+## Context
+
+P2-C gate requires Neo4j vector indexes to be queryable for semantic search. Current text-based search (`CONTAINS` matching) is limited in retrieval quality. Vector similarity search will enable semantic matching and improve relevance ranking.
+
+Jeff has already configured Aspire to pass embedding configuration via environment variables (`OLLAMA_ENDPOINT`, `EMBEDDING_MODEL`, `EMBEDDING_DIM`). The next step is to create the vector indexes and search infrastructure in Python.
+
+## Decision
+
+Implement vector index infrastructure in three parts:
+
+1. **Vector index creation** — Idempotent index creation in `Neo4jService._ensure_vector_indexes()`
+2. **Vector search methods** — `search_claims_vector()` and `search_pages_vector()` using Neo4j 5.x vector similarity syntax
+3. **Embedding service** — `EmbeddingService` with sentence-transformers support and graceful degradation
+
+## Implementation
+
+### Vector Indexes Created
+
+- **`page_content_vector`**: Index on `Page.content_embedding` (384 dimensions, cosine similarity)
+- **`claim_text_vector`**: Index on `Claim.text_embedding` (384 dimensions, cosine similarity)
+
+Both indexes created with `IF NOT EXISTS` for idempotency. Runs on every Neo4j service initialization.
+
+### Vector Search Methods
+
+```python
+def search_claims_vector(
+    self, 
+    query_embedding: List[float], 
+    limit: int = 10,
+    similarity_threshold: float = 0.7
+) -> List[Dict[str, Any]]:
+    """Vector-based semantic search over Claim nodes."""
+    # Uses db.index.vector.queryNodes('claim_text_vector', ...)
+    
+def search_pages_vector(
+    self, 
+    query_embedding: List[float], 
+    limit: int = 10,
+    similarity_threshold: float = 0.7
+) -> List[Dict[str, Any]]:
+    """Vector-based semantic search over Page nodes."""
+    # Uses db.index.vector.queryNodes('page_content_vector', ...)
+```
+
+Both methods return standard result shape matching text-based search for easy integration into `SemanticKnowledgeRetriever`.
+
+### Embedding Service
+
+`EmbeddingService` provides:
+- Lazy-loaded sentence-transformers model
+- Batch encoding support
+- Graceful degradation when model unavailable
+- Configurable via `EMBEDDING_MODEL` and `EMBEDDING_DIMENSION` env vars
+
+## Rationale
+
+**Why sentence-transformers as default?**
+- Proven, lightweight, easy to install (`pip install sentence-transformers`)
+- all-MiniLM-L6-v2 model: 384 dimensions, good quality/speed tradeoff
+- Can switch to Ollama embeddings later without changing search infrastructure
+
+**Why create indexes at service startup?**
+- Simplifies deployment (no separate migration scripts)
+- Idempotent with `IF NOT EXISTS` — safe to run repeatedly
+- Fails gracefully if Neo4j version doesn't support vector indexes
+
+**Why separate vector search methods from text search?**
+- Different query patterns (vector similarity vs. text CONTAINS)
+- Different tuning parameters (similarity threshold vs. keyword matching)
+- Easier to benchmark and A/B test retrieval quality
+- Can use both in fallback chain: vector-first → text-fallback
+
+**Why 0.7 similarity threshold?**
+- Conservative default; filters low-quality matches
+- Tunable per-query for different use cases
+- Prevents semantic drift (returning unrelated content with low similarity)
+
+## Consequences
+
+**Positive:**
+- ✅ Vector search infrastructure ready for use
+- ✅ No blocking dependencies — can populate embeddings in parallel with Phase 3 agent work
+- ✅ Test coverage proves correctness without requiring live embeddings
+- ✅ Foundation supports both sentence-transformers and Ollama embeddings
+
+**Neutral:**
+- Vector indexes consume Neo4j storage (minimal until embeddings populated)
+- Embedding model adds ~90MB to Python container size (sentence-transformers)
+
+**Remaining work:**
+- Populate `content_embedding` and `text_embedding` during ingestion
+- Wire vector search into `SemanticKnowledgeRetriever`
+- Consider switching to Ollama embeddings if Jeff configures it
+
+## Alternatives Considered
+
+**1. Use full-text indexes instead of vector indexes**
+- Rejected: Full-text matching is keyword-based, not semantic
+- Vector similarity captures meaning, not just word overlap
+
+**2. Defer vector infrastructure to Phase 3**
+- Rejected: P2-C gate explicitly requires vector indexes queryable
+- Foundation work enables parallel development of agent framework
+
+**3. Require Ollama embeddings from day one**
+- Rejected: Creates deployment dependency; harder to test locally
+- sentence-transformers works standalone; Ollama integration can follow
+
+**4. Use dedicated vector DB (Qdrant, Pinecone)**
+- Deferred: Neo4j 5.x vector indexes sufficient for MVP
+- Can swap implementation behind `IKnowledgeRetriever` if performance degrades
+
+## Testing
+
+All infrastructure validated with `test_vector_infrastructure.py` (8/8 tests passing):
+- Vector index creation (idempotent, both Page and Claim indexes)
+- Vector search methods (correct query structure, parameter passing)
+- Embedding service (model loading, batch encoding, graceful degradation)
+
+No live Neo4j or embeddings required for test suite.
+
+## Files Modified
+
+- `src/AspireApp.PythonServices/app/services/neo4j_service.py` — vector index creation, search methods
+- `src/AspireApp.PythonServices/app/services/embedding_service.py` — new file, embedding generation
+- `src/AspireApp.PythonServices/tests/test_vector_infrastructure.py` — new file, 8 tests
+- `roadmap/Tasks.md` — P2-C status updated to "Infrastructure Complete"
+- `.squad/agents/jarvis/history.md` — learning entry added
+
+## Next Steps
+
+1. **Embedding population pipeline** — Generate embeddings during ingestion, store in `Page.content_embedding` and `Claim.text_embedding`
+2. **Wire into SemanticKnowledgeRetriever** — Use vector search first, fall back to text search
+3. **Benchmark retrieval quality** — Compare vector vs. text search on sample queries
+4. **Consider Ollama switch** — If Jeff configures Ollama embedding endpoint, update `EmbeddingService`
+
+## Related
+
+- **P2-B** — Confidence scoring (now complete)
+- **P3-A** — Agent framework selection (next priority)
+- **Skill:** `.squad/skills/neo4j-confidence-enrichment/SKILL.md` — confidence enrichment pattern
+- **Decision:** `.squad/decisions/inbox/jarvis-lightrag-confidence-enrichment.md` — P2-B decision
+
+
+
+# Chat Persistence Test Timing Strategy
+
+**Date:** 2025-01-08  
+**Author:** Jeff (.NET Dev)  
+**Status:** Proposed — awaiting Buster's test strategy decision
+
+## Context
+
+`ChatConversationPersistenceTests.SignedInUserCanSaveRenameResumeAndDeleteConversation` exhibits intermittent failures due to timing mismatch between test expectations and AI response behavior.
+
+## The Issue
+
+- **Test timeout:** 90 seconds waiting for send button to re-enable (`WaitForControlEnabledAsync`)
+- **AI timeout:** 180 seconds (3 minutes) for response completion (`CallBackgroundAI`)
+- **Failure mode:** Test fails at 91s when AI legitimately needs more time
+- **Success case:** Test passes in ~108s when AI responds quickly
+
+## Product Code Status
+
+✅ **Correct** — `IsAIResponsing` management is sound:
+- Set to `true` before AI call (line 594)
+- Reset to `false` in `finally` block (line 1040)
+- Handles all exception paths properly
+- All required `data-testid` hooks present and validated
+
+## Recommendations for Buster (QA Lead)
+
+Choose one strategy:
+
+### Option A: Align Test Timeout with Product Behavior
+```csharp
+private static async Task WaitForControlEnabledAsync(ILocator locator, string description)
+{
+    var timeoutAt = DateTime.UtcNow.AddSeconds(210); // Was 90, now 210 (3.5min)
+    // ... rest unchanged
+}
+```
+**Pros:** Tests real production timing  
+**Cons:** Slow test runs; still fails if AI takes 4+ minutes
+
+### Option B: Mock AI Responses in Test Scenarios
+Add test-mode AI mock that returns instantly:
+```csharp
+// In test setup
+services.Configure<HomeConfigurations>(opts => 
+{
+    opts.AIEndpoint = "http://mock-ollama";
+});
+services.AddSingleton<BrainChatClient>(sp => new MockBrainChatClient());
+```
+**Pros:** Fast, deterministic tests  
+**Cons:** Doesn't validate real AI integration timing
+
+### Option C: Separate Integration vs. E2E Tests
+- **Unit/Integration:** Mock AI, fast validation of conversation CRUD
+- **E2E (nightly only):** Real AI with generous timeouts
+**Pros:** Best of both worlds  
+**Cons:** More test infrastructure
+
+## Jeff's Position
+
+Product code is correct. Test strategy is Buster's domain. I'm available to add test hooks or timing configuration if needed, but the fix belongs in test infrastructure, not in `Chat.razor.cs`.
+
+## Files
+- `src/AspireApp.WebTest/Tests/ChatConversationPersistenceTests.cs` — test timing
+- `src/AspireApp.Web/Components/Pages/Chat.razor.cs` — product behavior (validated correct)
+
+## Next Steps
+
+1. Buster reviews timing strategy options
+2. If Option B or C chosen, Jeff can add mock infrastructure
+3. Update test suite accordingly
+
+
+
+---
+date: 2026-04-17
+author: Jeff
+status: Implemented
+scope: AppHost orchestration, Python service configuration
+---
+
+# Decision: P2-C Embedding Configuration via Aspire Environment Variables
+
+## Context
+
+Phase 2, Gate C (P2-C) requires Neo4j vector indexes on `Page.content` and `Claim.text` properties. This depends on:
+1. Python services being able to generate embeddings via Ollama
+2. Embedding model configuration reaching the Python container runtime
+3. Startup ordering ensuring Ollama + embedding model are ready before Python services
+
+The embedding model was already defined in AppHost configuration (`AI-Embedding-Model: bge-m3:latest`) and loaded into Ollama, but Python services had no access to this config.
+
+## Decision
+
+Wire embedding infrastructure to Python services via three new Aspire environment variables:
+- `OLLAMA_ENDPOINT` — Dynamic Ollama HTTP endpoint from service discovery
+- `EMBEDDING_MODEL` — Model name from `AI-Embedding-Model` parameter (e.g., `bge-m3:latest`)
+- `EMBEDDING_DIM` — Fixed embedding dimension for the model (1024 for bge-m3)
+
+Add startup dependencies:
+- Python service waits for Ollama container (`WaitFor(ollama)`)
+- Python service waits for embedding model load (`WaitFor(embeddingmodel)`)
+
+## Rationale
+
+1. **Consistency with existing patterns:** LightRAG container already receives similar config (`EMBEDDING_BINDING_HOST`, `EMBEDDING_MODEL`, `EMBEDDING_DIM`). Python services follow the same shape.
+
+2. **Dynamic endpoint resolution:** Using `ollama.GetEndpoint("http")` instead of hardcoded URLs ensures service discovery works across environments (dev, staging, Docker networks).
+
+3. **Aspire-first orchestration:** Startup dependencies guarantee embedding model availability before Python worker starts processing documents—prevents runtime failures during cold starts.
+
+4. **Configuration surface minimalism:** Only three variables added; embedding dimension is static since it's model-intrinsic and rarely changes.
+
+5. **Unblocks Jarvis cleanly:** Python implementation now has all required environment context to build embedding service wrapper and populate vector indexes without further AppHost changes.
+
+## Alternatives Considered
+
+1. **Python reads config from shared file:** Rejected—breaks Aspire service discovery patterns and creates hidden dependencies.
+
+2. **Python calls back to C# Gateway for config:** Rejected—adds HTTP round-trip during startup; violates separation of concerns.
+
+3. **Hardcode Ollama endpoint in Python:** Rejected—couples Python to specific network topology; fails in multi-environment deployments.
+
+## Implementation
+
+**File:** `src/AspireApp.AppHost/AppHost.cs`
+
+**Changes:**
+- Lines 145-153: Added environment variables to Python service registration
+- Lines 153-154: Added `.WaitFor(ollama)` and `.WaitFor(embeddingmodel)` dependencies
+
+**Roadmap Update:**
+- `roadmap/Tasks.md` line 170-173: Marked AppHost config complete, ownership transferred to Jarvis for vector index implementation
+
+## Validation
+
+- ✅ Build succeeds: `dotnet build`
+- ✅ AppHost starts without errors
+- ✅ Python service receives all three environment variables (verify via Aspire dashboard)
+- ✅ Embedding model loads before Python startup (verify startup sequence in dashboard logs)
+
+## Next Steps
+
+1. **Jarvis:** Implement `EmbeddingService` wrapper in Python (`app/services/embedding_service.py`)
+2. **Jarvis:** Create Neo4j vector index schema (Cypher `CREATE VECTOR INDEX` syntax)
+3. **Jarvis:** Wire embedding service into document ingestion pipeline to populate indexes on Page/Claim creation
+4. **Buster:** Add integration test validating embedding service can reach Ollama and generate vectors
+
+## Impact
+
+- Python services: New environment variables available; no code changes yet
+- Neo4j: No changes; vector index creation deferred to Python implementation
+- LightRAG: No changes; already has own embedding config
+- Web/Gateway: No changes; vector search queries deferred to Phase 3
+
+## Cross-References
+
+- **History:** `.squad/agents/jeff/history.md` (2026-04-17 entry)
+- **Roadmap:** `roadmap/Tasks.md` lines 167-178 (P2-C gate)
+- **Related Config:** `AppHost.cs` lines 186-193 (LightRAG embedding config)
+- **Related Pattern:** `aspire-orchestration.instructions.md` — environment variable best practices
+
+
+
+# Decision: P2-C Embedding Population Phase — Active Work Begins
+
+**Date:** 2026-04-17T23:55:00Z  
+**Recorded by:** Scribe (Copilot)  
+**Topic:** P2-C Phase Transition from Infrastructure to Active Implementation  
+**Status:** RECORDED (for merge into `.squad/decisions.md`)  
+
+## Decision
+
+The team transitions from **P2-C vector foundation waiting** (Ollama infrastructure setup) into **active P2-C work: embedding population during document ingestion** for Page and Claim nodes.
+
+### Scope (Specific)
+- **What:** Generate and store embeddings for Page and Claim nodes during ingest pipeline
+- **When:** Parallel with Phase 3 agent framework selection (no blocking dependencies)
+- **Who:** Jarvis (Python embedding implementation), supported by Bob (architecture review), Jeff (UI preparation)
+
+### What This Means
+- Ollama embedding service is now operational (infrastructure ready)
+- **P2-C is not deferred** — it is actively proceeding into the next honest step
+- Embedding vectors stored in Neo4j enable retrieval patterns for Phase 3 agents
+- Vector index creation (current P2-C work) unblocks Phase 3 retrieval and chat flows
+
+### Out of Scope (Explicitly)
+- Contradiction detection (P2-C secondary goal) — deferred to Phase 3 Critic Agent
+- Vector similarity search endpoint (P3-A dependency; Jeff handles after embeddings populated)
+- Multi-model embedding selection — hardcoded to single Ollama model per configuration
+
+## Rationale
+
+1. **Previous gate completion (P2-B)** unblocks this work; no external blockers remain
+2. **Infrastructure readiness** (Ollama running) validates this is the next honest step
+3. **Phase 3 parallel execution** enabled: Embedding generation does not depend on agent framework selection
+4. **Critical path clarity** ensures team focus on highest-value sequential work, not speculative features
+
+## Implementation Notes
+
+- **Ingest flow modification:** `app.routers.ingest_document` → call Ollama embedding service → store in Neo4j
+- **Validation:** Embeddings queryable via vector similarity search (test harness; not UI-facing yet)
+- **Performance monitoring:** Track bulk ingest time; if embedding adds >10s per doc, consider async queuing
+- **Schema consistency:** Coordinate embedding dimension/format between Python code and Neo4j storage
+
+## What This Unblocks
+
+- ✅ Vector search foundation for retrieval patterns (Phase 3-A dependency)
+- ✅ Jeff can design embedding-aware Blazor chat UI components
+- ✅ Jarvis can proceed without waiting for agent framework decision
+- ✅ Bob can focus on framework selection without coordination overhead
+
+## Cross-Team Handoff
+
+| Role | Responsibility |
+|------|---|
+| **Jarvis** | Implement embedding generation + Neo4j storage during ingest |
+| **Jeff** | Design Blazor chat UI for embedding-aware retrieval results |
+| **Bob** | Verify embedding schema; finalize agent framework selection by 2026-04-24 |
+
+## Risk Assessment
+
+| Risk | Likelihood | Mitigation |
+|------|-----------|-----------|
+| Ollama latency during bulk ingest | Medium | Monitor; batch requests; consider async if >10s per doc |
+| Vector dimension mismatch (multiple models) | Low | Hardcode model name; validate at store time |
+| Neo4j vector search performance (1000+ embeddings) | Medium | Add vector index; profile queries early |
+| Embedding storage bloats Neo4j | Low | Monitor disk; consider separate vector store if >GB |
+
+## Related Decisions
+
+- **P2-B Completion** (2026-04-17): LightRagRetriever confidence enrichment verified
+- **Phase 3 Framework Selection** (pending 2026-04-24): LangGraph candidate recommended
+- **P2-C Vector Foundation** (2026-04-17): Embedding infrastructure identified as blocker, now resolved
+
+## Decision Timeline
+
+- **2026-04-17T23:55:00Z:** P2-C embedding population phase recorded
+- **2026-04-18 (est):** Jarvis begins embedding generation implementation
+- **2026-04-24 (deadline):** Agent framework selection decision finalized
+- **2026-04-25+:** P3-A `/brain/chat` endpoint ready with embedded retrieval
+
+## Files Updated
+
+- `.squad/log/2026-04-17T23-55-00Z-p2c-embedding-population-phase.md` ✅
+- `.squad/identity/now.md` ✅
+- `.squad/decisions/inbox/scribe-p2c-embedding-phase.md` (this file)
+

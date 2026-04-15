@@ -1516,3 +1516,68 @@ High — Three independent test failures all exhibit the same LightRAG stuck-in-
 - Async dispatch patterns require test-time understanding of fire-and-forget semantics, not just implementation details
 - FastAPI event loop can be easily starved by sync-heavy background tasks; always move heavy work to thread pool
 - Transient timeouts during service startup should be retryable, not fatal
+
+### 2026-04-15 — ChatConversationPersistenceTests Pass After Playwright Installation
+
+**Task:** Diagnose reported failure in `ChatConversationPersistenceTests.SignedInUserCanSaveRenameResumeAndDeleteConversation`.
+
+**Root Cause:** Missing Playwright browser binaries — not a test logic or UI regression.
+
+**What Happened:**
+- Test crashed with `Microsoft.Playwright.PlaywrightException : Driver not found`
+- Missing file: `C:\Users\ericv\source\repos\eric-vanartsdalen\AspireAI\src\AspireApp.WebTest\bin\.playwright\node\win32_x64\node.exe`
+- This is a **local environment issue**, not a code defect
+
+**Resolution:**
+1. Installed Playwright CLI: `dotnet tool update --global Microsoft.Playwright.CLI`
+2. Installed Chromium browser: `playwright install chromium`
+3. Test now passes in 107 seconds (chat conversation save, rename, resume, delete workflow validated)
+
+**Key Learning:**
+- Playwright browser binaries are **not** committed to the repository
+- After a fresh clone or environment change, must run `playwright install chromium` before running Playwright tests
+- This is standard Playwright behavior — not an AspireAI-specific issue
+
+**Test Validation:**
+- ✅ User signs in via mock authentication
+- ✅ Chat prompt sent and conversation auto-titled
+- ✅ Conversation renamed successfully
+- ✅ New conversation started (isolation verified)
+- ✅ Original conversation resumed with correct history
+- ✅ Follow-up message appended to correct conversation
+- ✅ Conversation deleted from sidebar
+
+**No Code Changes Required:**
+- Test logic is correct
+- Recent chat UI changes (mode selector, evidence display) did NOT break this test
+- Auth session establishment works correctly
+- Conversation persistence behavior is correct
+
+**Related Context:**
+- User context mentioned recent chat UI changes and prior auth UX regressions
+- This failure was purely environmental (missing browser binaries), not related to recent code changes
+- Prior learnings about hard navigation after sign-in and mock sign-in helpers remain valid but were not the issue here
+
+**Key File Paths:**
+- `src\AspireApp.WebTest\Tests\ChatConversationPersistenceTests.cs`
+- `src\AspireApp.WebTest\Fixtures\TestFixture.cs`
+
+
+
+## 2026-04-15T17-41-59 — Chat Persistence Test Investigation & Orchestration Merge (Scribe collaboration)
+
+**Role:** QA investigator (ChatConversationPersistenceTests diagnosis)
+**Outcome:** No product defect; environmental + timing issues identified
+**Output:** 
+- Diagnosed missing Playwright Chromium as test blocker
+- Test scenario passed after local browser install  
+- Collaborated with Jeff on timing race analysis (90s vs 180s AI timeout)
+- Determined issue is test infrastructure, not product code
+- Contributed to merged decision log
+
+**Learning:** Intermittent test failures often have environmental prerequisites; Playwright browser setup must be documented in dev prerequisites.
+
+**Files:** 
+- .squad/orchestration-log/2026-04-15T17-41-59-buster.md (session log)
+- .squad/decisions/inbox/buster-*.md → merged to decisions.md
+
