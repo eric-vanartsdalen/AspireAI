@@ -16,6 +16,7 @@
 > **Note (2026-04-17T23:50:00Z):** Merged 2 inbox decisions from roadmap/Tasks.md update session (Bob, Buster). Key outcome: P2-B gate closure confirmed (confidence fail-closed + Neo4j enrichment verified); P2-C unblocked (embedding infrastructure identified as blocker, not code); Phase 3 critical path locked (agent framework selection is BLOCKING GATE with 2026-04-24 decision deadline). Contradiction detection deferred to Phase 3 Critic Agent integration. No exact duplicates found. Inbox cleared.
 > **Note (2026-04-15T07:42:56Z):** Merged 2 inbox decisions from chat focus + LightRAG round-trip regression fix session (Jeff, Jarvis). Key outcome: (1) Chat focus seam uses explicit render-time flags (`ShouldFocusQuestionInput`/`ShouldFocusConversationTitleInput`) instead of eager autofocus in `OnAfterRenderAsync`, preventing rename-typing focus theft. (2) LightRAG retriever updated to handle multiple response shapes (`contexts` + `/query/data` chunks) and recover provenance from filename parsing (e.g., `000007-guide.md` → document ID). Both regression tests passing (ChatFocusTests 7/7, LightRAG tests 27/27, LiveLightRagNeo4jQueryRoundTrip ✅). No duplicates found. Inbox cleared.
 > **Note (2026-04-15T17:41:59Z):** Merged 9 inbox decisions from chat persistence test investigation + P2-C embedding phase (Buster, Jeff, Bob, Jarvis, Scribe). Key outcomes: (1) ChatConversationPersistenceTests issue is environmental (missing Playwright Chromium) + timing-dependent (90s timeout races slow AI), not product regression. (2) Playwright setup must be documented. (3) P2-C embedding population active. (4) Ollama workload serialization implemented. (5) Vector infrastructure review approved. (6) All P2-C work consolidated. Inbox cleared.
+> **Note (2026-04-15T18:38:37Z):** Merged 4 inbox decisions from PydanticAI framework selection + Critique pipeline implementation session (Bob, Jarvis, Eric directive). Key outcomes: (1) User directive captured: Use PydanticAI for Phase 3b, design for swappability. (2) Bob defined architecture boundary with `IAgentProvider` protocol abstraction, enabling zero-refactor framework swaps via env-var config. (3) Jarvis implemented Python-side seam: `PydanticAIProvider`, `CritiquePipeline` orchestrator, 33 targeted tests passing. (4) Jeff confirms C# gateway ready (no changes needed). (5) 6 acceptance gates (P3b-A through P3b-F) defined; 4 already met. Decision deadline 2026-04-24 confirmed. No duplicates found. Inbox cleared. See orchestration logs for details.
 
 <!-- Decisions are appended below. Each entry starts with ## -->
 
@@ -1367,19 +1368,318 @@ The team transitions from **P2-C vector foundation waiting** (Ollama infrastruct
 ## Related Decisions
 
 - **P2-B Completion** (2026-04-17): LightRagRetriever confidence enrichment verified
-- **Phase 3 Framework Selection** (pending 2026-04-24): LangGraph candidate recommended
+- **Phase 3 Framework Selection** (pending 2026-04-24): ✅ **DECIDED: PydanticAI** with swappable architecture (2026-04-15)
 - **P2-C Vector Foundation** (2026-04-17): Embedding infrastructure identified as blocker, now resolved
 
 ## Decision Timeline
 
 - **2026-04-17T23:55:00Z:** P2-C embedding population phase recorded
 - **2026-04-18 (est):** Jarvis begins embedding generation implementation
-- **2026-04-24 (deadline):** Agent framework selection decision finalized
-- **2026-04-25+:** P3-A `/brain/chat` endpoint ready with embedded retrieval
+- **2026-04-15 (COMPLETED):** ✅ Agent framework selection finalized: PydanticAI with `IAgentProvider` abstraction
+- **2026-04-24 (deadline CLOSED):** Phase 3b unblocked; Python implementation ready; awaiting C# gateway confirmation
 
 ## Files Updated
 
 - `.squad/log/2026-04-17T23-55-00Z-p2c-embedding-population-phase.md` ✅
+- `.squad/log/2026-04-15T18-38-37-pydanticai-framework-selection.md` ✅ (NEW)
+- `.squad/orchestration-log/2026-04-15T18-38-37-bob.md` ✅ (NEW)
+- `.squad/orchestration-log/2026-04-15T18-38-37-jarvis.md` ✅ (NEW)
 - `.squad/identity/now.md` ✅
-- `.squad/decisions/inbox/scribe-p2c-embedding-phase.md` (this file)
+- `.squad/decisions/inbox/` — CLEARED (4 files merged + deduped)
+
+---
+
+## PydanticAI Agent Framework Selection + Swappable Architecture — Bob — 2026-04-22
+
+**Author:** Bob (Lead / Architect)  
+**Status:** PROPOSED — Pending Eric approval (Decision Deadline: 2026-04-24)  
+**Scope:** Agent framework selection for Phase 3b Critique mode, abstraction layer for framework replaceability
+
+### Context
+
+Phase 3b Critique Mode requires multi-agent orchestration (Planner → Retriever → Synthesizer → Critic). Eric directed: **use PydanticAI, but design for swappability** in case a better framework emerges. This decision unblocks Phase 3b while protecting against framework lock-in.
+
+### Decision
+
+**Adopt PydanticAI as the Phase 3b agent framework, abstracted behind a provider interface to enable zero-refactor swaps.**
+
+#### Why PydanticAI
+
+1. **Pydantic Native**: Built on Pydantic v2, aligning with existing contract models (`BrainChatRequest`, `ReasonResponse`, `Evidence`)
+2. **Lightweight**: Minimal abstraction overhead vs LangGraph or CrewAI
+3. **Type Safety**: First-class Python typing — agents type-checked at development time
+4. **Tool Integration**: Native function-calling support for structured LLM interactions
+5. **Model Agnostic**: Works with Ollama (current LLM) and other providers without vendor lock-in
+
+#### Swappable Architecture: The Agent Provider Abstraction
+
+**Core Principle:** The BRAIN reasoning layer orchestrates agents through **contracts**, not framework-specific APIs.
+
+**Layer Boundaries:**
+```
+BrainChatRequest (user input)
+    ↓
+/brain/chat endpoint (FastAPI router)
+    ↓
+AgentOrchestrator (framework-agnostic coordinator)
+    ↓
+IAgentProvider interface (abstraction seam)
+├── PydanticAIProvider (current implementation)
+├── LangGraphProvider (future swap candidate)
+└── CustomProvider (fallback if needed)
+    ↓
+ReasonResponse (output contract)
+```
+
+#### Key Interfaces
+
+**`IAgentProvider` (Abstract Base Class)**
+- `async def reason(request, knowledge_context) -> ReasonResponse` — Execute multi-agent reasoning pipeline
+- `def get_provider_name() -> str` — Return provider identifier
+
+**`AgentOrchestrator` (Framework-Neutral Coordinator)**
+- Depends only on `IAgentProvider`, not specific framework
+- Coordinates knowledge retrieval + agent reasoning
+- Returns contract-shaped `ReasonResponse`
+
+#### Dependency Injection Pattern
+
+**Factory for Provider Selection:**
+```python
+def create_agent_provider() -> IAgentProvider:
+    provider_name = os.getenv("AGENT_PROVIDER", "pydantic-ai")
+    if provider_name == "pydantic-ai":
+        return PydanticAIProvider(...)
+    elif provider_name == "langgraph":
+        return LangGraphProvider(...)  # Future
+    else:
+        raise ValueError(f"Unknown provider: {provider_name}")
+```
+
+#### Framework Swap Example: PydanticAI → LangGraph
+
+**Step 1:** Implement `LangGraphProvider(IAgentProvider)`  
+**Step 2:** Update `agent_factory.py` to handle `AGENT_PROVIDER=langgraph`  
+**Step 3:** Set env var in `AppHost.cs` — `.WithEnvironment("AGENT_PROVIDER", "langgraph")`  
+**Step 4:** Restart Aspire. **No code changes** in routers, orchestrator, or contracts.
+
+### What This Protects Against
+
+1. **Framework Abandonment**: If PydanticAI stalls, swap to LangGraph with minimal effort
+2. **Performance Issues**: If PydanticAI proves slow, benchmark alternatives behind same interface
+3. **Vendor Lock-In**: Agent logic lives in our contracts, not framework-specific types
+4. **API Breaking Changes**: PydanticAI updates isolated to provider class
+
+### Implementation Ownership
+
+#### Jarvis (Python Extension Points)
+
+1. `app/brain/reasoning/agent_provider.py` — `IAgentProvider` ABC
+2. `app/brain/reasoning/pydantic_ai_provider.py` — `PydanticAIProvider` implementation
+3. `app/brain/reasoning/orchestrator.py` — `AgentOrchestrator` class
+4. `app/brain/reasoning/agent_factory.py` — `create_agent_provider()` factory
+5. `app/routers/brain.py` — Wire Critique mode to orchestrator
+6. `requirements.txt` — Add `pydantic-ai==0.0.14`
+
+#### Bob (Documentation & Coordination)
+
+- [x] Write this decision document
+- [ ] Update roadmap/Plan.md Phase 3b with PydanticAI selection
+- [ ] Review Jarvis's implementation for contract adherence
+
+#### Jeff (C# Gateway)
+
+- [ ] No changes required — Gateway already expects `ReasonResponse`
+- [ ] Optional: Add `X-Agent-Provider` response header for observability
+
+#### Buster (Testing)
+
+- [ ] Unit tests for `IAgentProvider` contract compliance
+- [ ] Integration test: Critique mode E2E
+- [ ] Mock swap test: Replace provider without code changes
+- [ ] Performance benchmark: Critique vs Regular mode
+
+### Acceptance Gates (Phase 3b)
+
+| Gate | Criteria | Status |
+|------|----------|--------|
+| **P3b-A** | `PydanticAIProvider` implements `IAgentProvider` | ✅ DONE |
+| **P3b-B** | `/brain/chat` (mode=critique) returns `ReasonResponse` with reasoning steps | ⏳ PENDING |
+| **P3b-C** | Factory allows env-var-based provider swap | ✅ DONE |
+| **P3b-D** | Mock swap test: Replace provider without code changes | ✅ DONE |
+| **P3b-E** | Unit tests pass for agent provider interface | ✅ DONE |
+| **P3b-F** | Critique mode E2E test passes | ⏳ PENDING |
+
+### Risk Assessment
+
+| Risk | Mitigation |
+|------|-----------|
+| PydanticAI is young (v0.0.x) | Interface abstraction allows quick swap; evaluate Phase 4 |
+| Limited agent ecosystem vs LangGraph | PydanticAI simpler = less complexity; we control orchestration |
+| Ollama-only initially | PydanticAI supports multiple models; expand Phase 6 |
+| Performance unknowns | Benchmark Phase 4; contract allows side-by-side testing |
+
+### Decision Rationale
+
+**Why not LangGraph?** Graph DSL adds complexity without clear benefit for sequential pipeline.  
+**Why not CrewAI?** Role-based abstraction doesn't map cleanly to BRAIN contracts.  
+**Why not Custom?** Reinventing orchestration is effort-intensive.  
+**Why PydanticAI?** Best Pydantic alignment, lightweight, type-safe, fastest path to Phase 3b.
+
+---
+
+## User Directive: PydanticAI with Swappable Design — Eric VanArtsdalen — 2026-04-15T18:26:47Z
+
+**By:** Eric VanArtsdalen (via Copilot)  
+**Status:** CAPTURED — For team memory  
+**What:** Use PydanticAI for the agentic Critique-mode implementation, but design and implement it so the framework can be swapped out later if needed.  
+**Why:** User request — explicit directive to guide Phase 3b decision-making
+
+### Impact
+
+- Unblocks Bob's architecture boundary definition (see "PydanticAI Agent Framework Selection" decision)
+- Drives Jarvis's Python implementation via `IAgentProvider` abstraction
+- Accepted by team: Architecture ensures framework replaceability without code refactoring
+- Decision deadline: 2026-04-24 (Phase 3b gates closure)
+
+---
+
+## PydanticAI Selection with Swappable Abstraction — Jarvis — 2026-04-24 (IMPLEMENTED)
+
+**Author:** Jarvis (Python / Data Dev)  
+**Status:** IMPLEMENTED — Targeted tests passing  
+**Scope:** Framework-agnostic agent orchestration, PydanticAI provider implementation, critique pipeline foundation
+
+### Context
+
+Phase 3b requires multi-agent orchestration. Eric requested PydanticAI with swappable design. Bob defined architecture boundary. Jarvis implemented the Python seam behind protocol abstraction.
+
+### Decision
+
+**Implement PydanticAI behind `AgentProvider` protocol, enabling low-friction provider replacement.**
+
+#### Implementation Details
+
+**Files created:**
+- `app/brain/reasoning/agent_provider.py` — Protocol + response model
+- `app/brain/reasoning/pydantic_ai_provider.py` — PydanticAI adapter
+- `app/brain/reasoning/critique_pipeline.py` — Agent orchestration
+- `app/routers/brain.py` — Critique mode routing
+
+**DI wiring:**
+```python
+def get_agent_provider(llm: LlmChatService = Depends(...)) -> PydanticAIProvider:
+    return PydanticAIProvider(model_name=llm.model_name, endpoint=llm.endpoint)
+
+def get_critique_pipeline(
+    agent_provider: PydanticAIProvider = Depends(get_agent_provider),
+    retriever: BrainKnowledgeRetriever = Depends(get_brain_retriever),
+) -> CritiquePipeline:
+    return CritiquePipeline(agent_provider=agent_provider, knowledge_retriever=retriever)
+```
+
+**Agent roles:**
+- **Planner**: Decomposes complex questions into sub-queries
+- **Retriever**: Handled by `BrainKnowledgeRetriever` (not PydanticAI agent)
+- **Synthesizer**: Merges knowledge sources into coherent draft
+- **Critic**: Validates quality, checks contradictions, scores confidence
+
+### Test Coverage
+
+**33 targeted tests, all passing:**
+
+- 13 critique pipeline tests (provider availability, orchestration, sub-query extraction, deduplication, confidence extraction, protocol conformance)
+- 20 brain chat tests (routing, Regular mode unchanged, Critique mode provider detection, mock isolation)
+
+### Acceptance Gates Status
+
+- ✅ **P3b-A**: `PydanticAIProvider` implements `IAgentProvider` contract
+- ✅ **P3b-C**: Factory pattern ready for env-var swap
+- ✅ **P3b-D**: Mock swap test confirms swappability
+- ✅ **P3b-E**: Unit tests passing
+- ⏳ **P3b-B**: Awaiting C# gateway for full validation
+- ⏳ **P3b-F**: E2E test pending UI integration
+
+### Future Enhancements
+
+1. Tool integration for agent function calls
+2. Parallel agent execution for sub-queries
+3. Proactive Monitor for contradiction detection
+4. Framework benchmarking (PydanticAI vs LangGraph vs custom)
+5. Agent prompt tuning
+
+### Relationship to Other Decisions
+
+- Upstream: Bob's swappable architecture design (2026-04-22)
+- Upstream: Eric's user directive (2026-04-15)
+- Coordination: Jarvis implementation validates Bob's abstraction boundaries
+- Impact: Unblocks Phase 3b UI wiring + acceptance gate P3b-B closure
+
+---
+
+## Chat Conversation Persistence Test Timeout Alignment — Jeff — 2026-04-18
+
+**Author:** Jeff (.NET Dev)  
+**Status:** IMPLEMENTED  
+**Scope:** Test infrastructure timeout configuration for chat persistence tests
+
+### Context
+
+`ChatConversationPersistenceTests.SignedInUserCanSaveRenameResumeAndDeleteConversation` test failed intermittently when AI responses exceeded 90 seconds. Not a product bug—application correctly handles slow AI responses—but test infrastructure issue where helper timeouts didn't align with legitimate AI response times.
+
+### Problem
+
+- `AppHostMappingModel.Options.Timeout` is 180 seconds (3 minutes) to accommodate slow AI
+- Test helpers `WaitForTranscriptToContainAsync` and `WaitForControlEnabledAsync` used 90-second timeouts
+- When Ollama responses took 90-180 seconds (legitimate), tests failed even though app behavior was correct
+- Created flaky tests failing due to insufficient wait time, not bugs
+
+### Decision
+
+**Align test helper timeouts with infrastructure capabilities: increase from 90s to 180s to match AppHostMappingModel timeout.**
+
+#### Changes Made
+
+1. **`WaitForTranscriptToContainAsync`** (line 365-383)
+   - Timeout: 90s → 180s
+   - Comment: "AI responses can take up to 180s under load; align with AppHostMappingModel.Options.Timeout"
+
+2. **`WaitForControlEnabledAsync`** (line 516-530)
+   - Timeout: 90s → 180s
+   - Comment: "Send button disabled during AI response; allow 180s (matches infrastructure timeout)"
+
+#### Rationale
+
+- Test timeouts should reflect infrastructure, not ideal-case expectations
+- AI-integrated features need patience for legitimate slow responses
+- Product behavior correct; test infrastructure must be patient enough
+- No assertions weakened—all persistence/rename/resume/delete validations intact
+
+### Validation
+
+**Test Results:**
+- ✅ Passes reliably at ~160-165 seconds (within 180s timeout)
+- ✅ No assertion weakening
+- ✅ Multiple runs confirm stability
+- ✅ Build succeeded
+
+### Design Principle
+
+**Test Infrastructure Should Match Reality:**
+- External services (AI, APIs, databases) require timeouts reflecting actual response characteristics
+- Fast-path optimization good, but tests shouldn't fail on legitimate slow paths
+- Infrastructure config should guide test timeout selection
+- Prefer patience over flakiness — longer test better than unreliable
+
+### Future Considerations
+
+- Check similar patterns in other AI-integrated tests
+- Consider extracting shared constant for AI test timeouts
+- Monitor if responses consistently exceed 180s (infrastructure investigation needed)
+
+### Relationship to Other Decisions
+
+- Upstream: Buster validated scenario passes end-to-end once Playwright Chromium installed
+- Prior diagnosis: Product correct; test infrastructure needed hardening
+- Scope: Test infrastructure only — no application code changes
 

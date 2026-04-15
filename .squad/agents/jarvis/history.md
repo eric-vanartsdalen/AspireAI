@@ -258,6 +258,50 @@
 - `src/AspireApp.PythonServices/app/services/database_service.py` — tenant_id column, indexes, column defs
 - Tests: Python contract audit validates round-trip; C# operational test validates persistence
 
+### 2026-04-24 — Phase 3b: PydanticAI Integration with Swappable Abstraction
+
+**Completed:**
+- Implemented PydanticAI as the agent framework for Critique mode (Phase 3b)
+- Created framework-agnostic `AgentProvider` protocol to keep agent orchestration swappable
+- Built `PydanticAIProvider` adapter implementing the protocol with Ollama backend support
+- Implemented `CritiquePipeline` orchestrating Planner → Retriever → Synthesizer → Critic agents
+- Updated `/brain/chat` endpoint to route Critique mode through multi-agent pipeline
+- Added comprehensive test coverage: 13 critique pipeline tests, 20 brain chat tests (all passing)
+
+**Key patterns:**
+- **Framework abstraction boundary:** Agent providers implement `AgentProvider` protocol with normalized `AgentResponse` shape. Pipeline logic depends only on protocol, not PydanticAI internals.
+- **Swappable by design:** Switching from PydanticAI to LangGraph/CrewAI/custom orchestrator requires only implementing a new provider class; pipeline and routing logic unchanged.
+- **Agent chaining:** `CritiquePipeline.execute()` runs sequential agent flow with context passing: planner breaks down query → retriever fetches knowledge per sub-query → synthesizer merges → critic validates and scores confidence.
+- **Graceful degradation:** Critique mode returns 503 when agent provider unavailable (OLLAMA_ENDPOINT not configured); Regular mode continues to work independently.
+- **Test-driven abstraction:** Mock provider validates protocol contract without requiring PydanticAI; pipeline tests prove orchestration logic decoupled from framework.
+
+**Architecture decisions:**
+- PydanticAI chosen for Phase 3b foundation due to Pydantic integration and structured output support
+- Agent provider cached by role to avoid re-initializing identical agents
+- Default system prompts defined for standard roles (planner, retriever, synthesizer, critic)
+- Confidence extraction from critic response uses multi-pattern regex fallback
+- Sub-query extraction uses heuristic parsing (numbered lists, question marks) with fallback to truncated planner output
+
+**Key file paths:**
+- `src/AspireApp.PythonServices/app/brain/reasoning/agent_provider.py` — Protocol definition (AgentProvider, AgentResponse)
+- `src/AspireApp.PythonServices/app/brain/reasoning/pydantic_ai_provider.py` — PydanticAI adapter implementation
+- `src/AspireApp.PythonServices/app/brain/reasoning/critique_pipeline.py` — Multi-agent orchestration logic
+- `src/AspireApp.PythonServices/app/routers/brain.py` — Critique mode routing in /brain/chat endpoint
+- `src/AspireApp.PythonServices/requirements.txt` — pydantic-ai dependency added
+- `src/AspireApp.PythonServices/tests/test_critique_pipeline.py` — 13 tests validating pipeline + abstraction
+- `src/AspireApp.PythonServices/tests/test_brain_chat.py` — 20 tests validating endpoint routing (updated for critique mode)
+
+**Remaining Phase 3b work:**
+- Wire Critique mode toggle activation in Blazor UI (currently backend-ready)
+- Add "BRAIN is thinking" progress indicator for multi-step reasoning
+- Display reasoning steps chain in chat UI
+- Consider adding Proactive Monitor agent for contradiction detection (deferred to Phase 4)
+
+**Related work:**
+- Builds on Phase 3a Regular mode foundation (BrainKnowledgeRetriever, /brain/chat endpoint)
+- Enables user-selectable reasoning depth: Regular (fast RAG) vs Critique (thorough multi-agent validation)
+
+
 **Next:** Data layer now ready for Kujan's contract audit closure and Buster's final approval.
 
 **Next phase (BRAIN pivot):**

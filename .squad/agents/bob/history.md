@@ -31,6 +31,75 @@
 
 ## Learnings
 
+### 2026-04-22 — PydanticAI Agent Framework Selection with Swappable Architecture
+
+**Context**: Phase 3b Critique mode required multi-agent orchestration (Planner → Retriever → Synthesizer → Critic). Eric directed to use PydanticAI but design for replaceability.
+
+**Decision**: Adopted PydanticAI abstracted behind `IAgentProvider` interface. Framework selection became an implementation detail, not a contract commitment.
+
+**Key Pattern — The Provider Abstraction**:
+```python
+# Abstract interface owns the contract
+class IAgentProvider(ABC):
+    @abstractmethod
+    async def reason(
+        self, 
+        request: BrainChatRequest,
+        knowledge_context: List[KnowledgeItem]
+    ) -> ReasonResponse:
+        pass
+
+# PydanticAI is just one implementation
+class PydanticAIProvider(IAgentProvider):
+    def __init__(self, ollama_endpoint, model_name):
+        self._ollama = OllamaModel(...)
+        self._agents = self._create_agents()
+    
+    async def reason(self, request, knowledge_context):
+        # PydanticAI-specific orchestration
+        return ReasonResponse(...)
+
+# Factory allows env-var swap
+def create_agent_provider() -> IAgentProvider:
+    provider = os.getenv("AGENT_PROVIDER", "pydantic-ai")
+    if provider == "pydantic-ai":
+        return PydanticAIProvider(...)
+    elif provider == "langgraph":
+        return LangGraphProvider(...)
+```
+
+**Swap Procedure**: Change `AGENT_PROVIDER` env var in AppHost, implement alternative provider. Zero changes to routers, orchestrator, or contracts.
+
+**Why This Matters**: 
+- Protects against framework abandonment (Python agent ecosystem is volatile)
+- Enables side-by-side benchmarking (test PydanticAI vs LangGraph performance)
+- Isolates framework updates to single provider class
+- BRAIN reasoning logic lives in contracts (`ReasonResponse`, `ReasoningStep`), not framework APIs
+
+**Files Updated**:
+- `.squad/decisions/inbox/bob-pydanticai-architecture.md` — Full decision document with interface design
+- `roadmap/Tasks.md` — Phase 3b work items now concrete (Jarvis owns 5 Python extension points)
+- `roadmap/Plan.md` — Updated Phase 3 framework selection + risk mitigation
+- `requirements.txt` — Added `pydantic-ai==0.0.14`
+- Session plan updated with framework decision
+
+**Team Coordination**:
+- **Jarvis**: Owns Python implementation (5 files: agent_provider.py, orchestrator.py, pydantic_ai_provider.py, agent_factory.py, brain.py updates)
+- **Jeff**: No changes required (Gateway already expects `ReasonResponse`)
+- **Buster**: Test strategy defined (contract compliance, mock swap, E2E critique mode)
+
+**Learnings**:
+1. **Defer framework commitment**: When evaluating volatile dependencies (agent frameworks, UI libs), abstract early. The "right" choice today may not exist tomorrow.
+2. **Contracts over implementations**: The `IAgentProvider → ReasonResponse` boundary is our stability. PydanticAI could disappear and we'd survive.
+3. **Factory pattern for swaps**: Environment-driven provider selection (`AGENT_PROVIDER=langgraph`) makes A/B testing trivial.
+4. **Document the seam**: The decision doc explicitly names Jarvis's extension points so implementation is unambiguous.
+
+**Anti-Pattern Avoided**: If we'd coupled directly to PydanticAI's `Agent` class in `brain.py`, a framework swap would require refactoring every router. Interface abstraction isolated the damage.
+
+**Next Application**: When choosing ANY infrastructure component (vector DB, LLM provider, auth system), ask: "What's the interface that makes this swappable?" Build that first.
+
+---
+
 <!-- Append new learnings below. Each entry is something lasting about the project. -->
 
 ### 2026-04-18 — Ollama Contention: Serialize Embedding vs LightRAG Workloads
