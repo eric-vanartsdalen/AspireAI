@@ -13,23 +13,7 @@ builder.Services.AddProblemDetails();
 builder.Services.AddOpenApi();
 
 #pragma warning disable EXTEXP0001
-builder.Services.AddHttpClient<IBrainBackendClient, PythonBrainBackendClient>((serviceProvider, client) =>
-    {
-        var configuration = serviceProvider.GetRequiredService<IConfiguration>();
-        var configuredBaseAddress = configuration["PYTHON_SERVICE_URL"];
-        client.BaseAddress = new Uri(
-            string.IsNullOrWhiteSpace(configuredBaseAddress)
-                ? "http://localhost:8000/"
-                : EnsureTrailingSlash(configuredBaseAddress));
-        client.Timeout = TimeSpan.FromMinutes(2);
-    })
-    .RemoveAllResilienceHandlers()
-    .AddStandardResilienceHandler(options =>
-    {
-        options.TotalRequestTimeout.Timeout = TimeSpan.FromMinutes(3);
-        options.AttemptTimeout.Timeout = TimeSpan.FromSeconds(90);
-        options.CircuitBreaker.SamplingDuration = TimeSpan.FromMinutes(3);
-    });
+builder.Services.AddBrainBackendClient(builder.Configuration);
 #pragma warning restore EXTEXP0001
 
 var app = builder.Build();
@@ -82,7 +66,8 @@ brain.MapPost("/chat", async Task<IResult> (
     .Produces<ReasonResponse>(StatusCodes.Status200OK)
     .ProducesValidationProblem()
     .ProducesProblem(StatusCodes.Status501NotImplemented)
-    .ProducesProblem(StatusCodes.Status502BadGateway);
+    .ProducesProblem(StatusCodes.Status502BadGateway)
+    .ProducesProblem(StatusCodes.Status503ServiceUnavailable);
 
 brain.MapPost("/ingest", async Task<IResult> (
         BrainIngestRequest request,
@@ -114,7 +99,8 @@ brain.MapPost("/ingest", async Task<IResult> (
     .ProducesValidationProblem()
     .ProducesProblem(StatusCodes.Status404NotFound)
     .ProducesProblem(StatusCodes.Status409Conflict)
-    .ProducesProblem(StatusCodes.Status502BadGateway);
+    .ProducesProblem(StatusCodes.Status502BadGateway)
+    .ProducesProblem(StatusCodes.Status503ServiceUnavailable);
 
 brain.MapPost("/query", async Task<IResult> (
         BrainQueryRequest request,
@@ -152,7 +138,8 @@ brain.MapPost("/query", async Task<IResult> (
     .Accepts<BrainQueryRequest>("application/json")
     .Produces<KnowledgeResult>(StatusCodes.Status200OK)
     .ProducesValidationProblem()
-    .ProducesProblem(StatusCodes.Status502BadGateway);
+    .ProducesProblem(StatusCodes.Status502BadGateway)
+    .ProducesProblem(StatusCodes.Status503ServiceUnavailable);
 
 brain.MapGet("/health", () => TypedResults.Ok(new BrainHealthResponse(
         Status: "ok",
@@ -164,9 +151,6 @@ brain.MapGet("/health", () => TypedResults.Ok(new BrainHealthResponse(
 app.MapDefaultEndpoints();
 
 await app.RunAsync();
-
-static string EnsureTrailingSlash(string baseAddress) =>
-    baseAddress.EndsWith("/", StringComparison.Ordinal) ? baseAddress : $"{baseAddress}/";
 
 static BrainIngestRequest NormalizeIngestRequest(BrainIngestRequest request) =>
     request with

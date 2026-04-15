@@ -1,8 +1,9 @@
 """Tests for critique pipeline and PydanticAI provider abstraction."""
 
 import asyncio
+import os
 import pytest
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock, MagicMock, patch
 
 from app.brain.reasoning import PydanticAIProvider, CritiquePipeline, AgentResponse
 from app.contracts import Evidence, KnowledgeItem, KnowledgeResult, ReasoningStep
@@ -84,6 +85,67 @@ class TestPydanticAIProvider:
         assert "retriever" in provider._default_prompts
         assert "synthesizer" in provider._default_prompts
         assert "critic" in provider._default_prompts
+
+    def test_prefers_chat_model_environment_for_local_ollama(self, monkeypatch):
+        monkeypatch.setenv("CHAT_MODEL", "chat-model")
+        monkeypatch.setenv("OLLAMA_MODEL", "legacy-model")
+
+        provider = PydanticAIProvider(endpoint="http://localhost:11434")
+
+        assert provider.model_name == "chat-model"
+
+    def test_builds_ollama_model_without_openai_api_key_dependency(self, monkeypatch):
+        monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+        monkeypatch.delenv("OPENAI_BASE_URL", raising=False)
+
+        with (
+            patch("app.brain.reasoning.pydantic_ai_provider.OpenAIProvider") as mock_provider,
+            patch("app.brain.reasoning.pydantic_ai_provider.OpenAIModel") as mock_model,
+            patch("app.brain.reasoning.pydantic_ai_provider.Agent") as mock_agent,
+        ):
+            provider = PydanticAIProvider(
+                model_name="test-model",
+                endpoint="http://localhost:11434/",
+            )
+
+            created_agent = provider._get_or_create_agent("planner")
+
+        mock_provider.assert_called_once_with(base_url="http://localhost:11434/v1", api_key="ollama")
+        mock_model.assert_called_once_with("test-model", provider=mock_provider.return_value)
+        mock_agent.assert_called_once_with(
+            model=mock_model.return_value,
+            system_prompt=provider._default_prompts["planner"],
+        )
+        assert created_agent == mock_agent.return_value
+        assert os.getenv("OPENAI_API_KEY") is None
+        assert os.getenv("OPENAI_BASE_URL") is None
+
+    def test_run_agent_executes_without_openai_environment_variables(self, monkeypatch):
+        monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+        monkeypatch.delenv("OPENAI_BASE_URL", raising=False)
+
+        fake_result = MagicMock()
+        fake_result.data = "Planned response"
+        fake_agent = MagicMock()
+        fake_agent.run = AsyncMock(return_value=fake_result)
+
+        with (
+            patch("app.brain.reasoning.pydantic_ai_provider.OpenAIProvider") as mock_provider,
+            patch("app.brain.reasoning.pydantic_ai_provider.OpenAIModel") as mock_model,
+            patch("app.brain.reasoning.pydantic_ai_provider.Agent", return_value=fake_agent),
+        ):
+            provider = PydanticAIProvider(
+                model_name="test-model",
+                endpoint="http://localhost:11434/",
+            )
+            response = asyncio.run(provider.run_agent("planner", "Plan the task"))
+
+        mock_provider.assert_called_once_with(base_url="http://localhost:11434/v1", api_key="ollama")
+        mock_model.assert_called_once_with("test-model", provider=mock_provider.return_value)
+        fake_agent.run.assert_awaited_once_with("Plan the task")
+        assert response.content == "Planned response"
+        assert os.getenv("OPENAI_API_KEY") is None
+        assert os.getenv("OPENAI_BASE_URL") is None
 
 
 class TestCritiquePipeline:

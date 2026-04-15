@@ -4,10 +4,12 @@ using IBrainChatClient = web::AspireApp.Web.Services.IBrainChatClient;
 using BrainChatResponse = web::AspireApp.Web.Services.BrainChatResponse;
 using BrainChatEvidence = web::AspireApp.Web.Services.BrainChatEvidence;
 using BrainChatReasoningStep = web::AspireApp.Web.Services.BrainChatReasoningStep;
+using BrainChatException = web::AspireApp.Web.Services.BrainChatException;
 using System.Net;
 using System.Security.Claims;
 using System.Threading.Tasks;
 using Bunit;
+using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Components.Authorization;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
@@ -383,6 +385,89 @@ public sealed class ChatCritiqueModeTests
         });
     }
 
+    [Fact]
+    public async Task SelectingSavedConversation_UpdatesModeAcrossCritiqueAndRegularThreads()
+    {
+        var conversationService = new StubChatConversationServiceWithMixedModes();
+        var chatClient = new RecordingBrainChatClient();
+        using var testContext = CreateTestContext(conversationService, chatClient);
+
+        var cut = testContext.Render<Chat>();
+
+        static AngleSharp.Dom.IElement FindConversationButton(Bunit.IRenderedComponent<Chat> component, string title)
+        {
+            foreach (var button in component.FindAll("[data-testid='chat-conversation-select']"))
+            {
+                if (button.TextContent.Contains(title, StringComparison.Ordinal))
+                {
+                    return button;
+                }
+            }
+
+            Assert.Fail($"Could not find a saved conversation button for '{title}'.");
+            return null!;
+        }
+
+        await cut.InvokeAsync(() => FindConversationButton(cut, "Critique mode conversation").Click());
+
+        cut.WaitForAssertion(() =>
+        {
+            var critiqueRadio = cut.Find("[data-testid='chat-mode-critique']");
+            var regularRadio = cut.Find("[data-testid='chat-mode-regular']");
+            Assert.NotNull(critiqueRadio.GetAttribute("checked"));
+            Assert.Null(regularRadio.GetAttribute("checked"));
+        });
+
+        await cut.InvokeAsync(() => FindConversationButton(cut, "Regular mode conversation").Click());
+
+        cut.WaitForAssertion(() =>
+        {
+            var critiqueRadio = cut.Find("[data-testid='chat-mode-critique']");
+            var regularRadio = cut.Find("[data-testid='chat-mode-regular']");
+            Assert.Null(critiqueRadio.GetAttribute("checked"));
+            Assert.NotNull(regularRadio.GetAttribute("checked"));
+        });
+    }
+
+    [Fact]
+    public async Task CritiqueModeFailure_ShowsGatewayProblemDetail_InConversationStatus()
+    {
+        var chatClient = new RecordingBrainChatClient
+        {
+            ExceptionToThrow = new BrainChatException(
+                "Critique mode unavailable: agent provider not configured (check OLLAMA_ENDPOINT).",
+                StatusCodes.Status503ServiceUnavailable,
+                "BRAIN chat failed")
+        };
+        using var testContext = CreateTestContext(brainChatClient: chatClient);
+
+        var cut = testContext.Render<Chat>();
+
+        await cut.InvokeAsync(async () =>
+        {
+            var critiqueRadio = cut.Find("[data-testid='chat-mode-critique']");
+            critiqueRadio.Change(ChatConversationModes.Critique);
+
+            var input = cut.Find("[data-testid='chat-message-input']");
+            input.Input("Please critique this");
+
+            var button = cut.Find("[data-testid='chat-send']");
+            await button.ClickAsync(new Microsoft.AspNetCore.Components.Web.MouseEventArgs());
+        });
+
+        cut.WaitForAssertion(() =>
+        {
+            Assert.Contains(
+                "Critique mode unavailable: agent provider not configured",
+                cut.Markup,
+                StringComparison.OrdinalIgnoreCase);
+            Assert.DoesNotContain(
+                "Knowledge retrieval encountered a problem. Please try again.",
+                cut.Markup,
+                StringComparison.OrdinalIgnoreCase);
+        }, TimeSpan.FromSeconds(5));
+    }
+
     // Helper: Create test context with required services
     private static Bunit.BunitContext CreateTestContext(
         IChatConversationService? conversationService = null,
@@ -472,6 +557,7 @@ public sealed class ChatCritiqueModeTests
     {
         public (string Query, string Mode, string? TenantId, string? ConversationId, int TopK)? LastRequest { get; private set; }
         public BrainChatResponse? ResponseToReturn { get; set; }
+        public BrainChatException? ExceptionToThrow { get; set; }
 
         public Task<BrainChatResponse> ChatAsync(
             string query,
@@ -482,6 +568,11 @@ public sealed class ChatCritiqueModeTests
             CancellationToken cancellationToken = default)
         {
             LastRequest = (query, mode, tenantId, conversationId, topK);
+
+            if (ExceptionToThrow is not null)
+            {
+                throw ExceptionToThrow;
+            }
 
             return Task.FromResult(ResponseToReturn ?? new BrainChatResponse(
                 Answer: "Default stub response",
@@ -783,6 +874,136 @@ public sealed class ChatCritiqueModeTests
             };
 
             return Task.FromResult<ChatConversationSummary?>(_activeSummary);
+        }
+
+        public Task<ChatConversationSummary?> RenameConversationAsync(
+            Guid conversationId,
+            string ownerUserId,
+            string title,
+            CancellationToken cancellationToken = default)
+        {
+            throw new NotSupportedException();
+        }
+
+        public Task<ChatConversationSummary?> UpdateChatModeAsync(
+            Guid conversationId,
+            string ownerUserId,
+            string chatMode,
+            CancellationToken cancellationToken = default)
+        {
+            throw new NotSupportedException();
+        }
+
+        public Task<bool> DeleteConversationAsync(
+            Guid conversationId,
+            string ownerUserId,
+            CancellationToken cancellationToken = default)
+        {
+            throw new NotSupportedException();
+        }
+    }
+
+    private sealed class StubChatConversationServiceWithMixedModes : IChatConversationService
+    {
+        private static readonly Guid CritiqueConversationId = Guid.Parse("55555555-5555-5555-5555-555555555555");
+        private static readonly Guid RegularConversationId = Guid.Parse("66666666-6666-6666-6666-666666666666");
+        private static readonly DateTime Timestamp = new(2026, 4, 22, 12, 0, 0, DateTimeKind.Utc);
+
+        public Task<IReadOnlyList<ChatConversationSummary>> ListConversationsAsync(
+            string ownerUserId,
+            CancellationToken cancellationToken = default)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+
+            return Task.FromResult<IReadOnlyList<ChatConversationSummary>>(
+            [
+                new ChatConversationSummary(
+                    CritiqueConversationId,
+                    "Critique mode conversation",
+                    "Critique preview",
+                    "tenant-alpha",
+                    ChatConversationModes.Critique,
+                    2,
+                    false,
+                    Timestamp.AddMinutes(1),
+                    Timestamp.AddMinutes(1)),
+                new ChatConversationSummary(
+                    RegularConversationId,
+                    "Regular mode conversation",
+                    "Regular preview",
+                    "tenant-alpha",
+                    ChatConversationModes.Regular,
+                    2,
+                    false,
+                    Timestamp,
+                    Timestamp)
+            ]);
+        }
+
+        public Task<ChatConversationDetail?> GetConversationAsync(
+            Guid conversationId,
+            string ownerUserId,
+            CancellationToken cancellationToken = default)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+
+            return Task.FromResult<ChatConversationDetail?>(
+                conversationId switch
+                {
+                    _ when conversationId == CritiqueConversationId => new ChatConversationDetail(
+                        CritiqueConversationId,
+                        "Critique mode conversation",
+                        "tenant-alpha",
+                        ChatConversationModes.Critique,
+                        false,
+                        Timestamp.AddMinutes(1),
+                        Timestamp.AddMinutes(1),
+                        [
+                            new ChatConversationMessageRecord(
+                                Guid.Parse("77777777-7777-7777-7777-777777777777"),
+                                ChatConversationRoles.User,
+                                "Original critique prompt",
+                                1,
+                                Timestamp.AddMinutes(1))
+                        ]),
+                    _ when conversationId == RegularConversationId => new ChatConversationDetail(
+                        RegularConversationId,
+                        "Regular mode conversation",
+                        "tenant-alpha",
+                        ChatConversationModes.Regular,
+                        false,
+                        Timestamp,
+                        Timestamp,
+                        [
+                            new ChatConversationMessageRecord(
+                                Guid.Parse("88888888-8888-8888-8888-888888888888"),
+                                ChatConversationRoles.User,
+                                "Original regular prompt",
+                                1,
+                                Timestamp)
+                        ]),
+                    _ => null
+                });
+        }
+
+        public Task<ChatConversationSummary> StartConversationAsync(
+            string ownerUserId,
+            string? tenantId,
+            string userMessage,
+            string chatMode = "regular",
+            CancellationToken cancellationToken = default)
+        {
+            throw new NotSupportedException();
+        }
+
+        public Task<ChatConversationSummary?> AddMessageAsync(
+            Guid conversationId,
+            string ownerUserId,
+            string role,
+            string content,
+            CancellationToken cancellationToken = default)
+        {
+            throw new NotSupportedException();
         }
 
         public Task<ChatConversationSummary?> RenameConversationAsync(

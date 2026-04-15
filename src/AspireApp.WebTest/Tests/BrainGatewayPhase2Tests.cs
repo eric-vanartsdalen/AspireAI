@@ -1,4 +1,5 @@
 extern alias api;
+extern alias web;
 
 using System.Net;
 using System.Net.Http.Json;
@@ -7,12 +8,14 @@ using System.Text.Json;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Mvc.Testing;
+using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
 using Microsoft.Extensions.Logging.Abstractions;
 using ApiContracts = api::AspireApp.ApiService.Contracts;
 using ApiProgram = api::Program;
 using ApiServices = api::AspireApp.ApiService.Services;
+using WebServices = web::AspireApp.Web.Services;
 
 namespace AspireApp.WebTest.Tests;
 
@@ -216,6 +219,106 @@ public sealed class BrainGatewayPhase2Tests
     }
 
     [Fact]
+    public async Task ChatAsync_PreservesPythonServiceUnavailable_WithoutRetryingUnsafeRequest()
+    {
+        var cancellationToken = TestContext.Current.CancellationToken;
+
+        using var handler = new StubHttpMessageHandler(
+        [
+            new HttpResponseMessage(HttpStatusCode.ServiceUnavailable)
+            {
+                Content = JsonContent.Create(new
+                {
+                    detail = "Critique mode unavailable: agent provider not configured (check OLLAMA_ENDPOINT)."
+                })
+            }
+        ]);
+
+        var services = new ServiceCollection();
+        var configuration = new ConfigurationBuilder()
+            .AddInMemoryCollection(new Dictionary<string, string?>
+            {
+                ["PYTHON_SERVICE_URL"] = "http://python-service/"
+            })
+            .Build();
+
+        services.AddLogging();
+        ApiServices.BrainBackendClientServiceCollectionExtensions
+            .AddBrainBackendClient(services, configuration)
+            .ConfigurePrimaryHttpMessageHandler(() => handler);
+
+        using var serviceProvider = services.BuildServiceProvider();
+        var backendClient = serviceProvider.GetRequiredService<ApiServices.IBrainBackendClient>();
+
+        var exception = await Assert.ThrowsAsync<ApiServices.BrainGatewayProblemException>(() =>
+            backendClient.ChatAsync(
+                new ApiContracts.BrainChatRequest(
+                    "tenant-a",
+                    "corr-critique",
+                    "Critique this answer",
+                    ApiContracts.ChatMode.Critique,
+                    null,
+                    5),
+                cancellationToken));
+
+        Assert.Equal(StatusCodes.Status503ServiceUnavailable, exception.StatusCode);
+        Assert.Equal("BRAIN chat failed", exception.Title);
+        Assert.Contains("agent provider not configured", exception.Message, StringComparison.OrdinalIgnoreCase);
+        Assert.Single(handler.Requests);
+        Assert.Equal("http://python-service/brain/chat", handler.Requests[0].RequestUri?.ToString());
+    }
+
+    [Fact]
+    public async Task BrainChatClient_UsesProblemDetailWithoutRetryingUnsafeRequest()
+    {
+        var cancellationToken = TestContext.Current.CancellationToken;
+
+        using var handler = new StubHttpMessageHandler(
+        [
+            new HttpResponseMessage(HttpStatusCode.ServiceUnavailable)
+            {
+                Content = JsonContent.Create(new
+                {
+                    title = "BRAIN chat failed",
+                    detail = "Critique mode unavailable: agent provider not configured (check OLLAMA_ENDPOINT)."
+                })
+            }
+        ]);
+
+        var services = new ServiceCollection();
+        var configuration = new ConfigurationBuilder()
+            .AddInMemoryCollection(new Dictionary<string, string?>
+            {
+                ["BRAIN_GATEWAY_URL"] = "http://brain-gateway/"
+            })
+            .Build();
+
+        services.AddLogging();
+        WebServices.BrainChatClientServiceCollectionExtensions
+            .AddBrainGatewayChatClient(services, configuration)
+            .ConfigurePrimaryHttpMessageHandler(() => handler);
+
+        using var serviceProvider = services.BuildServiceProvider();
+        var chatClient = serviceProvider.GetRequiredService<WebServices.IBrainChatClient>();
+
+        var exception = await Assert.ThrowsAsync<WebServices.BrainChatException>(() =>
+            chatClient.ChatAsync(
+                "Critique this answer",
+                "critique",
+                "tenant-a",
+                "conversation-1",
+                cancellationToken: cancellationToken));
+
+        Assert.Equal(StatusCodes.Status503ServiceUnavailable, exception.StatusCode);
+        Assert.Equal("BRAIN chat failed", exception.Title);
+        Assert.Equal(
+            "Critique mode unavailable: agent provider not configured (check OLLAMA_ENDPOINT).",
+            exception.Message);
+        Assert.Single(handler.Requests);
+        Assert.Equal("http://brain-gateway/brain/chat", handler.Requests[0].RequestUri?.ToString());
+    }
+
+    [Fact]
     public async Task BrainIngest_ReturnsAcceptedPayload()
     {
         var cancellationToken = TestContext.Current.CancellationToken;
@@ -337,6 +440,43 @@ public sealed class BrainGatewayPhase2Tests
             payload.RootElement.GetProperty("detail").GetString());
     }
 
+    [Fact]
+    public async Task BrainChat_PreservesBackendServiceUnavailableProblem()
+    {
+        var cancellationToken = TestContext.Current.CancellationToken;
+
+        var backend = new StubBrainBackendClient
+        {
+            ChatException = new ApiServices.BrainGatewayProblemException(
+                StatusCodes.Status503ServiceUnavailable,
+                "BRAIN chat failed",
+                "Critique mode unavailable: agent provider not configured (check OLLAMA_ENDPOINT).")
+        };
+
+        await using var factory = new BrainGatewayFactory(backend);
+        using var client = factory.CreateClient();
+
+        using var response = await client.PostAsJsonAsync(
+            "/brain/chat",
+            new ApiContracts.BrainChatRequest(
+                "tenant-a",
+                "corr-chat",
+                "Critique this answer",
+                ApiContracts.ChatMode.Critique,
+                null,
+                5),
+            cancellationToken);
+
+        Assert.Equal(HttpStatusCode.ServiceUnavailable, response.StatusCode);
+
+        using var payload = JsonDocument.Parse(await response.Content.ReadAsStringAsync(cancellationToken));
+        Assert.Equal("BRAIN chat failed", payload.RootElement.GetProperty("title").GetString());
+        Assert.Contains(
+            "agent provider not configured",
+            payload.RootElement.GetProperty("detail").GetString(),
+            StringComparison.OrdinalIgnoreCase);
+    }
+
     private sealed class BrainGatewayFactory(StubBrainBackendClient backend) : WebApplicationFactory<ApiProgram>
     {
         private readonly StubBrainBackendClient _backend = backend;
@@ -358,13 +498,19 @@ public sealed class BrainGatewayPhase2Tests
 
         public ApiContracts.BrainQueryRequest? LastQueryRequest { get; private set; }
 
+        public ApiContracts.BrainChatRequest? LastChatRequest { get; private set; }
+
         public ApiContracts.BrainIngestResponse? IngestResponse { get; init; }
 
         public ApiContracts.KnowledgeResult? QueryResponse { get; init; }
 
+        public ApiContracts.ReasonResponse? ChatResponse { get; init; }
+
         public ApiServices.BrainGatewayProblemException? IngestException { get; init; }
 
         public ApiServices.BrainGatewayProblemException? QueryException { get; init; }
+
+        public ApiServices.BrainGatewayProblemException? ChatException { get; init; }
 
         public Task<ApiContracts.BrainIngestResponse> TriggerIngestionAsync(
             ApiContracts.BrainIngestRequest request,
@@ -400,8 +546,22 @@ public sealed class BrainGatewayPhase2Tests
             ApiContracts.BrainChatRequest request,
             CancellationToken cancellationToken = default)
         {
-            return Task.FromResult(new ApiContracts.ReasonResponse(
-                request.TenantId, request.CorrelationId, "stub answer", 0.5, [], [], []));
+            LastChatRequest = request;
+            if (ChatException is not null)
+            {
+                throw ChatException;
+            }
+
+            return Task.FromResult(
+                ChatResponse
+                ?? new ApiContracts.ReasonResponse(
+                    request.TenantId,
+                    request.CorrelationId,
+                    "stub answer",
+                    0.5,
+                    [],
+                    [],
+                    []));
         }
     }
 

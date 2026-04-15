@@ -12,6 +12,8 @@ import os
 from typing import Any
 
 from pydantic_ai import Agent
+from pydantic_ai.models.openai import OpenAIModel
+from pydantic_ai.providers.openai import OpenAIProvider
 
 from .agent_provider import AgentProvider, AgentResponse
 
@@ -35,12 +37,13 @@ class PydanticAIProvider:
         Initialize PydanticAI provider.
 
         Args:
-            model_name: LLM model to use (defaults to env OLLAMA_MODEL or phi4-mini:latest)
+            model_name: LLM model to use (defaults to env CHAT_MODEL, then OLLAMA_MODEL)
             endpoint: Ollama endpoint (defaults to env OLLAMA_ENDPOINT)
         """
-        self.model_name = model_name or os.getenv("OLLAMA_MODEL", "phi4-mini:latest")
-        self.endpoint = endpoint or os.getenv("OLLAMA_ENDPOINT", "")
+        self.model_name = model_name or os.getenv("CHAT_MODEL") or os.getenv("OLLAMA_MODEL", "phi4-mini:latest")
+        self.endpoint = (endpoint or os.getenv("OLLAMA_ENDPOINT") or "").rstrip("/")
         self._agent_cache: dict[str, Agent] = {}
+        self._model = self._build_model()
 
         # Default system prompts for standard agent roles
         self._default_prompts = {
@@ -50,26 +53,28 @@ class PydanticAIProvider:
             "critic": "You are a critic agent. Evaluate responses for accuracy, consistency, and gaps.",
         }
 
+    def _build_model(self) -> OpenAIModel | None:
+        """Build the Ollama-backed PydanticAI model when local config is available."""
+        if not self.endpoint or not self.model_name:
+            return None
+
+        provider = OpenAIProvider(base_url=f"{self.endpoint}/v1", api_key="ollama")
+        return OpenAIModel(self.model_name, provider=provider)
+
     def _get_or_create_agent(self, agent_name: str, system_prompt: str | None = None) -> Agent:
         """Get cached agent or create new one with the given system prompt."""
+        if self._model is None:
+            raise RuntimeError("PydanticAI provider is not configured (check OLLAMA_ENDPOINT).")
+
         cache_key = f"{agent_name}:{system_prompt}"
         
         if cache_key not in self._agent_cache:
             prompt = system_prompt or self._default_prompts.get(agent_name, "You are a helpful AI assistant.")
             
-            # Create PydanticAI agent configured for Ollama
-            # Use openai-compatible endpoint with custom base_url
             agent = Agent(
-                model=f"openai:{self.model_name}",
+                model=self._model,
                 system_prompt=prompt,
             )
-            
-            # Configure for Ollama endpoint if available
-            if self.endpoint:
-                # PydanticAI uses httpx for API calls - we'll rely on environment configuration
-                os.environ["OPENAI_BASE_URL"] = f"{self.endpoint}/v1"
-                os.environ["OPENAI_API_KEY"] = "ollama"  # Ollama doesn't need real key
-            
             self._agent_cache[cache_key] = agent
         
         return self._agent_cache[cache_key]
@@ -158,4 +163,4 @@ class PydanticAIProvider:
 
     def is_available(self) -> bool:
         """Check if PydanticAI provider is configured."""
-        return bool(self.endpoint and self.model_name)
+        return self._model is not None

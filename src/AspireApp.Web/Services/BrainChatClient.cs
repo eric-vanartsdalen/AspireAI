@@ -1,4 +1,5 @@
 using System.Net.Http.Json;
+using System.Text.Json;
 using System.Text.Json.Serialization;
 
 namespace AspireApp.Web.Services;
@@ -42,6 +43,11 @@ public sealed record BrainChatReasoningStep(
 
 public sealed class BrainChatClient(HttpClient httpClient, ILogger<BrainChatClient> logger) : IBrainChatClient
 {
+    private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web)
+    {
+        PropertyNameCaseInsensitive = true
+    };
+
     public async Task<BrainChatResponse> ChatAsync(
         string query,
         string mode,
@@ -63,26 +69,108 @@ public sealed class BrainChatClient(HttpClient httpClient, ILogger<BrainChatClie
             "BRAIN chat request: mode={Mode}, correlation={CorrelationId}",
             mode, correlationId);
 
-        using var response = await httpClient.PostAsJsonAsync("brain/chat", request, cancellationToken);
-
-        if (!response.IsSuccessStatusCode)
+        try
         {
-            var errorBody = await response.Content.ReadAsStringAsync(cancellationToken);
-            logger.LogWarning(
-                "BRAIN chat failed: {StatusCode} - {Error}",
-                (int)response.StatusCode, errorBody);
-            throw new BrainChatException($"Gateway returned {(int)response.StatusCode}: {errorBody}");
+            using var response = await httpClient.PostAsJsonAsync("brain/chat", request, cancellationToken);
+            var responseBody = await response.Content.ReadAsStringAsync(cancellationToken);
+
+            if (!response.IsSuccessStatusCode)
+            {
+                var problem = ExtractProblem(responseBody);
+                logger.LogWarning(
+                    "BRAIN chat failed: {StatusCode} {Title} - {Detail}",
+                    (int)response.StatusCode,
+                    problem.Title,
+                    problem.Detail);
+
+                throw new BrainChatException(
+                    string.IsNullOrWhiteSpace(problem.Detail)
+                        ? $"Gateway returned {(int)response.StatusCode}."
+                        : problem.Detail,
+                    (int)response.StatusCode,
+                    problem.Title);
+            }
+
+            var result = Deserialize<BrainChatResponse>(responseBody)
+                ?? throw new BrainChatException("Gateway returned empty response");
+
+            logger.LogInformation(
+                "BRAIN chat response: confidence={Confidence}, evidence={EvidenceCount}",
+                result.Confidence, result.Evidence.Count);
+
+            return result;
+        }
+        catch (HttpRequestException ex)
+        {
+            logger.LogWarning(ex, "BRAIN gateway request failed");
+            throw new BrainChatException("The BRAIN gateway is unavailable.", innerException: ex);
+        }
+        catch (JsonException ex)
+        {
+            logger.LogWarning(ex, "BRAIN gateway returned invalid JSON");
+            throw new BrainChatException("The BRAIN gateway returned invalid JSON.", innerException: ex);
+        }
+    }
+
+    private static TResponse? Deserialize<TResponse>(string responseBody)
+    {
+        if (string.IsNullOrWhiteSpace(responseBody))
+        {
+            return default;
         }
 
-        var result = await response.Content.ReadFromJsonAsync<BrainChatResponse>(cancellationToken: cancellationToken)
-            ?? throw new BrainChatException("Gateway returned empty response");
-
-        logger.LogInformation(
-            "BRAIN chat response: confidence={Confidence}, evidence={EvidenceCount}",
-            result.Confidence, result.Evidence.Count);
-
-        return result;
+        return JsonSerializer.Deserialize<TResponse>(responseBody, JsonOptions);
     }
+
+    private static BrainChatProblem ExtractProblem(string responseBody)
+    {
+        if (string.IsNullOrWhiteSpace(responseBody))
+        {
+            return new BrainChatProblem("BRAIN chat failed", "No additional detail was returned.");
+        }
+
+        try
+        {
+            using var payload = JsonDocument.Parse(responseBody);
+            return new BrainChatProblem(
+                ExtractFirstString(payload.RootElement, "title") ?? "BRAIN chat failed",
+                ExtractFirstString(payload.RootElement, "detail", "message", "error") ?? responseBody);
+        }
+        catch (JsonException)
+        {
+            return new BrainChatProblem("BRAIN chat failed", responseBody);
+        }
+    }
+
+    private static string? ExtractFirstString(JsonElement payload, params string[] propertyNames)
+    {
+        foreach (var propertyName in propertyNames)
+        {
+            if (!payload.TryGetProperty(propertyName, out var value) || value.ValueKind != JsonValueKind.String)
+            {
+                continue;
+            }
+
+            var stringValue = value.GetString();
+            if (!string.IsNullOrWhiteSpace(stringValue))
+            {
+                return stringValue;
+            }
+        }
+
+        return null;
+    }
+
+    private sealed record BrainChatProblem(string Title, string Detail);
 }
 
-public sealed class BrainChatException(string message) : Exception(message);
+public sealed class BrainChatException(
+    string message,
+    int? statusCode = null,
+    string? title = null,
+    Exception? innerException = null) : Exception(message, innerException)
+{
+    public int? StatusCode { get; } = statusCode;
+
+    public string? Title { get; } = title;
+}

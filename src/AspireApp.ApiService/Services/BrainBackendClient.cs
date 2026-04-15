@@ -71,6 +71,7 @@ public sealed class PythonBrainBackendClient(HttpClient httpClient, ILogger<Pyth
         var payload = await PostForResponseAsync<BrainQueryRequest, KnowledgeResult>(
             "rag/query",
             request,
+            "BRAIN query failed",
             cancellationToken);
 
         return new KnowledgeResult(
@@ -86,6 +87,7 @@ public sealed class PythonBrainBackendClient(HttpClient httpClient, ILogger<Pyth
         var payload = await PostForResponseAsync<BrainChatRequest, ReasonResponse>(
             "brain/chat",
             request,
+            "BRAIN chat failed",
             cancellationToken);
 
         return new ReasonResponse(
@@ -101,6 +103,7 @@ public sealed class PythonBrainBackendClient(HttpClient httpClient, ILogger<Pyth
     private async Task<TResponse> PostForResponseAsync<TRequest, TResponse>(
         string relativePath,
         TRequest payload,
+        string failureTitle,
         CancellationToken cancellationToken)
     {
         using var response = await _httpClient.PostAsJsonAsync(relativePath, payload, cancellationToken);
@@ -110,7 +113,7 @@ public sealed class PythonBrainBackendClient(HttpClient httpClient, ILogger<Pyth
         {
             throw CreateProblem(
                 response.StatusCode,
-                "BRAIN query failed",
+                failureTitle,
                 $"Python retrieval seam {relativePath} returned {(int)response.StatusCode}. {ExtractProblemDetail(responseBody)}");
         }
 
@@ -131,7 +134,7 @@ public sealed class PythonBrainBackendClient(HttpClient httpClient, ILogger<Pyth
 
             throw new BrainGatewayProblemException(
                 StatusCodes.Status502BadGateway,
-                "BRAIN query failed",
+                failureTitle,
                 $"Python retrieval seam {relativePath} returned invalid JSON.",
                 ex);
         }
@@ -139,7 +142,7 @@ public sealed class PythonBrainBackendClient(HttpClient httpClient, ILogger<Pyth
         _logger.LogWarning("Python retrieval seam {RelativePath} returned an empty response body", relativePath);
         throw new BrainGatewayProblemException(
             StatusCodes.Status502BadGateway,
-            "BRAIN query failed",
+            failureTitle,
             $"Python retrieval seam {relativePath} returned an empty response.");
     }
 
@@ -158,13 +161,10 @@ public sealed class PythonBrainBackendClient(HttpClient httpClient, ILogger<Pyth
         string title,
         string detail)
     {
-        var mappedStatusCode = statusCode switch
-        {
-            HttpStatusCode.BadRequest => StatusCodes.Status400BadRequest,
-            HttpStatusCode.NotFound => StatusCodes.Status404NotFound,
-            HttpStatusCode.Conflict => StatusCodes.Status409Conflict,
-            _ => StatusCodes.Status502BadGateway
-        };
+        var numericStatusCode = (int)statusCode;
+        var mappedStatusCode = numericStatusCode is >= StatusCodes.Status400BadRequest and <= 599
+            ? numericStatusCode
+            : StatusCodes.Status502BadGateway;
 
         return new BrainGatewayProblemException(mappedStatusCode, title, detail);
     }

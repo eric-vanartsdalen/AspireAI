@@ -4,6 +4,7 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging.Abstractions;
 using ChatConversation = web::AspireApp.Web.Data.ChatConversation;
 using ChatConversationMessage = web::AspireApp.Web.Data.ChatConversationMessage;
+using ChatConversationModes = web::AspireApp.Web.Services.ChatConversationModes;
 using ChatConversationRoles = web::AspireApp.Web.Services.ChatConversationRoles;
 using ChatConversationService = web::AspireApp.Web.Services.ChatConversationService;
 using ChatConversationTitleSources = web::AspireApp.Web.Services.ChatConversationTitleSources;
@@ -65,6 +66,43 @@ public sealed class ChatConversationServiceTests
         var conversation = await context.ChatConversations.SingleAsync(TestContext.Current.CancellationToken);
         Assert.Equal(ChatConversationTitleSources.Generated, conversation.TitleSource);
         Assert.Equal("Neo4j index tuning plan", conversation.Title);
+    }
+
+    [Fact]
+    public async Task StartConversationAsync_AndUpdateChatModeAsync_PersistNormalizedChatMode()
+    {
+        await using var context = CreateDbContext();
+        var service = CreateService(context);
+
+        var started = await service.StartConversationAsync(
+            "demo-taylor-jones",
+            "tenant-alpha",
+            "Walk me through critique mode",
+            chatMode: "CRITIQUE",
+            cancellationToken: TestContext.Current.CancellationToken);
+
+        Assert.Equal(ChatConversationModes.Critique, started.ChatMode);
+
+        var createdConversation = await context.ChatConversations.SingleAsync(TestContext.Current.CancellationToken);
+        Assert.Equal(ChatConversationModes.Critique, createdConversation.ChatMode);
+
+        var updated = await service.UpdateChatModeAsync(
+            started.ConversationId,
+            "demo-taylor-jones",
+            "REGULAR",
+            TestContext.Current.CancellationToken);
+
+        Assert.NotNull(updated);
+        Assert.Equal(ChatConversationModes.Regular, updated!.ChatMode);
+
+        var reloaded = await service.GetConversationAsync(
+            started.ConversationId,
+            "demo-taylor-jones",
+            TestContext.Current.CancellationToken);
+
+        Assert.NotNull(reloaded);
+        Assert.Equal(ChatConversationModes.Regular, reloaded!.ChatMode);
+        Assert.Equal(ChatConversationModes.Regular, createdConversation.ChatMode);
     }
 
     [Fact]

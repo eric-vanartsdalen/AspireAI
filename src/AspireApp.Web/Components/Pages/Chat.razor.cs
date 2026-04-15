@@ -1016,9 +1016,9 @@ namespace AspireApp.Web.Components.Pages
             }
             catch (BrainChatException ex)
             {
-                Console.WriteLine($"BRAIN chat error: {ex.Message}");
+                Console.WriteLine($"BRAIN chat error ({ex.StatusCode}): {ex.Message}");
                 SetConversationStatus(
-                    "Knowledge retrieval encountered a problem. Please try again.",
+                    ex.Message,
                     isError: true);
             }
             catch (Exception e)
