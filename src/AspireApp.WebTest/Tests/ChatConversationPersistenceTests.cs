@@ -364,7 +364,8 @@ public sealed class ChatConversationPersistenceTests : IClassFixture<TestFixture
 
     private static async Task<string> WaitForTranscriptToContainAsync(IPage page, string expectedText)
     {
-        var timeoutAt = DateTime.UtcNow.AddSeconds(90);
+        // AI responses can legitimately take up to 180s under load; align timeout with AppHostMappingModel.Options.Timeout
+        var timeoutAt = DateTime.UtcNow.AddSeconds(180);
         var transcript = string.Empty;
 
         while (DateTime.UtcNow < timeoutAt)
@@ -515,7 +516,8 @@ public sealed class ChatConversationPersistenceTests : IClassFixture<TestFixture
 
     private static async Task WaitForControlEnabledAsync(ILocator locator, string description)
     {
-        var timeoutAt = DateTime.UtcNow.AddSeconds(90);
+        // Send button stays disabled during AI response; allow up to 180s (matches AppHostMappingModel timeout)
+        var timeoutAt = DateTime.UtcNow.AddSeconds(180);
         while (DateTime.UtcNow < timeoutAt)
         {
             if (!await locator.IsDisabledAsync())

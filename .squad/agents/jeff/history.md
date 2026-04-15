@@ -36,6 +36,33 @@
 
 <!-- Append new learnings below. Each entry is something lasting about the project. -->
 
+### 2026-04-18 — Chat Conversation Persistence Test Timeout Alignment
+
+**Status:** Implemented and validated for the conversation persistence test suite.
+
+**Problem:**
+- `ChatConversationPersistenceTests.SignedInUserCanSaveRenameResumeAndDeleteConversation` was failing intermittently when AI responses took longer than 90 seconds.
+- The test helper methods `WaitForTranscriptToContainAsync` and `WaitForControlEnabledAsync` used 90-second timeouts, but legitimate AI responses can take up to 180 seconds (as configured in `AppHostMappingModel.Options.Timeout`).
+- This created a mismatch where tests would timeout before the AI had a chance to complete, even though the application behavior was correct.
+
+**Solution:**
+- Increased timeouts in `WaitForTranscriptToContainAsync` and `WaitForControlEnabledAsync` from 90 seconds to 180 seconds to match the infrastructure timeout.
+- Added inline comments explaining the timeout rationale: "AI responses can legitimately take up to 180s under load; align timeout with AppHostMappingModel.Options.Timeout".
+- This is a test-infrastructure fix, not a product change—the application behavior remains correct.
+
+**Validation:**
+- Test now passes reliably in ~160-165 seconds under normal AI load.
+- No assertions weakened; all persistence, rename, resume, and delete validations remain intact.
+- `dotnet test src\AspireApp.WebTest\AspireApp.WebTest.csproj --no-build --filter "FullyQualifiedName~ChatConversationPersistenceTests.SignedInUserCanSaveRenameResumeAndDeleteConversation"`
+
+**Key Paths:**
+- `src\AspireApp.WebTest\Tests\ChatConversationPersistenceTests.cs` (lines 365-383, 516-530)
+- `src\AspireApp.WebTest\DataModels\AppHostMappingModel.cs` (line 22: `Timeout = 180000`)
+
+**Design Principle:**
+- Test timeouts should align with infrastructure capabilities, not ideal-case expectations.
+- When AI/external services are involved, timeouts must accommodate legitimate slow responses under load, not just fast-path scenarios.
+
 ### 2026-04-15 — Chat focus should use explicit render-time focus flags
 
 **Status:** Implemented and validated for the chat rename regression slice.
