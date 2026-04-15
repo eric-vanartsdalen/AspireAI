@@ -36,6 +36,9 @@ namespace AspireApp.Web.Components.Pages
         [Inject]
         public AiInfoStateService AiInfoState { get; set; } = default!;
 
+        [Inject]
+        public required IBrainChatClient BrainChatClient { get; set; }
+
         private ElementReference questionInput;
         private ElementReference conversationTitleInput;
         private CancellationTokenSource? _cancellationTokenSource;
@@ -926,73 +929,26 @@ namespace AspireApp.Web.Components.Pages
 
         private async Task CallBackgroundAI()
         {
-            var kernel = GetOrCreateKernel();
             var stopwatch = Stopwatch.StartNew();
 
             var manualStopTokenSource = new CancellationTokenSource();
-            using var firstTokenTimeoutTokenSource = new CancellationTokenSource(TimeSpan.FromSeconds(AiFirstTokenTimeoutSeconds));
-            using var responseTimeoutTokenSource = new CancellationTokenSource(TimeSpan.FromSeconds(AiResponseTimeoutSeconds));
+            using var responseTimeoutTokenSource = new CancellationTokenSource(TimeSpan.FromMinutes(3));
             using var linkedTokenSource = CancellationTokenSource.CreateLinkedTokenSource(
                 manualStopTokenSource.Token,
-                firstTokenTimeoutTokenSource.Token,
                 responseTimeoutTokenSource.Token);
 
             _cancellationTokenSource = manualStopTokenSource;
 
             try
             {
-                var chatCompletionService = kernel.GetRequiredService<IChatCompletionService>();
-                var promptSettings = new PromptExecutionSettings();
+                var chatResponse = await BrainChatClient.ChatAsync(
+                    query: Status,
+                    mode: ChatConversationModes.Regular,
+                    tenantId: TenantContext.CurrentTenantId,
+                    conversationId: ActiveConversationId?.ToString(),
+                    cancellationToken: linkedTokenSource.Token);
 
-                var stream = chatCompletionService.GetStreamingChatMessageContentsAsync(
-                    _chatHistory,
-                    promptSettings,
-                    kernel,
-                    linkedTokenSource.Token);
-
-                var updateBuffer = new System.Text.StringBuilder();
-                var lastUpdateTime = DateTime.UtcNow;
-                var lastScrollTime = DateTime.UtcNow;
-                const int updateIntervalMs = 20;
-                const int earlyTokenThreshold = 10;
-                var tokenCount = 0;
-
-                await foreach (var message in stream)
-                {
-                    updateBuffer.Append(message.Content);
-                    tokenCount++;
-
-                    if (tokenCount == 1)
-                    {
-                        firstTokenTimeoutTokenSource.CancelAfter(Timeout.InfiniteTimeSpan);
-                    }
-
-                    var now = DateTime.UtcNow;
-                    var shouldUpdate = tokenCount <= earlyTokenThreshold ||
-                        (now - lastUpdateTime).TotalMilliseconds >= updateIntervalMs;
-
-                    if (shouldUpdate)
-                    {
-                        AIResponse = updateBuffer.ToString();
-                        StateHasChanged();
-                        lastUpdateTime = now;
-
-                        if ((now - lastScrollTime).TotalMilliseconds >= 150)
-                        {
-                            try
-                            {
-                                await JSRuntime.InvokeVoidAsync("scrollChatToBottom");
-                                lastScrollTime = now;
-                            }
-                            catch (Exception ex)
-                            {
-                                Console.WriteLine($"Error scrolling during stream: {ex.Message}");
-                            }
-                        }
-                    }
-                }
-
-                AIResponse = updateBuffer.ToString();
+                AIResponse = chatResponse.Answer;
             }
             catch (OperationCanceledException) when (manualStopTokenSource.IsCancellationRequested)
             {
@@ -1001,23 +957,18 @@ namespace AspireApp.Web.Components.Pages
                     AIResponse += "\n" + HaltedResponseTag;
                 }
             }
-            catch (OperationCanceledException) when (firstTokenTimeoutTokenSource.IsCancellationRequested)
-            {
-                SetConversationStatus(
-                    "The AI service is still warming up. Your prompt is saved, and you can retry once the model is ready.",
-                    isError: true);
-            }
             catch (OperationCanceledException) when (responseTimeoutTokenSource.IsCancellationRequested)
             {
                 SetConversationStatus(
                     "The AI service took too long to respond. Your prompt is still saved, so you can retry in a moment.",
                     isError: true);
-
-                if (!string.IsNullOrWhiteSpace(AIResponse) &&
-                    !AIResponse.Contains(TimedOutResponseTag, StringComparison.Ordinal))
-                {
-                    AIResponse = $"{AIResponse.TrimEnd()}{Environment.NewLine}{Environment.NewLine}{TimedOutResponseTag}";
-                }
+            }
+            catch (BrainChatException ex)
+            {
+                Console.WriteLine($"BRAIN chat error: {ex.Message}");
+                SetConversationStatus(
+                    "Knowledge retrieval encountered a problem. Please try again.",
+                    isError: true);
             }
             catch (Exception e)
             {

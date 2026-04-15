@@ -1,5 +1,9 @@
 extern alias web;
 
+using IBrainChatClient = web::AspireApp.Web.Services.IBrainChatClient;
+using BrainChatResponse = web::AspireApp.Web.Services.BrainChatResponse;
+using BrainChatEvidence = web::AspireApp.Web.Services.BrainChatEvidence;
+using BrainChatReasoningStep = web::AspireApp.Web.Services.BrainChatReasoningStep;
 using System.Net;
 using System.Security.Claims;
 using Bunit;
@@ -84,6 +88,7 @@ public sealed class ChatFocusTests
             testContext.Services.AddSingleton<IChatConversationService>(chatConversationService);
             testContext.Services.AddSingleton(tenantContext);
             testContext.Services.AddSingleton(new AiInfoStateService(configuration, httpClientFactory));
+            testContext.Services.AddSingleton<IBrainChatClient>(new StubBrainChatClient());
 
             var cut = testContext.Render<Chat>();
 
@@ -271,6 +276,25 @@ public sealed class ChatFocusTests
             CancellationToken cancellationToken = default)
         {
             throw new NotSupportedException();
+        }
+    }
+
+    private sealed class StubBrainChatClient : IBrainChatClient
+    {
+        public Task<BrainChatResponse> ChatAsync(
+            string query,
+            string mode,
+            string? tenantId,
+            string? conversationId,
+            int topK = 5,
+            CancellationToken cancellationToken = default)
+        {
+            return Task.FromResult(new BrainChatResponse(
+                Answer: "Stub response",
+                Confidence: 0.9,
+                Evidence: Array.Empty<BrainChatEvidence>(),
+                ReasoningSteps: Array.Empty<BrainChatReasoningStep>(),
+                ProactiveSuggestions: Array.Empty<string>()));
         }
     }
 }

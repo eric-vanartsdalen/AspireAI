@@ -46,6 +46,27 @@ builder.Services.AddHttpClient<IDocumentProcessingCoordinator, DocumentProcessin
     });
 #pragma warning restore EXTEXP0001
 
+#pragma warning disable EXTEXP0001
+builder.Services.AddHttpClient<IBrainChatClient, BrainChatClient>((serviceProvider, client) =>
+    {
+        var configuration = serviceProvider.GetRequiredService<IConfiguration>();
+        var configuredBaseAddress = configuration["BRAIN_GATEWAY_URL"]
+            ?? Environment.GetEnvironmentVariable("BRAIN_GATEWAY_URL");
+        client.BaseAddress = new Uri(
+            string.IsNullOrWhiteSpace(configuredBaseAddress)
+                ? "http://localhost:5158/"
+                : configuredBaseAddress.EndsWith('/') ? configuredBaseAddress : $"{configuredBaseAddress}/");
+        client.Timeout = TimeSpan.FromMinutes(3);
+    })
+    .RemoveAllResilienceHandlers()
+    .AddStandardResilienceHandler(options =>
+    {
+        options.TotalRequestTimeout.Timeout = TimeSpan.FromMinutes(4);
+        options.AttemptTimeout.Timeout = TimeSpan.FromMinutes(2);
+        options.CircuitBreaker.SamplingDuration = TimeSpan.FromMinutes(4);
+    });
+#pragma warning restore EXTEXP0001
+
 // Add HttpClient factory for general use
 builder.Services.AddHttpClient();
 builder.Services.AddHttpContextAccessor();
