@@ -1437,3 +1437,46 @@ Bob's Ollama contention fix moved LightRAG handoff after page/claim embedding wo
 
 **Confidence:**
 High — Three independent test failures all exhibit the same LightRAG stuck-in-busy symptom. This is a systematic processing pipeline failure, not flaky test behavior.
+
+
+---
+
+### 2026-04-15 — Fixed Upload/E2E Test Failures: Async Dispatch and Event Loop Starvation
+
+**Task:** Reproduce and fix failing BasicAspireAppHostTests.FlowEndToEnd and FileUploadControllerTests.
+
+**Status:** ✅ COMPLETE — 8/8 tests passing
+
+**Root Causes Identified:**
+1. **Test Assumption Mismatch:**
+   - Tests expected synchronous completion; app uses fire-and-forget background processing
+   - FileUploadController.UploadFile() now queues automatic processing on a delayed task after the upload response returns with status="uploaded"
+   - FileUploadControllerTests must poll background queue dispatch instead of asserting sync completion
+
+2. **Python Event Loop Starvation (Jeff's fix):**
+   - BasicAspireAppHostTests.FlowEndToEnd was timing out while polling GET /processing/status/{id}
+   - Python process_document_task was sync-heavy (Docling extraction, Neo4j writes, embedding) on the FastAPI event loop
+   - Status polling requests hit client timeouts during busy processing
+   - Jeff moved heavy work to thread-pool via syncio.to_thread(...), restored event loop responsiveness
+
+**Test Updates:**
+- FileUploadControllerTests: Changed to poll coordinator for background queue dispatch with reasonable waits
+- BasicAspireAppHostTests: Treat transient HttpClient.Timeout during status polling as retryable within overall processing window (don't fail immediately)
+
+**Decisions Captured:**
+1. "Upload test scaffolding must respect async dispatch" — Buster
+2. "Keep Python processing off the FastAPI event loop" — Jeff
+3. "Do not use GitHub Issues for this repo" — Eric (directive)
+
+**Key Files:**
+- src\AspireApp.Web\Controllers\FileUploadController.cs
+- src\AspireApp.WebTest\Tests\FileUploadControllerTests.cs
+- src\AspireApp.WebTest\Tests\BasicAspireAppHostTests.cs
+- src\AspireApp.PythonServices\app\routers\processing.py (Jeff's fix)
+
+**Validation:** dotnet test ... --filter "FullyQualifiedName~BasicAspireAppHostTests.FlowEndToEnd|FullyQualifiedName~FileUploadControllerTests" — **8/8 passed**
+
+**Lessons:**
+- Async dispatch patterns require test-time understanding of fire-and-forget semantics, not just implementation details
+- FastAPI event loop can be easily starved by sync-heavy background tasks; always move heavy work to thread pool
+- Transient timeouts during service startup should be retryable, not fatal
