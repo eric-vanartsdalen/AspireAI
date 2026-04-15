@@ -22,5 +22,8 @@ python-json-logger==4.0.*
 # Test runner for the existing smoke and regression suite
 pytest==9.0.*
 
+# Agent framework for Phase 3b Critique mode (PydanticAI - swappable design)
+pydantic-ai==0.0.*
+
 # Note: docling and docling-ibm-models can cause long build times due to CUDA dependencies
 # They will be installed in the full Dockerfile with proper timeout handling

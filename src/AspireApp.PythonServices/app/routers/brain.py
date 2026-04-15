@@ -3,6 +3,8 @@ BRAIN chat router — /brain/chat endpoint for knowledge-augmented responses.
 
 Phase 3a: Regular mode retrieves context via BrainKnowledgeRetriever,
 augments the prompt with evidence, and generates via Ollama.
+
+Phase 3b: Critique mode uses multi-agent pipeline for thorough validation.
 """
 
 import asyncio
@@ -13,6 +15,7 @@ import uuid
 from fastapi import APIRouter, Depends, HTTPException
 
 from ..brain.knowledge import BrainKnowledgeRetriever
+from ..brain.reasoning import PydanticAIProvider, CritiquePipeline
 from ..contracts import (
     BrainChatRequest,
     ChatMode,
@@ -46,6 +49,27 @@ def get_brain_retriever(
     embedding: EmbeddingService = Depends(get_embedding_service),
 ) -> BrainKnowledgeRetriever:
     return BrainKnowledgeRetriever(neo4j_service=neo4j, embedding_service=embedding)
+
+
+def get_agent_provider(
+    llm: LlmChatService = Depends(get_llm_chat_service),
+) -> PydanticAIProvider:
+    """Factory for PydanticAI agent provider (swappable)."""
+    return PydanticAIProvider(
+        model_name=llm.model_name,
+        endpoint=llm.endpoint,
+    )
+
+
+def get_critique_pipeline(
+    agent_provider: PydanticAIProvider = Depends(get_agent_provider),
+    retriever: BrainKnowledgeRetriever = Depends(get_brain_retriever),
+) -> CritiquePipeline:
+    """Factory for critique pipeline orchestrator."""
+    return CritiquePipeline(
+        agent_provider=agent_provider,
+        knowledge_retriever=retriever,
+    )
 
 
 def _build_context_block(items: list[KnowledgeItem]) -> str:
@@ -93,21 +117,52 @@ async def brain_chat(
     request: BrainChatRequest,
     retriever: BrainKnowledgeRetriever = Depends(get_brain_retriever),
     llm: LlmChatService = Depends(get_llm_chat_service),
+    critique_pipeline: CritiquePipeline = Depends(get_critique_pipeline),
 ) -> ReasonResponse:
     """
     Knowledge-augmented chat endpoint.
 
     Regular mode: retrieve context → augment prompt → generate response.
-    Critique mode: returns 501 until Phase 3b agent framework is ready.
+    Critique mode: multi-agent pipeline (Planner → Retriever → Synthesizer → Critic).
     """
     correlation_id = request.correlation_id or uuid.uuid4().hex
 
+    # Route to critique pipeline if critique mode requested
     if request.mode == ChatMode.CRITIQUE:
-        raise HTTPException(
-            status_code=501,
-            detail="Critique mode requires the Phase 3b agent framework. Use regular mode.",
-        )
+        if not critique_pipeline.agent_provider.is_available():
+            raise HTTPException(
+                status_code=503,
+                detail="Critique mode unavailable: agent provider not configured (check OLLAMA_ENDPOINT).",
+            )
 
+        t0 = time.monotonic()
+        try:
+            result = await critique_pipeline.execute(
+                query=request.query,
+                tenant_id=request.tenant_id,
+                correlation_id=correlation_id,
+                top_k=request.top_k,
+            )
+            duration_ms = round((time.monotonic() - t0) * 1000)
+            logger.info(f"[{correlation_id}] Critique pipeline completed in {duration_ms}ms")
+
+            return ReasonResponse(
+                tenant_id=request.tenant_id,
+                correlation_id=correlation_id,
+                answer=result["answer"],
+                confidence=result["confidence"],
+                evidence=result["evidence"],
+                reasoning_steps=result["reasoning_steps"],
+                proactive_suggestions=result["proactive_suggestions"],
+            )
+        except Exception as e:
+            logger.error(f"[{correlation_id}] Critique pipeline failed: {e}", exc_info=True)
+            raise HTTPException(
+                status_code=500,
+                detail=f"Critique pipeline failed: {str(e)[:100]}",
+            )
+
+    # Regular mode path (existing implementation)
     if not llm.is_available():
         raise HTTPException(
             status_code=503,

@@ -6,7 +6,7 @@ Working task breakdown for the [BRAIN Plan](Plan.md). Tracks what's been accompl
 
 Note: This will be a living document.
 
-**Last Updated:** 2026-04-22 — **P2-C COMPLETE:** Vector search wired into `SemanticKnowledgeRetriever` and `/rag/semantic-search` endpoint; embedding-first with text-CONTAINS fallback when embedding service is unavailable. All 92 Python tests pass. **Next:** Phase 3a — Regular mode RAG-enhanced chat (define ChatMode contract, implement `/brain/chat`, reroute Blazor through Gateway); (P3) agent framework selection for Critique mode.
+**Last Updated:** 2026-04-22 — **P2-C COMPLETE:** Vector search wired into `SemanticKnowledgeRetriever` and `/rag/semantic-search` endpoint; embedding-first with text-CONTAINS fallback when embedding service is unavailable. All 92 Python tests pass. **P3a COMPLETE:** Regular mode implemented. **NEXT:** Phase 3b — Critique mode with **PydanticAI** agent framework (swappable architecture via IAgentProvider interface).
 
 ---
 
@@ -251,41 +251,60 @@ Note: This will be a living document.
 
 ---
 
-## Phase 3b: Critique Mode — Agentic Deep Analysis (Requires Agent Framework)
+## Phase 3b: Critique Mode — Agentic Deep Analysis (PydanticAI)
 
-> **BLOCKED** until agent framework selection (deadline: 2026-04-24). Builds on Phase 3a's retrieval and gateway infrastructure.
+> **UNBLOCKED** — Agent framework selected: **PydanticAI** with swappable architecture. Builds on Phase 3a's retrieval and gateway infrastructure.
 >
-> **Data Flow:** User Question → Gateway `/brain/chat` (mode=critique) → Python Reasoning Layer (Planner → Retriever → Synthesizer → Critic agents) → Vetted `ReasonResponse` with evidence chain + reasoning steps
+> **Data Flow:** User Question → Gateway `/brain/chat` (mode=critique) → Python AgentOrchestrator → IAgentProvider (PydanticAIProvider) → Multi-agent pipeline (Retriever → Synthesizer → Critic) → Evidence-backed response with reasoning steps
+>
+> **Key Design:** Framework abstracted behind `IAgentProvider` interface. Swap PydanticAI for LangGraph/CrewAI via env var + provider implementation. Zero refactor of routers/contracts.
 
-### Agent Framework Setup — BLOCKING GATE
+### Agent Framework Setup — ✅ DECISION COMPLETE
 
-- [ ] **[URGENT]** Select and integrate agent framework (evaluate LangGraph, CrewAI, Autogen)
-   - Evaluation criteria: Tool integration ease, multi-agent conversation support, Python ecosystem maturity, documentation quality
-   - Decision: End of sprint (2026-04-24)
-   - Owner: Bob (architecture decision), Jarvis (Python prototyping), Jeff (C# backend compatibility check)
-- [ ] Define agent base contract: input, output, tools, memory access (align with BrainQueryRequest/ReasonResponse contracts)
+- [x] **[COMPLETE]** Select agent framework → **PydanticAI** (lightweight, Pydantic-native, type-safe)
+- [x] **[COMPLETE]** Design swappable architecture → `IAgentProvider` abstraction layer
+- [ ] Add `pydantic-ai==0.0.14` to `requirements.txt`
+- [ ] Define agent base contract: `IAgentProvider` interface with `reason()` method (align with `BrainChatRequest`/`ReasonResponse`)
 - [ ] Set up agent orchestration pipeline in `app/brain/reasoning/`
 
-### Core Agents
+### Agent Provider Interface (Jarvis)
 
-- [ ] Retriever Agent - queries Knowledge Layer with confidence-aware ranking
-- [ ] Synthesizer Agent - combines multiple knowledge results into coherent responses
-- [ ] Critic Agent - evaluates response quality, identifies gaps, scores confidence
-- [ ] Planner Agent - decomposes complex questions into reasoning steps
-- [ ] Proactive Monitor - detects contradictions, generates unsolicited insights
+- [ ] **Create `app/brain/reasoning/agent_provider.py`** — Define `IAgentProvider` ABC with `reason()` and `get_provider_name()` methods
+- [ ] **Create `app/brain/reasoning/orchestrator.py`** — Implement `AgentOrchestrator` (framework-agnostic coordinator)
+- [ ] **Create `app/brain/reasoning/agent_factory.py`** — Factory for provider selection via `AGENT_PROVIDER` env var
 
-### Critique Pipeline
+### PydanticAI Provider Implementation (Jarvis)
 
-- [ ] Implement `POST /brain/chat` (mode=critique) pipeline: Planner → Retriever → Synthesizer → Critic
-- [ ] Add session memory - conversation context persists across turns
-- [ ] Return `ReasonResponse` with answer, confidence, evidence chain, reasoning steps, proactive suggestions
+- [ ] **Create `app/brain/reasoning/pydantic_ai_provider.py`** — Implement `PydanticAIProvider(IAgentProvider)`
+- [ ] Initialize PydanticAI agents (Retriever, Synthesizer, Critic) using `pydantic_ai.Agent`
+- [ ] Wire to Ollama via `pydantic_ai.models.OllamaModel`
+- [ ] Implement `reason()` method — orchestrate Retriever → Synthesizer → Critic pipeline
+- [ ] Return `ReasonResponse` with populated `reasoning_steps` showing agent chain
+- [ ] Add system prompts for each agent role (retrieval specialist, synthesizer, quality critic)
 
-### Critique UI
+### Critique Pipeline Wiring (Jarvis)
+
+- [ ] **Update `app/routers/brain.py`** — Remove 501 stub for Critique mode
+- [ ] Call `AgentOrchestrator.process_critique_request()` when `mode == ChatMode.CRITIQUE`
+- [ ] Keep Regular mode path unchanged (already implemented)
+- [ ] Initialize singleton `AgentOrchestrator` with `create_agent_provider()` factory
+- [ ] Add session memory - conversation context persists across turns (optional for P3b)
+
+### Critique UI (Jeff)
 
 - [ ] Enable Critique toggle in mode selector (remove disabled state)
 - [ ] Add "BRAIN is thinking" indicator showing multi-step reasoning progress
-- [ ] Render reasoning steps visible in chat UI
-- [ ] Add proactive suggestion panel - unsolicited insights from Proactive Monitor
+- [ ] Render reasoning steps visible in chat UI (display `reasoning_steps` array)
+- [ ] Add expandable reasoning detail panel (optional click-to-expand for step-by-step view)
+
+### Testing (Buster)
+
+- [ ] Unit tests for `IAgentProvider` contract compliance
+- [ ] Mock `IAgentProvider` for fast UI tests
+- [ ] Integration test: Critique mode end-to-end (user query → agent reasoning → response with steps)
+- [ ] Test: Factory pattern allows env-var-based provider swap
+- [ ] Test: Mock swap (replace provider without code changes)
+- [ ] Performance benchmark: Critique mode latency vs Regular mode
 
 ---
 
@@ -359,8 +378,8 @@ Note: This will be a living document.
 | P2-A | Upload to CanonicalDocument to Neo4j storage end-to-end | Complete | 2 |
 | P2-B | `/brain/query` returns confidence-scored results (no default fallback) | ✅ **COMPLETE** — LightRAG enriches from Neo4j when provenance exists; unresolved confidence fails closed. Live proof: `BasicAspireAppHostTests.BrainQueryReturnsConfidenceEnrichedResults`. | 2 |
 | P2-C | Neo4j vector indexes queryable | ✅ **COMPLETE** — Vector search wired into `SemanticKnowledgeRetriever` (embedding-first, text fallback). `/rag/semantic-search` upgraded. 6 new tests, 92 total pass. | 2 |
-| P3-A | `/brain/chat` returns evidence-backed response | **Blocked on agent framework selection** (due end of sprint 2026-04-24). Once framework chosen, implement Retriever + Synthesizer agents. | 3 |
-| P3-B | Multi-step reasoning visible | Blocked on P3-A (agent framework + base agents). Requires Planner + Critic agent implementations. | 3 |
+| P3-A | `/brain/chat` (mode=critique) returns evidence-backed response | **Unblocked** — PydanticAI selected. Jarvis implements `PydanticAIProvider` and orchestrator. | 3 |
+| P3-B | Multi-step reasoning visible in `reasoning_steps` | Depends on P3-A. `PydanticAIProvider.reason()` populates reasoning steps for each agent. | 3 |
 | P3-C | Proactive Monitor flags contradiction | Blocked on P3-A. Requires background agent monitoring Claim nodes for conflicts. | 3 |
 | P3-D | Blazor chat routes through Gateway (no direct Ollama) | Blocked on P3-A `/brain/chat` implementation. UI integration via C# `BrainBackendClient` to Gateway. | 3 |
 | P3-G | Proactive suggestion appears without prompting | Blocked on P3-C (Proactive Monitor completion). Requires UI panel for unsolicited insights. | 3 |
@@ -374,7 +393,7 @@ Note: This will be a living document.
 
 - **[P2-B Complete]** Confidence fail-closed behavior implemented. `LightRagRetriever._build_item()` returns None when confidence cannot be resolved (provenance missing or Neo4j enrichment returns None), filtering results out and forcing semantic fallback. Validated by `test_lightrag_retriever_fails_closed_when_neo4j_returns_none` and `test_lightrag_retriever_without_neo4j_service_fails_closed`.
 
-- **[Agent Framework Selection]** LangGraph, CrewAI, and Autogen are all viable. Selection should happen early in Phase 3 based on: ease of tool integration, multi-agent conversation support, and Python ecosystem maturity. Prototype with 2 candidates before committing.
+- **[Agent Framework Selection — RESOLVED]** **PydanticAI** selected for Phase 3b. Rationale: Pydantic-native (aligns with existing contracts), lightweight, type-safe, Ollama-compatible. Abstracted behind `IAgentProvider` interface for swappability (env-var swap to LangGraph/CrewAI/custom if needed). Decision document: `.squad/decisions/inbox/bob-pydanticai-architecture.md`.
 
 - **[Confidence Calibration]** Source-type heuristics (textbook=0.9, web=0.5) are starting points. Real calibration requires evaluation data and feedback loops (Phase 4). Don't over-invest in scoring precision before Phase 4.
 

@@ -142,7 +142,7 @@ Work completed before the BRAIN pivot. These are foundations that survive:
 
 ### Deliverables
 
-- [ ] Choose and integrate agent framework (LangGraph, CrewAI, or custom Python agents)
+- [x] Choose and integrate agent framework → **PydanticAI** (swappable via `IAgentProvider` interface)
 - [ ] Build Retriever agent — queries Knowledge Layer with confidence-aware ranking
 - [ ] Build Synthesizer agent — combines multiple knowledge results into coherent responses
 - [ ] Build Critic agent — evaluates response quality, identifies gaps, scores confidence
@@ -281,7 +281,7 @@ From adversarial review — risks that could derail the pivot:
 | # | Risk | Severity | Mitigation |
 |---|------|----------|------------|
 | 1 | Scope creep — BRAIN vision is larger than available effort | High | MVP acceptance gates are hard constraints; each phase stands alone |
-| 2 | Agent framework immaturity — Python agent tools evolve rapidly | Medium | Build against BRAIN's own contracts, not framework-specific APIs |
+| 2 | Agent framework immaturity — Python agent tools evolve rapidly | **Mitigated** | PydanticAI abstracted behind `IAgentProvider` interface; swap frameworks via env var without code changes |
 | 3 | Confidence scoring calibration — garbage in, garbage out | Medium | Start with source-type heuristics; add LLM-based scoring incrementally |
 | 4 | Neo4j vector index limitations vs. dedicated vector DB | Low | Abstracted behind `IKnowledgeRetriever`; swap to Qdrant if needed |
 | 5 | LightRAG divergence — maintaining two retrieval paths adds cost | Medium | LightRAG investment capped; BRAIN path is primary from Phase 2 |

@@ -125,7 +125,9 @@ class TestBrainChatEndpoint:
         mock_llm.is_available.return_value = True
         mock_llm.generate.return_value = "Machine learning is a subset of AI."
 
-        response = asyncio.run(brain_chat(request, retriever=mock_retriever, llm=mock_llm))
+        mock_pipeline = MagicMock()  # Not used in regular mode
+
+        response = asyncio.run(brain_chat(request, retriever=mock_retriever, llm=mock_llm, critique_pipeline=mock_pipeline))
 
         assert isinstance(response, ReasonResponse)
         assert response.answer == "Machine learning is a subset of AI."
@@ -137,28 +139,34 @@ class TestBrainChatEndpoint:
         assert response.reasoning_steps[0].step == "retrieval"
         assert response.reasoning_steps[1].step == "generation"
 
-    def test_critique_mode_returns_501(self):
+    def test_critique_mode_with_unavailable_provider_returns_503(self):
         request = _make_request(mode=ChatMode.CRITIQUE)
         mock_retriever = AsyncMock()
         mock_llm = MagicMock(spec=LlmChatService)
         mock_llm.is_available.return_value = True
 
+        # Create mock critique pipeline with unavailable provider
+        mock_pipeline = MagicMock()
+        mock_pipeline.agent_provider.is_available.return_value = False
+
         from fastapi import HTTPException
 
         with pytest.raises(HTTPException) as exc_info:
-            asyncio.run(brain_chat(request, retriever=mock_retriever, llm=mock_llm))
-        assert exc_info.value.status_code == 501
+            asyncio.run(brain_chat(request, retriever=mock_retriever, llm=mock_llm, critique_pipeline=mock_pipeline))
+        assert exc_info.value.status_code == 503
+        assert "agent provider not configured" in exc_info.value.detail.lower()
 
     def test_llm_unavailable_returns_503(self):
         request = _make_request()
         mock_retriever = AsyncMock()
         mock_llm = MagicMock(spec=LlmChatService)
         mock_llm.is_available.return_value = False
+        mock_pipeline = MagicMock()
 
         from fastapi import HTTPException
 
         with pytest.raises(HTTPException) as exc_info:
-            asyncio.run(brain_chat(request, retriever=mock_retriever, llm=mock_llm))
+            asyncio.run(brain_chat(request, retriever=mock_retriever, llm=mock_llm, critique_pipeline=mock_pipeline))
         assert exc_info.value.status_code == 503
 
     def test_retrieval_failure_falls_back_to_pure_llm(self):
@@ -171,7 +179,9 @@ class TestBrainChatEndpoint:
         mock_llm.is_available.return_value = True
         mock_llm.generate.return_value = "Answer without context."
 
-        response = asyncio.run(brain_chat(request, retriever=mock_retriever, llm=mock_llm))
+        mock_pipeline = MagicMock()
+
+        response = asyncio.run(brain_chat(request, retriever=mock_retriever, llm=mock_llm, critique_pipeline=mock_pipeline))
 
         assert response.answer == "Answer without context."
         assert response.confidence == 0.1
@@ -193,10 +203,12 @@ class TestBrainChatEndpoint:
         mock_llm.is_available.return_value = True
         mock_llm.generate.side_effect = RuntimeError("Ollama timeout")
 
+        mock_pipeline = MagicMock()
+
         from fastapi import HTTPException
 
         with pytest.raises(HTTPException) as exc_info:
-            asyncio.run(brain_chat(request, retriever=mock_retriever, llm=mock_llm))
+            asyncio.run(brain_chat(request, retriever=mock_retriever, llm=mock_llm, critique_pipeline=mock_pipeline))
         assert exc_info.value.status_code == 502
 
     def test_empty_retrieval_still_generates(self):
@@ -213,7 +225,9 @@ class TestBrainChatEndpoint:
         mock_llm.is_available.return_value = True
         mock_llm.generate.return_value = "General answer."
 
-        response = asyncio.run(brain_chat(request, retriever=mock_retriever, llm=mock_llm))
+        mock_pipeline = MagicMock()
+
+        response = asyncio.run(brain_chat(request, retriever=mock_retriever, llm=mock_llm, critique_pipeline=mock_pipeline))
 
         assert response.answer == "General answer."
         assert len(response.evidence) == 0
