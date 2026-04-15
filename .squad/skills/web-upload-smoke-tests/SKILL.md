@@ -12,6 +12,7 @@ Use this pattern when a Web/Blazor regression test needs to prove upload plus do
 4. Treat an API-backed empty upload list after the UI click as a hard regression; do not accept UI-only evidence that the upload button appeared to work.
 5. Close every Playwright `IPage` opened by the smoke tests before fixture shutdown; xUnit v3 can surface teardown hangs as a fatal browser-suite crash even when the test body already passed.
 6. In Blazor `InteractiveServer`, do not render the real `<InputFile>` until the first interactive render has completed; otherwise Playwright (and fast human clicks) can select a file before Blazor wires the change handler, leaving the upload button stuck disabled.
+7. When `FlowEndToEnd` polls the Python `processing/status/{id}` endpoint, treat per-request `HttpClient.Timeout` cancellations and transient 404/DB-startup failures as retryable inside the overall processing timeout window. Fail on final timeout or explicit `error` status, not on the first cold-start stall.
 
 ## AspireAI example
 

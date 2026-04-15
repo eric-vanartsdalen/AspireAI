@@ -2,6 +2,7 @@ extern alias web;
 
 using System.Security.Claims;
 using System.Reflection;
+using System.Diagnostics;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
@@ -223,6 +224,7 @@ public sealed class FileUploadControllerTests
             var ok = Assert.IsAssignableFrom<ObjectResult>(result);
             Assert.Equal(StatusCodes.Status200OK, ok.StatusCode ?? StatusCodes.Status200OK);
             var storedFileId = await context.Datasources.Select(fileRecord => fileRecord.Id).SingleAsync(TestContext.Current.CancellationToken);
+            await WaitForQueuedDocumentAsync(processingCoordinator, storedFileId);
             Assert.Equal([storedFileId], processingCoordinator.QueuedDocumentIds);
         }
         finally
@@ -370,6 +372,22 @@ public sealed class FileUploadControllerTests
         {
             Directory.Delete(path, recursive: true);
         }
+    }
+
+    private static async Task WaitForQueuedDocumentAsync(FakeDocumentProcessingCoordinator processingCoordinator, int documentId, int timeoutMs = 2_000)
+    {
+        var stopwatch = Stopwatch.StartNew();
+        while (stopwatch.ElapsedMilliseconds < timeoutMs)
+        {
+            if (processingCoordinator.QueuedDocumentIds.Contains(documentId))
+            {
+                return;
+            }
+
+            await Task.Delay(25);
+        }
+
+        Assert.Fail($"Timed out waiting for automatic processing to queue document {documentId}.");
     }
 
     private sealed class FakeDocumentProcessingCoordinator : IDocumentProcessingCoordinator

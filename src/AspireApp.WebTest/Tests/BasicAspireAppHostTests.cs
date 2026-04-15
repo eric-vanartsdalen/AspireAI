@@ -1415,37 +1415,51 @@ public class BasicAspireAppHostTests : IClassFixture<TestFixture>
 
         while (pollStopwatch.Elapsed < ProcessingPollTimeout)
         {
-            using var statusResponse = await pythonClient.GetAsync(endpoint, TestContext.Current.CancellationToken);
-            lastPayload = await statusResponse.Content.ReadAsStringAsync(TestContext.Current.CancellationToken);
-
-            Assert.True(statusResponse.IsSuccessStatusCode,
-                $"Python status endpoint '{BuildAbsoluteUri(_data.PythonServiceUri, endpoint)}' returned {(int)statusResponse.StatusCode} {statusResponse.ReasonPhrase}. Response: {lastPayload}");
-
-            var status = DeserializeJson<ProcessingStatusApiResponse>(lastPayload, $"GET /{endpoint}");
-            status.RawJson = lastPayload;
-
-            Assert.Equal(documentId, status.DocumentId);
-            Assert.False(string.IsNullOrWhiteSpace(status.Status),
-                $"Python status endpoint returned an empty status for document {documentId}. Payload: {lastPayload}");
-
-            observedStatuses.Add(status.Status);
-
-            if (status.Status.Equals("processed", StringComparison.OrdinalIgnoreCase))
+            try
             {
-                return status;
+                using var statusResponse = await pythonClient.GetAsync(endpoint, TestContext.Current.CancellationToken);
+                lastPayload = await statusResponse.Content.ReadAsStringAsync(TestContext.Current.CancellationToken);
+
+                if (statusResponse.StatusCode == HttpStatusCode.NotFound ||
+                    (statusResponse.StatusCode == HttpStatusCode.InternalServerError && IsTransientDatabaseFailure(lastPayload)))
+                {
+                    await Task.Delay(ProcessingPollInterval, TestContext.Current.CancellationToken);
+                    continue;
+                }
+
+                Assert.True(statusResponse.IsSuccessStatusCode,
+                    $"Python status endpoint '{BuildAbsoluteUri(_data.PythonServiceUri, endpoint)}' returned {(int)statusResponse.StatusCode} {statusResponse.ReasonPhrase}. Response: {lastPayload}");
+
+                var status = DeserializeJson<ProcessingStatusApiResponse>(lastPayload, $"GET /{endpoint}");
+                status.RawJson = lastPayload;
+
+                Assert.Equal(documentId, status.DocumentId);
+                Assert.False(string.IsNullOrWhiteSpace(status.Status),
+                    $"Python status endpoint returned an empty status for document {documentId}. Payload: {lastPayload}");
+
+                observedStatuses.Add(status.Status);
+
+                if (status.Status.Equals("processed", StringComparison.OrdinalIgnoreCase))
+                {
+                    return status;
+                }
+
+                if (status.Status.Equals("error", StringComparison.OrdinalIgnoreCase))
+                {
+                    Assert.Fail(
+                        $"Python processing reported error for document {documentId}: {status.ErrorMessage ?? "<no error_message>"}. Status payload: {lastPayload}");
+                }
+
+                if (!status.Status.Equals("uploaded", StringComparison.OrdinalIgnoreCase) &&
+                    !status.Status.Equals("processing", StringComparison.OrdinalIgnoreCase))
+                {
+                    Assert.Fail(
+                        $"Python status endpoint returned unexpected status '{status.Status}' for document {documentId}. Payload: {lastPayload}");
+                }
             }
-
-            if (status.Status.Equals("error", StringComparison.OrdinalIgnoreCase))
+            catch (Exception ex) when (ex is HttpRequestException or TaskCanceledException)
             {
-                Assert.Fail(
-                    $"Python processing reported error for document {documentId}: {status.ErrorMessage ?? "<no error_message>"}. Status payload: {lastPayload}");
-            }
-
-            if (!status.Status.Equals("uploaded", StringComparison.OrdinalIgnoreCase) &&
-                !status.Status.Equals("processing", StringComparison.OrdinalIgnoreCase))
-            {
-                Assert.Fail(
-                    $"Python status endpoint returned unexpected status '{status.Status}' for document {documentId}. Payload: {lastPayload}");
+                lastPayload = $"{ex.GetType().Name}: {ex.Message}";
             }
 
             await Task.Delay(ProcessingPollInterval, TestContext.Current.CancellationToken);

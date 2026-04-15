@@ -1,3 +1,4 @@
+import asyncio
 import json
 import shutil
 import os
@@ -32,6 +33,25 @@ def get_lightrag_handoff_service():
 
 
 async def process_document_task(
+    document_id: int,
+    db: DatabaseService,
+    docling,  # Don't type hint since it could be either service
+    neo4j: Neo4jService,
+    lightrag_handoff: LightRagHandoffService | None = None,
+    mark_processing_started: bool = True,
+):
+    await asyncio.to_thread(
+        _process_document_task_sync,
+        document_id,
+        db,
+        docling,
+        neo4j,
+        lightrag_handoff,
+        mark_processing_started,
+    )
+
+
+def _process_document_task_sync(
     document_id: int,
     db: DatabaseService,
     docling,  # Don't type hint since it could be either service

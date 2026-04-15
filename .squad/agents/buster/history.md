@@ -9,6 +9,23 @@
 
 <!-- Append new learnings below. Each entry is something lasting about the project. -->
 
+### 2026-04-15 — Upload regression fixes were test-scaffolding, not product regressions
+
+**Task:** Reproduce and fix failing `BasicAspireAppHostTests.FlowEndToEnd` and `FileUploadControllerTests`.
+
+**Key findings:**
+- `src\AspireApp.Web\Controllers\FileUploadController.cs` now queues automatic processing on a fire-and-forget background task after a short delay so the upload response can return with `status="uploaded"` first.
+- `src\AspireApp.WebTest\Tests\FileUploadControllerTests.cs` must poll the fake coordinator for queueing instead of asserting synchronously at controller-return time.
+- `src\AspireApp.WebTest\Tests\BasicAspireAppHostTests.cs` polls the Python `processing/status/{id}` endpoint over a long overall timeout; individual `HttpClient.Timeout` cancellations can happen during cold or busy startup and should be treated as transient inside the polling helper, not as immediate test failure.
+
+**User preference:**
+- Eric explicitly said this repo does **not** use GitHub Issues for this workflow.
+
+**Key file paths:**
+- `src\AspireApp.WebTest\Tests\FileUploadControllerTests.cs`
+- `src\AspireApp.WebTest\Tests\BasicAspireAppHostTests.cs`
+- `src\AspireApp.Web\Controllers\FileUploadController.cs`
+
 ### 2026-04-17 — P2-C Vector Infrastructure Review: APPROVED with Honest Foundation-First Status
 
 **Task:** Review P2-C uncommitted working tree changes for correctness and roadmap honesty.

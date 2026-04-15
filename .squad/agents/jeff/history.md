@@ -9,6 +9,27 @@
 
 <!-- Append new learnings below. Each entry is something lasting about the project. -->
 
+### 2026-04-17 — Python processing background work must leave FastAPI responsive
+
+**Status:** Implemented and validated for the current upload regressions.
+
+**Key insight:**
+- `src\AspireApp.PythonServices\app\routers\processing.py` exposed `process_document_task` as an `async` background task, but the body was effectively synchronous Docling/Neo4j/Ollama work.
+- Under FastAPI `BackgroundTasks`, that shape can starve the event loop and make `GET /processing/status/{id}` time out during active document processing, even though the job is still running.
+- Keeping the public async entrypoint but offloading the blocking body with `asyncio.to_thread(...)` preserves existing callers/tests and keeps status polling responsive.
+
+**Testing pattern:**
+- `src\AspireApp.Web\Controllers\FileUploadController.cs` queues automatic processing after the response, so `src\AspireApp.WebTest\Tests\FileUploadControllerTests.cs` must assert queueing eventually, not synchronously at controller return time.
+
+**Validation:**
+- `dotnet test src\AspireApp.WebTest\AspireApp.WebTest.csproj --no-build --no-restore --filter "FullyQualifiedName~BasicAspireAppHostTests.FlowEndToEnd|FullyQualifiedName~FileUploadControllerTests"`
+- `python -m pytest src\AspireApp.PythonServices\tests\test_processing_pipeline_regression.py -q`
+
+**Key paths:**
+- `src\AspireApp.PythonServices\app\routers\processing.py`
+- `src\AspireApp.WebTest\Tests\FileUploadControllerTests.cs`
+- `src\AspireApp.Web\Controllers\FileUploadController.cs`
+
 ### 2026-04-17 — Upload Status Race Condition: Automatic Processing Delays for Test Stability
 
 **Status:** Partially fixed; requires test update from Buster.

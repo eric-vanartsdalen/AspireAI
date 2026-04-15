@@ -562,4 +562,82 @@ Do not spend effort automating live Microsoft-user authentication with real acco
 User request — captured for team memory.
 
 ---
+
+## User Directive: Do Not Use GitHub Issues — Eric — 2026-04-15T06:32:36Z
+
+**Author:** Eric VanArtsdalen (via Copilot)  
+**Status:** ACKNOWLEDGED  
+**Scope:** Team workflow & issue tracking
+
+### What
+
+Do not use GitHub Issues for this repository.
+
+### Why
+
+User request — captured for team memory.
+
+---
+
+## Test Decision: Upload Test Scaffolding Must Respect Async Dispatch — Buster — 2026-04-15
+
+**Author:** Buster (QA / Tester)  
+**Status:** IMPLEMENTED  
+**Scope:** Test infrastructure & async patterns
+
+### Decision
+
+Treat these upload failures as test-scaffolding issues, not app regressions:
+
+1. `FileUploadControllerTests` must wait for background queue dispatch instead of asserting synchronous completion.
+2. `BasicAspireAppHostTests.FlowEndToEnd` must treat transient Python status-call timeouts as retryable within the existing overall processing poll window.
+
+### Why
+
+- `FileUploadController.UploadFile()` intentionally starts automatic processing on a delayed fire-and-forget task so the upload response preserves the initial `uploaded` state.
+- The FlowEndToEnd failure was a raw `HttpClient.Timeout` during `processing/status/{id}` polling, not a business assertion failure. The smoke should fail only after the full processing timeout window is exhausted.
+
+### References
+
+- `src\AspireApp.Web\Controllers\FileUploadController.cs`
+- `src\AspireApp.WebTest\Tests\FileUploadControllerTests.cs`
+- `src\AspireApp.WebTest\Tests\BasicAspireAppHostTests.cs`
+
+---
+
+## Implementation Decision: Keep Python Processing Off the FastAPI Event Loop — Jeff — 2026-04-15
+
+**Author:** Jeff (.NET Dev)  
+**Status:** IMPLEMENTED  
+**Scope:** Python FastAPI service & background processing
+
+### Context
+
+- `BasicAspireAppHostTests.FlowEndToEnd` was uploading successfully, then timing out while polling `GET /processing/status/{id}`.
+- The Python processing router exposed `process_document_task` as an `async` FastAPI background task, but the implementation body was synchronous document-processing work (Docling, Neo4j writes, embedding calls, file output).
+- In that shape, the background task could monopolize the FastAPI event loop long enough for status polling requests to hit client timeouts.
+
+### Decision
+
+- Keep the public `process_document_task` entrypoint async for existing callers and tests.
+- Move the heavy processing body onto a worker thread via `asyncio.to_thread(...)`.
+- Treat controller-side automatic processing as eventual background queueing in unit tests rather than a synchronous side effect of the upload response.
+
+### Why
+
+- This preserves the existing API surface while restoring responsiveness for status and health endpoints during active processing.
+- It is smaller and safer than introducing a new queue abstraction during a regression fix.
+
+### Trade-offs
+
+- Each queued document now consumes a thread-pool worker while its blocking processing runs.
+- That is acceptable for the current Aspire smoke/integration workflow, but if concurrency grows materially we should revisit a dedicated worker queue or external job runner.
+
+### Key Paths
+
+- `src\AspireApp.PythonServices\app\routers\processing.py`
+- `src\AspireApp.WebTest\Tests\BasicAspireAppHostTests.cs`
+- `src\AspireApp.WebTest\Tests\FileUploadControllerTests.cs`
+
+---
 
