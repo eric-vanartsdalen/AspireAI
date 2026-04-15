@@ -2,12 +2,12 @@
 
 **For:** Jeff (.NET Dev)  
 **From:** Buster (QA/Tester)  
-**Date:** 2026-04-22  
-**Status:** Test coverage ready, awaiting implementation
+**Date:** 2026-04-15  
+**Status:** Implemented on this branch; keep this guide as regression/reference material for future Critique-mode UI polish. Critique mode remains experimental until live end-to-end validation covers the saved-conversation mode-switch path.
 
 ## What I Did
 
-Created 8 comprehensive tests in `src\AspireApp.WebTest\Tests\ChatCritiqueModeTests.cs` that validate Critique-mode UI/product behavior:
+Created 9 comprehensive tests in `src\AspireApp.WebTest\Tests\ChatCritiqueModeTests.cs` that validate Critique-mode UI/product behavior:
 
 1. ✅ Critique toggle enabled
 2. ✅ Mode selection updates component state  
@@ -19,7 +19,9 @@ Created 8 comprehensive tests in `src\AspireApp.WebTest\Tests\ChatCritiqueModeTe
 8. ✅ Mode hint text changes correctly
 9. ✅ Conversations load with stored mode
 
-## What You Need to Implement
+## What Was Implemented (Reference Diff)
+
+The snippets below are the implemented UI changes, preserved as a reference diff rather than pending work.
 
 ### 1. Enable Critique Toggle
 
@@ -183,16 +185,21 @@ Created 8 comprehensive tests in `src\AspireApp.WebTest\Tests\ChatCritiqueModeTe
 ✅ **Mode persistence:** Conversations already load with stored mode (line 328, 342 in `Chat.razor.cs`)  
 ✅ **Evidence tracking:** `_messageEvidence` dictionary already tracks responses by assistant message index
 
+## What's Still Active
+
+- Live end-to-end critique validation (gateway → Python → provider → UI) is still pending.
+- Saved-conversation mode-switch regression coverage is still missing; treat it as the next product-risk check before calling critique mode stable.
+
 ## Test Validation
 
-After implementing the above changes:
+To re-validate the implemented changes:
 
 ```powershell
 # Run the Critique-mode UI tests
 dotnet test src\AspireApp.WebTest\AspireApp.WebTest.csproj --filter "FullyQualifiedName~ChatCritiqueModeTests"
 ```
 
-**Expected:** All 8 tests PASS
+**Expected:** All 9 tests PASS
 
 ## Troubleshooting
 
@@ -223,4 +230,4 @@ Ping Buster if:
 
 ---
 
-**Bottom line:** Remove `disabled` from Critique radio, add reasoning panel rendering with correct `data-testid` attributes, and tests should go green. 🟢
+**Bottom line:** The Critique toggle and reasoning panel are live on this branch. Keep this guide for regression checks and UI polish, not as a pending implementation checklist. 🟢

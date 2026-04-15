@@ -6,7 +6,7 @@ Working task breakdown for the [BRAIN Plan](Plan.md). Tracks what's been accompl
 
 Note: This will be a living document.
 
-**Last Updated:** 2026-04-22 — **P2-C COMPLETE:** Vector search wired into `SemanticKnowledgeRetriever` and `/rag/semantic-search` endpoint; embedding-first with text-CONTAINS fallback when embedding service is unavailable. All 92 Python tests pass. **P3a COMPLETE:** Regular mode implemented. **NEXT:** Phase 3b — Critique mode with **PydanticAI** agent framework (swappable architecture via IAgentProvider interface).
+**Last Updated:** 2026-04-15 — Legacy 0–3, BRAIN Phases 1–2, and the first Phase 3 beta chat slice are implemented on this branch. **ACTIVE NOW:** prove one end-to-end Aspire flow from ingested document to gateway-routed chat with citations/confidence in the Web UI. **NEXT:** close the remaining Phase 3 gaps (session memory, contradiction/proactive monitoring, proactive suggestions, chat mode transition regression coverage, and MEai cleanup). Critique mode remains experimental until live-validated.
 
 ---
 
@@ -77,9 +77,11 @@ Note: This will be a living document.
 
 ## Phase 0: Reframe Product
 
+**Status:** Mostly complete. The codebase has the BRAIN gateway, contracts, AppHost wiring, and Python package structure in place. The main remaining Phase 0 drift is documentation/product framing — `README.md` still describes AspireAI as a modular chat assistant and still calls `AspireApp.ApiService` a placeholder gateway.
+
 ### Project Structure and Branch Setup
 
-- [x] Create `brain-pivot` feature branch from current main — *Created by Eric (2026-07-15)*
+- [x] Establish the active pivot branch family — current work is on `task/P0-brain-pivot`
 - [x] Create `contracts/` directory at repo root for shared BRAIN data contracts
 - [x] Create `app/brain/` Python package structure:
   - `app/brain/__init__.py`
@@ -95,10 +97,10 @@ Note: This will be a living document.
 
 - [x] Delete weather forecast stub from `AspireApp.ApiService/Program.cs`
 - [x] Scaffold BRAIN API Gateway endpoints:
-  - `POST /brain/chat` (stub - returns 501 until Phase 3)
-  - `POST /brain/ingest` (stub - returns 501 until Phase 2)
-  - `POST /brain/query` (stub - returns 501 until Phase 2)
-  - `GET /brain/health`
+  - `POST /brain/chat` — live gateway route
+  - `POST /brain/ingest` — live gateway route
+  - `POST /brain/query` — live gateway route
+  - `GET /brain/health` — live health route
 - [x] Add `Microsoft.Extensions.AI` package reference (replace Semantic Kernel dependency in gateway)
 - [x] Update AppHost to wire Gateway as entry point for Web frontend
 
@@ -109,7 +111,7 @@ Note: This will be a living document.
 
 ### Documentation and Config
 
-- [x] Update `README.md` to reflect BRAIN vision
+- [ ] Update `README.md` to fully reflect the BRAIN vision and current gateway role
 - [x] Resolve AI model config key mismatch - standardize `AI-Model` across AppHost and Web services
 - [x] Pin Python dependency versions in `requirements.txt`
 - [x] Consolidate duplicate `ServiceDiscoveryUtilities` classes into single shared class
@@ -215,39 +217,41 @@ Note: This will be a living document.
 >
 > **Data Flow:** User Question → Gateway `/brain/chat` (mode=regular) → Python `BrainKnowledgeRetriever` → Augmented prompt → Ollama → Streaming response with citations
 
+**Status:** Implemented for request/response chat. Remaining work is transport hardening (streaming + explicit timeout budgeting) and richer citation navigation.
+
 ### Chat Mode Contract (Python + C#)
 
-- [ ] Add `ChatMode` enum to Python contracts (`regular` | `critique`), add to `BrainChatRequest` model
-- [ ] Mirror `ChatMode` enum in C# `BrainContractModels.cs`
-- [ ] Add `ChatMode` field to conversation entity (`ChatConversationEntities.cs`) and persistence service
+- [x] Add `ChatMode` enum to Python contracts (`regular` | `critique`), add to `BrainChatRequest` model
+- [x] Mirror `ChatMode` enum in C# `BrainContractModels.cs`
+- [x] Add `ChatMode` field to conversation entity (`ChatConversationEntities.cs`) and persistence service
 
 ### `/brain/chat` Regular Path (Python)
 
-- [ ] Implement Python `POST /brain/chat` endpoint: receives query + mode, retrieves knowledge via `BrainKnowledgeRetriever`, constructs augmented prompt (system context + retrieved knowledge + user question), calls Ollama, returns `ReasonResponse` with citations and confidence
-- [ ] Add streaming support for Ollama response
-- [ ] Implement retrieval timeout with fallback to pure LLM (no-knowledge) response
+- [x] Implement Python `POST /brain/chat` endpoint: receives query + mode, retrieves knowledge via `BrainKnowledgeRetriever`, constructs augmented prompt, calls Ollama, and returns `ReasonResponse` with citations, confidence, and reasoning steps
+- [ ] Add streaming support for Ollama response through the gateway
+- [ ] Add explicit retrieval timeout budgeting (current regular path falls back on retrieval failure, but not on a dedicated timeout policy)
 
 ### Gateway Routing (C#)
 
-- [ ] Implement C# gateway `POST /brain/chat` (replace current 501 stub) — forwards to Python, returns streamed or complete response
-- [ ] Wire `HttpClient` from `AspireApp.Web` to gateway endpoint
+- [x] Implement C# gateway `POST /brain/chat` (replace prior 501 stub) — forwards to Python and returns the complete response
+- [x] Wire `HttpClient` from `AspireApp.Web` to gateway endpoint
 
 ### Blazor Chat Reroute
 
-- [ ] Replace direct Ollama/SK call in `Chat.razor.cs` (`CallBackgroundAI()`) with gateway call
+- [x] Replace direct Ollama/SK chat call in `Chat.razor.cs` with `BrainChatClient`
 - [ ] Maintain streaming UX through gateway (SSE or chunked transfer)
 
 ### Mode Selector UI
 
-- [ ] Add mode toggle in `Chat.razor`: "Regular" (default active) | "Critique" (disabled until Phase 3b)
-- [ ] Mode persists per conversation (stored in DB, defaults to Regular for new conversations)
-- [ ] Switching mode mid-conversation applies to next message only
+- [x] Add mode toggle in `Chat.razor`: "Regular" (default active) | "Critique"
+- [x] Mode persists per conversation (stored in DB, defaults to Regular for new conversations)
+- [x] Switching mode mid-conversation applies to the next message only
 
 ### Citation & Confidence Display
 
-- [ ] Render source references (document, page, claim) on assistant messages
-- [ ] Display confidence score indicator on responses
-- [ ] Link citations to source documents where possible
+- [x] Render source references on assistant messages
+- [x] Display confidence score indicator on responses
+- [ ] Link citations to source documents where possible (current UI shows source labels/snippets, not deep links)
 
 ---
 
@@ -255,56 +259,57 @@ Note: This will be a living document.
 
 > **UNBLOCKED** — Agent framework selected: **PydanticAI** with swappable architecture. Builds on Phase 3a's retrieval and gateway infrastructure.
 >
-> **Data Flow:** User Question → Gateway `/brain/chat` (mode=critique) → Python AgentOrchestrator → IAgentProvider (PydanticAIProvider) → Multi-agent pipeline (Retriever → Synthesizer → Critic) → Evidence-backed response with reasoning steps
+> **Data Flow:** User Question → Gateway `/brain/chat` (mode=critique) → Python `CritiquePipeline` → `AgentProvider`/`PydanticAIProvider` → planner + retrieval + synthesis + critique chain → Evidence-backed response with reasoning steps
 >
-> **Key Design:** Framework abstracted behind `IAgentProvider` interface. Swap PydanticAI for LangGraph/CrewAI via env var + provider implementation. Zero refactor of routers/contracts.
+> **Key Design:** Framework abstracted behind the `AgentProvider` seam. Swap PydanticAI for LangGraph/CrewAI via provider/factory work without refactoring routers or contracts.
+
+**Status:** MVP critique mode is implemented, but it remains experimental until live-validated end-to-end. The remaining gaps are provider-factory cleanup, server-side session memory, contradiction/proactive monitoring, and polish/hardening work around the UI and tests.
 
 ### Agent Framework Setup — ✅ DECISION COMPLETE
 
 - [x] **[COMPLETE]** Select agent framework → **PydanticAI** (lightweight, Pydantic-native, type-safe)
-- [x] **[COMPLETE]** Design swappable architecture → `IAgentProvider` abstraction layer
-- [ ] Add `pydantic-ai==0.0.14` to `requirements.txt`
-- [ ] Define agent base contract: `IAgentProvider` interface with `reason()` method (align with `BrainChatRequest`/`ReasonResponse`)
-- [ ] Set up agent orchestration pipeline in `app/brain/reasoning/`
+- [x] **[COMPLETE]** Design swappable architecture → framework-agnostic `AgentProvider` protocol seam
+- [x] Add `pydantic-ai` to `requirements.txt`
+- [x] Define the agent base contract in `app/brain/reasoning/agent_provider.py`
+- [x] Set up the critique orchestration pipeline in `app/brain/reasoning/`
 
 ### Agent Provider Interface (Jarvis)
 
-- [ ] **Create `app/brain/reasoning/agent_provider.py`** — Define `IAgentProvider` ABC with `reason()` and `get_provider_name()` methods
-- [ ] **Create `app/brain/reasoning/orchestrator.py`** — Implement `AgentOrchestrator` (framework-agnostic coordinator)
-- [ ] **Create `app/brain/reasoning/agent_factory.py`** — Factory for provider selection via `AGENT_PROVIDER` env var
+- [x] **Create `app/brain/reasoning/agent_provider.py`** — Define the framework-agnostic provider protocol and normalized `AgentResponse`
+- [x] **Create `app/brain/reasoning/critique_pipeline.py`** — Implement the critique coordinator that wires planner → retrieval → synthesis → critic steps
+- [ ] **Create `app/brain/reasoning/agent_factory.py`** — Add provider selection via `AGENT_PROVIDER` env var when multiple providers are live
 
 ### PydanticAI Provider Implementation (Jarvis)
 
-- [ ] **Create `app/brain/reasoning/pydantic_ai_provider.py`** — Implement `PydanticAIProvider(IAgentProvider)`
-- [ ] Initialize PydanticAI agents (Retriever, Synthesizer, Critic) using `pydantic_ai.Agent`
-- [ ] Wire to Ollama via `pydantic_ai.models.OllamaModel`
-- [ ] Implement `reason()` method — orchestrate Retriever → Synthesizer → Critic pipeline
-- [ ] Return `ReasonResponse` with populated `reasoning_steps` showing agent chain
-- [ ] Add system prompts for each agent role (retrieval specialist, synthesizer, quality critic)
+- [x] **Create `app/brain/reasoning/pydantic_ai_provider.py`** — Implement `PydanticAIProvider`
+- [x] Initialize planner/synthesizer/critic roles via cached `pydantic_ai.Agent` instances
+- [x] Wire to Ollama through the OpenAI-compatible endpoint configuration
+- [x] Return normalized agent results that the critique pipeline maps into `ReasonResponse.reasoning_steps`
+- [x] Add system prompts for the standard agent roles
 
 ### Critique Pipeline Wiring (Jarvis)
 
-- [ ] **Update `app/routers/brain.py`** — Remove 501 stub for Critique mode
-- [ ] Call `AgentOrchestrator.process_critique_request()` when `mode == ChatMode.CRITIQUE`
-- [ ] Keep Regular mode path unchanged (already implemented)
-- [ ] Initialize singleton `AgentOrchestrator` with `create_agent_provider()` factory
-- [ ] Add session memory - conversation context persists across turns (optional for P3b)
+- [x] **Update `app/routers/brain.py`** — Critique mode now routes through the Python reasoning path instead of returning a stub
+- [x] Call the critique pipeline when `mode == ChatMode.CRITIQUE`
+- [x] Keep the regular mode path intact
+- [ ] Add provider-factory selection / singleton orchestration if multiple providers are introduced
+- [ ] Add session memory so conversation context persists across turns on the backend
 
 ### Critique UI (Jeff)
 
-- [ ] Enable Critique toggle in mode selector (remove disabled state)
-- [ ] Add "BRAIN is thinking" indicator showing multi-step reasoning progress
-- [ ] Render reasoning steps visible in chat UI (display `reasoning_steps` array)
-- [ ] Add expandable reasoning detail panel (optional click-to-expand for step-by-step view)
+- [x] Enable Critique toggle in mode selector
+- [ ] Add a dedicated "BRAIN is thinking" multi-step progress indicator
+- [x] Render reasoning steps in chat UI (`reasoning_steps` array)
+- [ ] Add expandable reasoning detail UX for long critique traces
 
 ### Testing (Buster)
 
-- [ ] Unit tests for `IAgentProvider` contract compliance
-- [ ] Mock `IAgentProvider` for fast UI tests
-- [ ] Integration test: Critique mode end-to-end (user query → agent reasoning → response with steps)
-- [ ] Test: Factory pattern allows env-var-based provider swap
-- [ ] Test: Mock swap (replace provider without code changes)
-- [ ] Performance benchmark: Critique mode latency vs Regular mode
+- [x] Python coverage for `/brain/chat` and critique pipeline behavior (`test_brain_chat.py`, `test_critique_pipeline.py`)
+- [x] Blazor product tests for critique toggle + reasoning rendering (`ChatCritiqueModeTests`)
+- [ ] Regression test: in one saved conversation, send a Regular turn, switch to Critique for the next turn, reload/select the conversation, switch back to Regular, and verify request routing is `regular -> critique -> regular`, critique-only reasoning stays confined to critique turns, and the persisted conversation mode reflects the latest selection without mislabeling earlier turns.
+- [ ] Test provider-factory/env-var swap once `agent_factory.py` exists
+- [ ] Live end-to-end critique integration test (gateway → python → provider → UI)
+- [ ] Performance benchmark: critique latency vs. regular mode
 
 ---
 
@@ -371,18 +376,20 @@ Note: This will be a living document.
 
 | Gate | Criteria | Status | Phase |
 |------|----------|--------|-------|
-| P0-A | Feature branch exists with BRAIN directory structure | Complete | 0 |
+| P0-A | Pivot branch family exists with BRAIN directory structure | Complete | 0 |
 | P0-B | ApiService weather stub deleted; Gateway scaffolded | Complete | 0 |
 | P1-A | All BRAIN contracts defined (Python + C#) | Complete | 1 |
 | P1-B | Serialization round-trip test passes | Complete | 1 |
 | P2-A | Upload to CanonicalDocument to Neo4j storage end-to-end | Complete | 2 |
 | P2-B | `/brain/query` returns confidence-scored results (no default fallback) | ✅ **COMPLETE** — LightRAG enriches from Neo4j when provenance exists; unresolved confidence fails closed. Live proof: `BasicAspireAppHostTests.BrainQueryReturnsConfidenceEnrichedResults`. | 2 |
 | P2-C | Neo4j vector indexes queryable | ✅ **COMPLETE** — Vector search wired into `SemanticKnowledgeRetriever` (embedding-first, text fallback). `/rag/semantic-search` upgraded. 6 new tests, 92 total pass. | 2 |
-| P3-A | `/brain/chat` (mode=critique) returns evidence-backed response | **Unblocked** — PydanticAI selected. Jarvis implements `PydanticAIProvider` and orchestrator. | 3 |
-| P3-B | Multi-step reasoning visible in `reasoning_steps` | Depends on P3-A. `PydanticAIProvider.reason()` populates reasoning steps for each agent. | 3 |
-| P3-C | Proactive Monitor flags contradiction | Blocked on P3-A. Requires background agent monitoring Claim nodes for conflicts. | 3 |
-| P3-D | Blazor chat routes through Gateway (no direct Ollama) | Blocked on P3-A `/brain/chat` implementation. UI integration via C# `BrainBackendClient` to Gateway. | 3 |
-| P3-G | Proactive suggestion appears without prompting | Blocked on P3-C (Proactive Monitor completion). Requires UI panel for unsolicited insights. | 3 |
+| P3-A | `/brain/chat` (mode=critique) returns evidence-backed response | ✅ **COMPLETE** — Gateway + Python critique path returns `ReasonResponse` with evidence. | 3 |
+| P3-B | Multi-step reasoning visible in `reasoning_steps` | ✅ **COMPLETE** — Reasoning steps are returned by Python and rendered in Blazor (`ChatCritiqueModeTests`). | 3 |
+| P3-C | Proactive Monitor flags contradiction | Not started — contradiction/proactive monitoring remains the main Phase 3 gap. | 3 |
+| P3-D | Blazor chat routes through Gateway (no direct Ollama) | ✅ **COMPLETE** — `Chat.razor.cs` now calls `BrainChatClient`. | 3 |
+| P3-E | Session memory works across turns | Not started — `conversation_id` is passed through, but backend memory use is not implemented. | 3 |
+| P3-F | UI shows confidence indicators and source citations | ✅ **COMPLETE** — evidence panel + confidence badge render in chat UI. | 3 |
+| P3-G | Proactive suggestion appears without prompting | Not started — depends on contradiction/proactive monitor completion. | 3 |
 | P4-A | Automated evaluation suite runs | Not started | 4 |
 | P4-B | Docker-backed integration validation passes (cold-start, health checks, volume access) | Not started | 4 |
 | P4-C | BRAIN says "insufficient evidence" for unknown topics | Not started | 4 |
@@ -393,7 +400,7 @@ Note: This will be a living document.
 
 - **[P2-B Complete]** Confidence fail-closed behavior implemented. `LightRagRetriever._build_item()` returns None when confidence cannot be resolved (provenance missing or Neo4j enrichment returns None), filtering results out and forcing semantic fallback. Validated by `test_lightrag_retriever_fails_closed_when_neo4j_returns_none` and `test_lightrag_retriever_without_neo4j_service_fails_closed`.
 
-- **[Agent Framework Selection — RESOLVED]** **PydanticAI** selected for Phase 3b. Rationale: Pydantic-native (aligns with existing contracts), lightweight, type-safe, Ollama-compatible. Abstracted behind `IAgentProvider` interface for swappability (env-var swap to LangGraph/CrewAI/custom if needed). Decision document: `.squad/decisions/inbox/bob-pydanticai-architecture.md`.
+- **[Agent Framework Selection — RESOLVED]** **PydanticAI** selected for Phase 3b. Rationale: Pydantic-native (aligns with existing contracts), lightweight, type-safe, Ollama-compatible. Abstracted behind the agent-provider seam for swappability (future provider/factory work can enable LangGraph/CrewAI/custom without router refactors). Decision document: `.squad/decisions/inbox/bob-pydanticai-architecture.md`.
 
 - **[Confidence Calibration]** Source-type heuristics (textbook=0.9, web=0.5) are starting points. Real calibration requires evaluation data and feedback loops (Phase 4). Don't over-invest in scoring precision before Phase 4.
 

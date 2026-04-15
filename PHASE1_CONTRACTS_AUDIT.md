@@ -2,13 +2,15 @@
 
 **Date:** 2025-11-02  
 **Auditor:** Jeff (C# Dev)  
-**Status:** Ready for Implementation
+**Status:** Implemented on this branch; retained as the audit/reference document for the Phase 1 contract slice
 
 ---
 
 ## Executive Summary
 
-Phase 1 requires defining mirror C# record types for the BRAIN contract models (`CanonicalDocument`, `ValidatedDocument`, `KnowledgeResult`, `ReasonResponse`) that are specified in Python. Current C# side has Entity Framework models (`FileMetadata`, `DocumentPage`) for SQLite persistence, but **no wire-format DTOs** for API serialization. Snake_case JSON parity and round-trip deserialization will require explicit `JsonPropertyName` attributes on all C# records.
+> **Update:** The Phase 1 contract slice described below has now been delivered in the repo. See `src/AspireApp.ApiService/Contracts/` and `src/AspireApp.WebTest/Tests/BrainContractRoundTripTests.cs` for the implemented artifacts.
+
+Phase 1 required defining mirror C# record types for the BRAIN contract models (`CanonicalDocument`, `ValidatedDocument`, `KnowledgeResult`, `ReasonResponse`) that are specified in Python. At audit time, the C# side only had Entity Framework models (`FileMetadata`, `DocumentPage`) for persistence and **no wire-format DTOs** for API serialization. The implemented solution followed this audit's recommendation: explicit `JsonPropertyName` attributes on all C# contract records for snake_case JSON parity and round-trip deserialization.
 
 ---
 

@@ -1,9 +1,9 @@
 # BRAIN Plan — AspireAI
 
-Phased roadmap for the BRAIN pivot. Each phase is an epic with clear acceptance gates. Work proceeds on a feature branch (`brain-pivot`) and merges to main when the first agentic slice is proven.
+Phased roadmap for the BRAIN pivot. Each phase is an epic with clear acceptance gates. This document tracks the active BRAIN roadmap against the current branch state.
 
-**Last Updated:** 2026-07-15
-**Active Branch:** `brain-pivot` (to be created)
+**Last Updated:** 2026-04-15
+**Active Branch:** `task/P0-brain-pivot`
 **Decision Authority:** Eric Van Artsdalen + adversarial review by Kujan and Verbal
 
 ---
@@ -14,16 +14,25 @@ BRAIN is a domain-agnostic agentic knowledge assistant. It ingests diverse sourc
 
 ---
 
+## Current Execution Snapshot
+
+- **Done on this branch:** Legacy phases 0–3, BRAIN Phase 1 (shared contracts), BRAIN Phase 2 (gateway ingest/query, retrieval foundations, vector population/search), and a Phase 3 beta chat slice (regular + critique routes, gateway-routed chat, Web UI confidence/citations, and critique reasoning display).
+- **Still active:** Phase 3 is in beta, not complete. Live end-to-end Aspire validation, session memory, contradiction/proactive monitoring, proactive suggestions, MEai cleanup, and the chat-mode regression gap below remain open.
+- **Administrative drift:** Phase 0 setup is already in place; the remaining drift is product framing/documentation. `README.md` still describes AspireAI as a modular chat assistant and still calls `AspireApp.ApiService` a placeholder gateway.
+- **Next:** Phase 3 beta proof — one end-to-end Aspire flow from ingested document to gateway-routed chat with citations/confidence in the Web UI. Critique mode remains experimental until live-validated.
+
+---
+
 ## Phase Summary
 
 | Phase | Focus | Status |
 |-------|-------|--------|
 | Legacy 0–2 | Repo Setup, Chat UI, Speech I/O | ✅ Complete (pre-pivot) |
 | Legacy 3 | Document Upload & Ingestion (stabilization) | ✅ Complete (pre-pivot) |
-| 0 | Reframe Product | 🔜 Next |
-| 1 | Core Contracts | 🔜 Planned |
-| 2 | Ingestion + Knowledge Baseline | 🔜 Planned |
-| 3 | Ship MVP Agentic Slice | 🔜 Planned |
+| 0 | Reframe Product | 🚧 Mostly complete (engineering done; branding/docs cleanup remains) |
+| 1 | Core Contracts | ✅ Complete |
+| 2 | Ingestion + Knowledge Baseline | ✅ Complete |
+| 3 | Ship MVP Agentic Slice | 🚧 In progress |
 | 4 | Evaluate + Harden | 🔜 Planned |
 | 5 | Prove Reusability | 🔮 Future |
 | 6 | Scale Deliberately | 🔮 Future |
@@ -37,32 +46,32 @@ Work completed before the BRAIN pivot. These are foundations that survive:
 - Solution/project structure and Aspire AppHost orchestration
 - Blazor chat UI with message history, speech I/O
 - Ollama integration via Semantic Kernel (to be migrated to MEai)
-- File upload with SQLite metadata persistence
+- File upload with operational metadata persistence (now Postgres-backed on this branch)
 - Docling document parsing (PDF/DOCX)
 - LightRAG entity extraction proven (handoff + query round-trip)
 - Pipeline contract alignment (P0 stabilization complete)
 - Processing pipeline stabilization (P1 complete)
 - Python footprint minimization and schema repair
 
-**What carries forward:** Aspire orchestration, Docling parsing, Neo4j/Ollama containers, SQLite operational schema, health patterns, volume strategy.
+**What carries forward:** Aspire orchestration, Docling parsing, Neo4j/Ollama containers, the operational `files`/`document_pages` schema, health patterns, and volume strategy.
 
 **What is superseded:** Phases 4-8 from the original plan (Flat Vector RAG, LightRAG/GraphRAG, Plugin Ecosystem, Testing/Deployment, Advanced Features). These are replaced by the BRAIN phase sequence below.
 
 ---
 
-## 🔜 Phase 0: Reframe Product
+## 🚧 Phase 0: Reframe Product
 
-**Objective:** Declare BRAIN as the core product. Establish the feature branch, project structure, and team alignment for the pivot.
+**Objective:** Declare BRAIN as the core product and keep the pivot structure, wiring, and documentation aligned with the branch reality.
 
 ### Deliverables
 
-- [ ] Create `brain-pivot` feature branch from main
-- [ ] Update README.md to reflect BRAIN vision (not "chat assistant")
-- [ ] Create `contracts/` directory structure for shared BRAIN data contracts
-- [ ] Create `app/brain/` Python package structure (ingestion, validation, knowledge, reasoning)
-- [ ] Repurpose `AspireApp.ApiService` — delete weather stub, scaffold as BRAIN API Gateway
-- [ ] Update `.squad/decisions.md` with pivot decision and rationale
-- [ ] Update Aspire AppHost wiring to reflect new service roles (rename, reconfigure)
+- [x] Pivot work is already on `task/P0-brain-pivot`; no additional branch-setup work is required for this phase
+- [ ] Update README.md to reflect the BRAIN vision (the current README still uses pre-pivot AspireAI framing)
+- [x] Create `contracts/` directory structure for shared BRAIN data contracts
+- [x] Create `app/brain/` Python package structure (ingestion, validation, knowledge, reasoning)
+- [x] Repurpose `AspireApp.ApiService` — weather stub removed, BRAIN API Gateway endpoints scaffolded and wired
+- [x] Update `.squad/decisions.md` with pivot decision and rationale
+- [x] Update Aspire AppHost wiring to reflect new service roles (gateway, Python service, graph store, Ollama)
 
 ### Acceptance Gates
 
@@ -73,28 +82,30 @@ Work completed before the BRAIN pivot. These are foundations that survive:
 | P0-C | README reflects BRAIN vision |
 | P0-D | `dotnet build` succeeds; Aspire dashboard shows renamed services |
 
+**Review result:** P0-A and P0-B are satisfied on this branch. P0-C remains open. P0-D is partially evidenced here (`dotnet build` succeeds); dashboard naming was not revalidated in this review.
+
 ---
 
-## 🔜 Phase 1: Core Contracts
+## ✅ Phase 1: Core Contracts
 
 **Objective:** Define the shared data contracts that every BRAIN layer depends on. These are the foundation — nothing else can be built correctly without them.
 
 ### Deliverables
 
-- [ ] Define `CanonicalDocument` contract (Python Pydantic + C# record)
+- [x] Define `CanonicalDocument` contract (Python Pydantic + C# record)
   - Required: `tenant_id`, `document_id`, `source_type`, `source_confidence`, `pages[]`, `metadata`
   - Binary payloads handled via file references, not embedded
   - Multi-page represented as ordered page array with content + page number
-- [ ] Define `ValidatedDocument` contract
+- [x] Define `ValidatedDocument` contract
   - Extends CanonicalDocument with `claims[]`, `contradictions[]`, `overall_confidence`
-- [ ] Define `KnowledgeResult` contract
+- [x] Define `KnowledgeResult` contract
   - For retrieval responses: `results[]` with `content`, `confidence`, `source_refs[]`, `relevance_score`
-- [ ] Define `ReasonResponse` contract
+- [x] Define `ReasonResponse` contract
   - Agent output: `answer`, `confidence`, `evidence[]`, `reasoning_steps[]`, `proactive_suggestions[]`
-- [ ] Define common envelope: `tenant_id`, `correlation_id`, `confidence`, `source_refs[]`
-- [ ] Define `IKnowledgeRetriever` interface contract (Python ABC + C# interface)
-- [ ] Cross-language validation — ensure Python Pydantic and C# record serialize to identical JSON
-- [ ] Tenant ID included in all contracts with default value for single-tenant operation
+- [x] Define common envelope: `tenant_id`, `correlation_id`
+- [x] Define `IKnowledgeRetriever` interface contract (Python ABC)
+- [x] Cross-language validation — ensure Python Pydantic and C# record serialize to identical JSON
+- [x] Tenant ID included in all contracts with default value for single-tenant operation
 
 ### Acceptance Gates
 
@@ -105,24 +116,26 @@ Work completed before the BRAIN pivot. These are foundations that survive:
 | P1-C | Every contract includes `tenant_id` and `correlation_id` |
 | P1-D | `IKnowledgeRetriever` interface defined with at least two planned implementations |
 
+**Review result:** All Phase 1 gates are satisfied via `src/AspireApp.ApiService/Contracts/`, `src/AspireApp.PythonServices/app/contracts/`, and `src/AspireApp.WebTest/Tests/BrainContractRoundTripTests.cs`.
+
 ---
 
-## 🔜 Phase 2: Ingestion + Knowledge Baseline
+## ✅ Phase 2: Ingestion + Knowledge Baseline
 
 **Objective:** File upload flows through BRAIN contracts. Documents are normalized to `CanonicalDocument`, stored in the extended Neo4j knowledge graph, and retrievable via the Knowledge Layer with source attribution.
 
 ### Deliverables
 
-- [ ] Refactor Docling processing to emit `CanonicalDocument` (not raw page writes)
-- [ ] Add `source_confidence` tagging based on source type (upload/URL/API)
-- [ ] Extend Neo4j schema — add `Claim`, `Evidence`, `Concept`, `Entity` node labels alongside existing `Document`/`Page`
-- [ ] Create Neo4j vector indexes on key properties (claim text, page content)
-- [ ] Implement `BrainKnowledgeRetriever` — confidence-aware retrieval combining graph traversal + vector similarity
-- [ ] Implement `LightRAGRetriever` — wraps existing LightRAG query path behind `IKnowledgeRetriever`
-- [ ] Wire Gateway (`POST /brain/ingest`) → Ingestion → Knowledge storage path
-- [ ] Wire Gateway (`POST /brain/query`) → Knowledge retrieval path
-- [ ] Update SQLite `files` table: add `tenant_id`, `source_confidence` columns (backward compatible)
-- [ ] Add embedding generation using Ollama embedding model for vector index population
+- [x] Refactor Docling processing to emit `CanonicalDocument` (not raw page writes)
+- [x] Add `source_confidence` tagging based on source type (upload/URL/API)
+- [x] Extend Neo4j schema — add `Claim`, `Evidence`, `Concept`, `Entity` node labels alongside existing `Document`/`Page`
+- [x] Create Neo4j vector indexes on key properties (claim text, page content)
+- [x] Implement `BrainKnowledgeRetriever` — confidence-aware retrieval combining graph traversal + vector similarity
+- [x] Implement `LightRAGRetriever` — wraps existing LightRAG query path behind `IKnowledgeRetriever`
+- [x] Wire Gateway (`POST /brain/ingest`) → Ingestion → Knowledge storage path
+- [x] Wire Gateway (`POST /brain/query`) → Knowledge retrieval path
+- [x] Update the operational `files` store to carry `tenant_id` and `source_confidence` without breaking existing rows
+- [x] Add embedding generation using Ollama embedding model for vector index population
 
 ### Acceptance Gates
 
@@ -132,28 +145,29 @@ Work completed before the BRAIN pivot. These are foundations that survive:
 | P2-B | `POST /brain/query` returns results with confidence scores and source references |
 | P2-C | Neo4j vector indexes created and queryable |
 | P2-D | Both `BrainKnowledgeRetriever` and `LightRAGRetriever` pass the same interface tests |
-| P2-E | SQLite `files` rows include `tenant_id` (default value) |
+| P2-E | Operational `files` rows include `tenant_id` (default value) |
+
+**Review result:** Phase 2 is implemented on this branch: ingest/query gateway paths are live, retrievers exist, vector search is wired, and the operational store carries tenant/confidence metadata.
 
 ---
 
-## 🔜 Phase 3: Ship MVP Agentic Slice
+## 🚧 Phase 3: Ship MVP Agentic Slice
 
 **Objective:** BRAIN becomes agentic. The Reasoning Layer orchestrates agents that retrieve knowledge, validate claims, synthesize answers, and proactively suggest related context. This is the slice that proves BRAIN is more than RAG.
 
 ### Deliverables
 
-- [x] Choose and integrate agent framework → **PydanticAI** (swappable via `IAgentProvider` interface)
-- [ ] Build Retriever agent — queries Knowledge Layer with confidence-aware ranking
-- [ ] Build Synthesizer agent — combines multiple knowledge results into coherent responses
-- [ ] Build Critic agent — evaluates response quality, identifies gaps, scores confidence
-- [ ] Build Proactive Monitor — detects contradictions, suggests related knowledge during conversation
-- [ ] Implement `POST /brain/chat` endpoint — conversational interface through Gateway → Reasoning → Knowledge
+- [x] Choose and integrate agent framework → **PydanticAI** (swappable via the agent-provider seam)
+- [x] Implement the first critique pipeline slice (planning → retrieval → synthesis → critique) with user-visible reasoning steps
+- [x] Implement `POST /brain/chat` — conversational interface through Gateway → Python reasoning/knowledge paths
 - [ ] Session memory — conversation context persists across turns within a session
-- [ ] Confidence indicators in chat UI — show confidence scores on responses
-- [ ] Source citations in chat UI — link responses to source documents, pages, claims
+- [ ] Chat mode transition regression coverage - prove Regular -> Critique -> Regular mode changes do not leak critique behavior into later Regular turns, and document the persistence boundary between conversation-level mode state and non-persisted per-message critique metadata.
+- [x] Confidence indicators in chat UI — responses render confidence badges
+- [x] Source citations in chat UI — responses render evidence/source snippets
 - [ ] Proactive suggestion panel in Blazor UI — display unsolicited insights from Proactive Monitor
-- [ ] Migrate Blazor from direct Ollama/SK chat to Gateway-routed BRAIN chat
-- [ ] Replace Semantic Kernel usage with Microsoft.Extensions.AI in the C# layer
+- [x] Migrate Blazor from direct Ollama/SK chat to Gateway-routed BRAIN chat
+- [ ] Replace remaining Semantic Kernel usage with Microsoft.Extensions.AI in the C# chat path
+- [ ] Add contradiction/proactive monitoring beyond the current critique pipeline
 
 ### Acceptance Gates
 
@@ -166,6 +180,8 @@ Work completed before the BRAIN pivot. These are foundations that survive:
 | P3-E | Session memory works — follow-up questions reference prior context |
 | P3-F | UI shows confidence indicators and source citations |
 | P3-G | Proactive suggestion appears without user prompting |
+
+**Review result:** P3-A, P3-B, P3-D, and P3-F are satisfied on this branch. P3-C, P3-E, and P3-G remain open and define the real remaining Phase 3 work. A separate beta regression gap also remains around saved-conversation mode switching.
 
 ---
 
@@ -250,13 +266,13 @@ Stabilization work that supports multiple phases:
 | Priority | Item | Status | Phase |
 |----------|------|--------|-------|
 | P0 | Pipeline contract + status alignment | ✅ Done | Legacy |
-| P0 | BRAIN core contracts | 🔜 | Phase 1 |
+| P0 | BRAIN core contracts | ✅ Done | Phase 1 |
 | P1 | Test infrastructure (pytest + xUnit + CI gates) | ⏳ | Phase 0–1 |
 | P1 | Logging (`Console.WriteLine` → `ILogger<T>`) | ⏳ | Phase 4 |
-| P2 | Config alignment (AI model keys) | ⏳ | Phase 0 |
-| P2 | Pin Python dependency versions | ⏳ | Phase 0 |
-| P3 | Consolidate duplicate `ServiceDiscoveryUtilities` | ⏳ | Phase 0 |
-| P3 | Remove legacy EF entity classes | ⏳ | Phase 0 |
+| P2 | Config alignment (AI model keys) | ✅ Done | Phase 0 |
+| P2 | Pin Python dependency versions | ✅ Done | Phase 0 |
+| P3 | Consolidate duplicate `ServiceDiscoveryUtilities` | ✅ Done | Phase 0 |
+| P3 | Remove legacy EF entity classes | ✅ Done | Phase 0 |
 
 ---
 
@@ -281,7 +297,7 @@ From adversarial review — risks that could derail the pivot:
 | # | Risk | Severity | Mitigation |
 |---|------|----------|------------|
 | 1 | Scope creep — BRAIN vision is larger than available effort | High | MVP acceptance gates are hard constraints; each phase stands alone |
-| 2 | Agent framework immaturity — Python agent tools evolve rapidly | **Mitigated** | PydanticAI abstracted behind `IAgentProvider` interface; swap frameworks via env var without code changes |
+| 2 | Agent framework immaturity — Python agent tools evolve rapidly | **Mitigated** | PydanticAI is abstracted behind the agent-provider seam; swap frameworks without refactoring the router contracts |
 | 3 | Confidence scoring calibration — garbage in, garbage out | Medium | Start with source-type heuristics; add LLM-based scoring incrementally |
 | 4 | Neo4j vector index limitations vs. dedicated vector DB | Low | Abstracted behind `IKnowledgeRetriever`; swap to Qdrant if needed |
 | 5 | LightRAG divergence — maintaining two retrieval paths adds cost | Medium | LightRAG investment capped; BRAIN path is primary from Phase 2 |
