@@ -6,6 +6,7 @@ using BrainChatEvidence = web::AspireApp.Web.Services.BrainChatEvidence;
 using BrainChatReasoningStep = web::AspireApp.Web.Services.BrainChatReasoningStep;
 using System.Net;
 using System.Security.Claims;
+using System.Threading.Tasks;
 using Bunit;
 using Microsoft.AspNetCore.Components.Authorization;
 using Microsoft.EntityFrameworkCore;
@@ -35,7 +36,7 @@ namespace AspireApp.WebTest.Tests;
 public sealed class ChatFocusTests
 {
     [Fact]
-    public void RenameTitleInput_DoesNotRefocusQuestionInputWhileTyping()
+    public async Task RenameTitleInput_DoesNotRefocusQuestionInputWhileTyping()
     {
         var previousOllamaConnection = Environment.GetEnvironmentVariable("ConnectionStrings__ollama");
         var previousChatConnection = Environment.GetEnvironmentVariable("ConnectionStrings__chat");
@@ -93,7 +94,7 @@ public sealed class ChatFocusTests
             var cut = testContext.Render<Chat>();
 
             cut.WaitForAssertion(() => Assert.Single(cut.FindAll("[data-testid='chat-conversation-select']")));
-            cut.Find("[data-testid='chat-conversation-select']").Click();
+            await cut.InvokeAsync(() => cut.Find("[data-testid='chat-conversation-select']").Click());
             cut.WaitForAssertion(() => Assert.Single(cut.FindAll("[data-testid='chat-conversation-rename']")));
 
             var focusCallsBeforeRename = CountFocusCalls(testContext);

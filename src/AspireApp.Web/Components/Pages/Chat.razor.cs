@@ -81,6 +81,12 @@ namespace AspireApp.Web.Components.Pages
         private string? CurrentlySpeakingMessage { get; set; }
         private bool IsInteractiveReady { get; set; }
 
+        // Mode selector
+        private string SelectedChatMode { get; set; } = ChatConversationModes.Regular;
+
+        // Citation tracking: maps assistant message index to evidence from the gateway response
+        private readonly Dictionary<int, BrainChatResponse> _messageEvidence = new();
+
         private string ConversationStatusCssClass => ConversationStatusIsError ? "alert alert-danger" : "alert alert-info";
 
         private bool HasActiveConversation => ActiveConversationId.HasValue;
@@ -319,6 +325,7 @@ namespace AspireApp.Web.Components.Pages
         {
             ActiveConversationId = conversation.ConversationId;
             ActiveConversationTitle = conversation.Title;
+            SelectedChatMode = ChatConversationModes.Normalize(conversation.ChatMode);
 
             if (!IsEditingConversationTitle)
             {
@@ -332,10 +339,12 @@ namespace AspireApp.Web.Components.Pages
             ActiveConversationTitle = conversation.Title;
             ConversationTitleDraft = conversation.Title;
             IsEditingConversationTitle = false;
+            SelectedChatMode = ChatConversationModes.Normalize(conversation.ChatMode);
             Question = string.Empty;
             AIResponse = string.Empty;
             ElapsedTimeMessage = string.Empty;
             _chatHistory = conversation.Messages.ToChatHistory();
+            _messageEvidence.Clear();
         }
 
         private void ResetConversationDraft(bool clearStatus = true)
@@ -346,10 +355,12 @@ namespace AspireApp.Web.Components.Pages
             IsEditingConversationTitle = false;
             ShouldFocusConversationTitleInput = false;
             ShouldFocusQuestionInput = false;
+            SelectedChatMode = ChatConversationModes.Regular;
             Question = string.Empty;
             AIResponse = string.Empty;
             ElapsedTimeMessage = string.Empty;
             _chatHistory = new ChatHistory();
+            _messageEvidence.Clear();
 
             if (clearStatus)
             {
@@ -361,6 +372,37 @@ namespace AspireApp.Web.Components.Pages
         {
             ConversationStatusMessage = message;
             ConversationStatusIsError = isError;
+        }
+
+        private async Task OnChatModeChangedAsync(string newMode)
+        {
+            SelectedChatMode = ChatConversationModes.Normalize(newMode);
+
+            if (!ActiveConversationId.HasValue)
+            {
+                return;
+            }
+
+            var user = await ResolveCurrentUserAsync();
+            if (user is null)
+            {
+                return;
+            }
+
+            await ChatConversationService.UpdateChatModeAsync(
+                ActiveConversationId.Value,
+                user.UserId,
+                SelectedChatMode);
+        }
+
+        private string FormatConfidenceBadge(double confidence)
+        {
+            return confidence switch
+            {
+                >= 0.8 => "high",
+                >= 0.5 => "medium",
+                _ => "low"
+            };
         }
 
         private void ClearConversationStatus()
@@ -943,12 +985,20 @@ namespace AspireApp.Web.Components.Pages
             {
                 var chatResponse = await BrainChatClient.ChatAsync(
                     query: Status,
-                    mode: ChatConversationModes.Regular,
+                    mode: SelectedChatMode,
                     tenantId: TenantContext.CurrentTenantId,
                     conversationId: ActiveConversationId?.ToString(),
                     cancellationToken: linkedTokenSource.Token);
 
                 AIResponse = chatResponse.Answer;
+
+                // Track evidence for the next assistant message index
+                var nextAssistantIndex = _chatHistory.Count(m =>
+                    m.Role == AuthorRole.Assistant);
+                if (chatResponse.Evidence.Count > 0 || chatResponse.Confidence > 0)
+                {
+                    _messageEvidence[nextAssistantIndex] = chatResponse;
+                }
             }
             catch (OperationCanceledException) when (manualStopTokenSource.IsCancellationRequested)
             {
