@@ -662,6 +662,42 @@
 
 **Verdict:** ✅ **APPROVED** — Data layer is coherent, protected by validation, ready for UI implementation.
 
+---
+
+## Core Context
+
+> This section summarizes key learnings from Phase 0 & early Phase 1 (before 2026-04-01).
+> Full details are below; these notes capture the essential patterns and decisions.
+
+### Phase 0 & Early Phase 1 Summary (Entries before 2026-04-01)
+
+- **Document ingestion pipeline verified:** Docling extraction → Neo4j storage → Chat retrieval works end-to-end
+- **Aspire orchestration smoke-tested:** All services start, health-check passing, logs accessible via dashboard
+- **Test infrastructure scaffolded:** Upload controller, file storage, coordinator patterns established; async dispatch model in place
+- **Multi-tenancy foundation:** Tenant isolation via columns + indexes; auth layer deferred to Phase 6
+- **Local auth slice approved:** Mock provider pattern with pluggable factory; tests verify sign-in/sign-out flows
+- **Vector infrastructure foundation (P2-C):** Neo4j indexes created, embedding service pattern established; population pipeline deferred
+- **Python processing patterns:** Docling, Neo4j, embedding calls; event loop management critical to responsiveness
+- **Test QA discipline:** Chat persistence requires owner message + visibility seam; confidence enrichment requires fail-closed behavior; live tests deferred
+
+### Key Decision Patterns
+
+1. **Fire-and-forget async patterns:** Upload queues processing but returns immediately with `status="uploaded"`; tests must poll dispatch instead of asserting sync completion
+2. **Test scaffolding alignment:** Test assumptions (esp. timeouts, retries) must match implementation semantics; transient failures during cold startup are retryable
+3. **Event loop discipline:** FastAPI background tasks must keep event loop responsive; sync-heavy work moves to thread pool
+4. **Honest roadmaps:** Mark items "foundation-only" when infrastructure is ready but population/integration pipelines remain
+5. **Fail-closed confidence:** Return None rather than synthetic defaults; downstream consumers handle missing data
+
+### Outstanding Items (Tracked in Phase 1+)
+
+- **BRAIN pivot recording:** Complete; decision-recording gate closed 2026-04-14
+- **P2-B confidence gate:** Closed 2026-04-17 (fail-closed behavior verified)
+- **P2-C embedding population:** Blocked on time; infrastructure foundation ready for Phase 2+
+- **Phase 3 agent selection:** Decision deadline 2026-04-24 (BLOCKING gate for Phase 2→3 transition)
+- **Docker validation:** Caveat noted as outstanding quality gate (not blocking Phase 1 parallel work)
+
+---
+
 ### 2026-03-28 — Docling Smoke Gate Alignment (QA Audit Complete)
 
 **Audit Focus:** Validate that `app.services.service_factory` is the correct smoke-test contract for document processing initialization.

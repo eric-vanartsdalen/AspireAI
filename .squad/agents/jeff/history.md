@@ -286,6 +286,51 @@ The failing UI test checks `Assert.Equal("uploaded", uploadedFile.Status)` at li
 - `dotnet build AspireApp.sln --nologo --no-restore`
 - `dotnet test src\AspireApp.WebTest\AspireApp.WebTest.csproj --nologo --no-restore --filter "FullyQualifiedName~LocalAccountAuthenticatorTests|FullyQualifiedName~LocalAccountSelfProvisioningTests|FullyQualifiedName~LocalAuthEndpointContractTests|FullyQualifiedName~SignInPanelTests|FullyQualifiedName~LocalAuthBootstrapperTests"`
 
+---
+
+## Core Context
+
+> This section summarizes key learnings from Phase 0 & early Phase 1 (before 2026-04-01).
+> Full details are below; these notes capture the essential patterns and decisions.
+
+### Phase 0 & Early Phase 1 Summary (Entries before 2026-04-01)
+
+- **Aspire orchestration:** All services (Web, API, Python, Neo4j, Ollama) wire correctly; ports assigned dynamically; health checks responsive
+- **Local auth framework:** MockAuthProvider pluggable pattern established; sign-in/sign-out/tenant flows verified via tests
+- **Document pipeline:** Docling extraction → Neo4j persistence → Chat retrieval end-to-end working
+- **Upload controller:** Fire-and-forget async dispatch model; controller returns `uploaded` status immediately while processing queues in background
+- **File storage:** Scoped injection pattern prevents HTTP self-calls; tenant context preserved in-circuit
+- **Database schemas:** SQLite migrations + Neo4j constraints idempotent and startup-safe; index creation deferred to initialization
+- **Chat persistence:** Message storage + owner-only visibility is acceptance seam; confidence enrichment requires fail-closed handling
+- **Event loop discipline:** Python background tasks must not starve FastAPI event loop; sync-heavy work moves to thread pool
+- **Test scaffolding:** Upload tests poll for async dispatch; e2e tests handle transient timeouts as retryable within polling window
+
+### Key Decision Patterns
+
+1. **Async dispatch + eventual consistency:** Controllers return before background work finishes; tests adapt expectations accordingly
+2. **Scoped injection for context:** FileStorageService scoped to request lifetime; TenantContextService provides isolation
+3. **Thread-pool for blocking work:** `asyncio.to_thread()` for sync-heavy document processing; restores event loop responsiveness
+4. **Fail-closed confidence:** Return None instead of synthetic defaults; downstream consumers decide fallback behavior
+5. **Idempotent schema initialization:** Constraints and indexes use `IF NOT EXISTS`; safe to run on every startup
+
+### Outstanding Items (Tracked in Phase 1+)
+
+- **BRAIN pivot:** Recorded and gated closed 2026-04-14
+- **P2-B confidence:** Gate closed 2026-04-17 (fail-closed verified)
+- **P2-C embedding population:** Infrastructure ready; population pipeline deferred to Phase 2+
+- **Phase 3 agent framework selection:** Decision deadline 2026-04-24 (BLOCKING)
+- **Docker/deployment:** Validation caveat noted; not blocking Phase 1
+
+### Cross-Domain Patterns Established
+
+- **Authentication contract:** IAuthService abstraction with pluggable implementations (Mock, OIDC, Local)
+- **Tenant isolation:** Column-based per-request scoping; authorization (access control) deferred to Phase 6
+- **Document processing:** Fire-and-forget queueing in controller; status polling in client; Python handles async via event loop + thread pool
+- **Neo4j integration:** Driver pooling; constraints at init-time; fail-closed on missing data
+- **Blazor/Razor patterns:** AuthorizeView, CascadingAuthenticationState, parameter binding via routes
+
+---
+
 ### 2025-11-02 — Feasibility: Local managed username/password auth can be added cleanly within existing IAuthService abstraction
 
 **Status:** Feasibility pass complete. No blocking issues identified.
