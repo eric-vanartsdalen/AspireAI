@@ -1,8 +1,16 @@
 from __future__ import annotations
 
+from enum import Enum
 from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field
+
+
+class ChatMode(str, Enum):
+    """Chat interaction mode selected by the user."""
+
+    REGULAR = "regular"
+    CRITIQUE = "critique"
 
 
 class BrainContractModel(BaseModel):
@@ -101,6 +109,15 @@ class ReasoningStep(BrainContractModel):
     reasoning: str
     tool: str | None = None
     result: str
+
+
+class BrainChatRequest(EnvelopeMixin):
+    """Chat request routed through the BRAIN gateway."""
+
+    query: str
+    mode: ChatMode = ChatMode.REGULAR
+    conversation_id: str | None = None
+    top_k: int = Field(default=5, ge=1)
 
 
 class ReasonResponse(EnvelopeMixin):

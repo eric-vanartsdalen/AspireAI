@@ -33,11 +33,33 @@ public static class ChatConversationTitleSources
     public const string User = "user";
 }
 
+public static class ChatConversationModes
+{
+    public const string Regular = "regular";
+    public const string Critique = "critique";
+
+    public static string Normalize(string mode)
+    {
+        if (string.Equals(mode, Regular, StringComparison.OrdinalIgnoreCase))
+        {
+            return Regular;
+        }
+
+        if (string.Equals(mode, Critique, StringComparison.OrdinalIgnoreCase))
+        {
+            return Critique;
+        }
+
+        return Regular;
+    }
+}
+
 public sealed record ChatConversationSummary(
     Guid ConversationId,
     string Title,
     string Preview,
     string? TenantId,
+    string ChatMode,
     int MessageCount,
     bool HasUserEditedTitle,
     DateTime CreatedAt,
@@ -54,6 +76,7 @@ public sealed record ChatConversationDetail(
     Guid ConversationId,
     string Title,
     string? TenantId,
+    string ChatMode,
     bool HasUserEditedTitle,
     DateTime CreatedAt,
     DateTime UpdatedAt,
@@ -63,8 +86,9 @@ public interface IChatConversationService
 {
     Task<IReadOnlyList<ChatConversationSummary>> ListConversationsAsync(string ownerUserId, CancellationToken cancellationToken = default);
     Task<ChatConversationDetail?> GetConversationAsync(Guid conversationId, string ownerUserId, CancellationToken cancellationToken = default);
-    Task<ChatConversationSummary> StartConversationAsync(string ownerUserId, string? tenantId, string userMessage, CancellationToken cancellationToken = default);
+    Task<ChatConversationSummary> StartConversationAsync(string ownerUserId, string? tenantId, string userMessage, string chatMode = ChatConversationModes.Regular, CancellationToken cancellationToken = default);
     Task<ChatConversationSummary?> AddMessageAsync(Guid conversationId, string ownerUserId, string role, string content, CancellationToken cancellationToken = default);
+    Task<ChatConversationSummary?> UpdateChatModeAsync(Guid conversationId, string ownerUserId, string chatMode, CancellationToken cancellationToken = default);
     Task<ChatConversationSummary?> RenameConversationAsync(Guid conversationId, string ownerUserId, string title, CancellationToken cancellationToken = default);
     Task<bool> DeleteConversationAsync(Guid conversationId, string ownerUserId, CancellationToken cancellationToken = default);
 }
@@ -127,6 +151,7 @@ public sealed class ChatConversationService(
             conversation.Id,
             conversation.Title,
             conversation.TenantId,
+            conversation.ChatMode,
             string.Equals(conversation.TitleSource, ChatConversationTitleSources.User, StringComparison.OrdinalIgnoreCase),
             conversation.CreatedAt,
             conversation.UpdatedAt,
@@ -137,6 +162,7 @@ public sealed class ChatConversationService(
         string ownerUserId,
         string? tenantId,
         string userMessage,
+        string chatMode = ChatConversationModes.Regular,
         CancellationToken cancellationToken = default)
     {
         var normalizedOwnerUserId = NormalizeOwnerUserId(ownerUserId);
@@ -150,6 +176,7 @@ public sealed class ChatConversationService(
             TenantId = NormalizeTenantId(tenantId),
             Title = ChatConversationTitleHelper.BuildFallbackTitle(normalizedMessage),
             TitleSource = ChatConversationTitleSources.Fallback,
+            ChatMode = ChatConversationModes.Normalize(chatMode),
             CreatedAt = now,
             UpdatedAt = now,
             LastMessageAt = now
@@ -228,6 +255,32 @@ public sealed class ChatConversationService(
         {
             await TryApplyGeneratedTitleAsync(conversationId, normalizedOwnerUserId, cancellationToken);
         }
+
+        return await GetConversationSummaryAsync(conversationId, normalizedOwnerUserId, cancellationToken);
+    }
+
+    public async Task<ChatConversationSummary?> UpdateChatModeAsync(
+        Guid conversationId,
+        string ownerUserId,
+        string chatMode,
+        CancellationToken cancellationToken = default)
+    {
+        var normalizedOwnerUserId = NormalizeOwnerUserId(ownerUserId);
+        var normalizedMode = ChatConversationModes.Normalize(chatMode);
+
+        var conversation = await _dbContext.ChatConversations
+            .SingleOrDefaultAsync(
+                existing => existing.Id == conversationId && existing.OwnerUserId == normalizedOwnerUserId,
+                cancellationToken);
+
+        if (conversation is null)
+        {
+            return null;
+        }
+
+        conversation.ChatMode = normalizedMode;
+        conversation.UpdatedAt = DateTime.UtcNow;
+        await _dbContext.SaveChangesAsync(cancellationToken);
 
         return await GetConversationSummaryAsync(conversationId, normalizedOwnerUserId, cancellationToken);
     }
@@ -412,6 +465,7 @@ public sealed class ChatConversationService(
             conversation.Title,
             ChatConversationTitleHelper.BuildPreview(messages.LastOrDefault()?.Content),
             conversation.TenantId,
+            conversation.ChatMode,
             messages.Count,
             string.Equals(conversation.TitleSource, ChatConversationTitleSources.User, StringComparison.OrdinalIgnoreCase),
             conversation.CreatedAt,

@@ -3,6 +3,25 @@ using System.Text.Json.Serialization;
 
 namespace AspireApp.ApiService.Contracts;
 
+[JsonConverter(typeof(JsonStringEnumConverter<ChatMode>))]
+public enum ChatMode
+{
+    [JsonStringEnumMemberName("regular")]
+    Regular,
+
+    [JsonStringEnumMemberName("critique")]
+    Critique
+}
+
+public sealed record BrainChatRequest(
+    string TenantId,
+    string CorrelationId,
+    [property: JsonPropertyName("query")] string Query,
+    [property: JsonPropertyName("mode")] ChatMode Mode = ChatMode.Regular,
+    [property: JsonPropertyName("conversation_id")] string? ConversationId = null,
+    [property: JsonPropertyName("top_k")] int TopK = 5)
+    : BrainContractEnvelope(TenantId, CorrelationId);
+
 public record CanonicalDocument(
     string TenantId,
     string CorrelationId,

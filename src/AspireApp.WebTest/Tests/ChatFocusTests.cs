@@ -193,6 +193,7 @@ public sealed class ChatFocusTests
                     "Existing conversation title",
                     "User preview",
                     "tenant-alpha",
+                    "regular",
                     1,
                     false,
                     Timestamp,
@@ -212,6 +213,7 @@ public sealed class ChatFocusTests
                     conversationId,
                     "Existing conversation title",
                     "tenant-alpha",
+                    "regular",
                     false,
                     Timestamp,
                     Timestamp,
@@ -229,6 +231,7 @@ public sealed class ChatFocusTests
             string ownerUserId,
             string? tenantId,
             string userMessage,
+            string chatMode = "regular",
             CancellationToken cancellationToken = default)
         {
             throw new NotSupportedException();
@@ -248,6 +251,15 @@ public sealed class ChatFocusTests
             Guid conversationId,
             string ownerUserId,
             string title,
+            CancellationToken cancellationToken = default)
+        {
+            throw new NotSupportedException();
+        }
+
+        public Task<ChatConversationSummary?> UpdateChatModeAsync(
+            Guid conversationId,
+            string ownerUserId,
+            string chatMode,
             CancellationToken cancellationToken = default)
         {
             throw new NotSupportedException();

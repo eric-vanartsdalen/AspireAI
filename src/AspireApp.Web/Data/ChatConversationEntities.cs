@@ -38,6 +38,11 @@ public sealed class ChatConversation
     [Column("last_message_at")]
     public DateTime? LastMessageAt { get; set; }
 
+    [Required]
+    [Column("chat_mode")]
+    [MaxLength(20)]
+    public string ChatMode { get; set; } = "regular";
+
     public ICollection<ChatConversationMessage> Messages { get; set; } = [];
 }
 

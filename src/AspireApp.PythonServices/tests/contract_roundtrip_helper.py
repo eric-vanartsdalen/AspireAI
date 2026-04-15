@@ -12,7 +12,7 @@ sys.path.insert(0, str(PROJECT_ROOT))
 if str(TEST_ROOT) not in sys.path:
     sys.path.insert(0, str(TEST_ROOT))
 
-from app.contracts import CanonicalDocument, PageContent
+from app.contracts import CanonicalDocument, PageContent, ChatMode, BrainChatRequest
 
 
 def build_sample_canonical_document() -> CanonicalDocument:
@@ -46,9 +46,32 @@ def validate_canonical(path: str) -> int:
     return 0
 
 
+def build_sample_brain_chat_request() -> BrainChatRequest:
+    return BrainChatRequest(
+        tenant_id="tenant-roundtrip",
+        correlation_id="corr-chat-roundtrip",
+        query="How does Aspire orchestrate services?",
+        mode=ChatMode.CRITIQUE,
+        conversation_id="conv-123",
+        top_k=10,
+    )
+
+
+def emit_brain_chat_request() -> int:
+    print(build_sample_brain_chat_request().model_dump_json())
+    return 0
+
+
+def validate_brain_chat_request(path: str) -> int:
+    payload = Path(path).read_text(encoding="utf-8")
+    request = BrainChatRequest.model_validate_json(payload)
+    print(request.model_dump_json())
+    return 0
+
+
 def main(argv: list[str]) -> int:
     if len(argv) < 2:
-        raise SystemExit("Expected a command: emit-canonical or validate-canonical <path>")
+        raise SystemExit("Expected a command: emit-canonical, validate-canonical, emit-brain-chat-request, or validate-brain-chat-request")
 
     command = argv[1]
     if command == "emit-canonical":
@@ -58,6 +81,14 @@ def main(argv: list[str]) -> int:
         if len(argv) != 3:
             raise SystemExit("validate-canonical requires a path to a JSON payload")
         return validate_canonical(argv[2])
+
+    if command == "emit-brain-chat-request":
+        return emit_brain_chat_request()
+
+    if command == "validate-brain-chat-request":
+        if len(argv) != 3:
+            raise SystemExit("validate-brain-chat-request requires a path to a JSON payload")
+        return validate_brain_chat_request(argv[2])
 
     raise SystemExit(f"Unknown command: {command}")
 

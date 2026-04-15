@@ -200,6 +200,92 @@ public sealed class BrainContractRoundTripTests
     }
 
     [Fact]
+    public void BrainChatRequest_Serializes_WithSnakeCaseAndEnumStrings()
+    {
+        var request = new Contracts.BrainChatRequest(
+            TenantId: "tenant-a",
+            CorrelationId: "corr-chat",
+            Query: "How does Aspire work?",
+            Mode: Contracts.ChatMode.Critique,
+            ConversationId: "conv-42",
+            TopK: 10);
+
+        using var payload = JsonDocument.Parse(JsonSerializer.Serialize(request, JsonOptions));
+        var root = payload.RootElement;
+
+        Assert.True(root.TryGetProperty("query", out var query));
+        Assert.True(root.TryGetProperty("mode", out var mode));
+        Assert.True(root.TryGetProperty("conversation_id", out var convId));
+        Assert.True(root.TryGetProperty("top_k", out var topK));
+        Assert.True(root.TryGetProperty("tenant_id", out _));
+        Assert.True(root.TryGetProperty("correlation_id", out _));
+
+        Assert.Equal("How does Aspire work?", query.GetString());
+        Assert.Equal("critique", mode.GetString());
+        Assert.Equal("conv-42", convId.GetString());
+        Assert.Equal(10, topK.GetInt32());
+    }
+
+    [Fact]
+    public void BrainChatRequest_RoundTrips_FromPythonStyleJson()
+    {
+        const string pythonJson = """
+            {
+              "tenant_id": "tenant-a",
+              "correlation_id": "corr-chat",
+              "query": "What is Aspire?",
+              "mode": "regular",
+              "conversation_id": null,
+              "top_k": 5
+            }
+            """;
+
+        var contract = JsonSerializer.Deserialize<Contracts.BrainChatRequest>(pythonJson, JsonOptions);
+
+        Assert.NotNull(contract);
+        Assert.Equal("tenant-a", contract.TenantId);
+        Assert.Equal("What is Aspire?", contract.Query);
+        Assert.Equal(Contracts.ChatMode.Regular, contract.Mode);
+        Assert.Null(contract.ConversationId);
+        Assert.Equal(5, contract.TopK);
+
+        AssertJsonEquivalent(pythonJson, JsonSerializer.Serialize(contract, JsonOptions));
+    }
+
+    [Fact]
+    public async Task BrainChatRequest_RoundTrips_Between_Python_And_CSharp()
+    {
+        var helperScriptPath = GetRepositoryPath("src", "AspireApp.PythonServices", "tests", "contract_roundtrip_helper.py");
+        var pythonJson = await RunPythonHelperAsync(helperScriptPath, "emit-brain-chat-request");
+
+        var contract = JsonSerializer.Deserialize<Contracts.BrainChatRequest>(pythonJson, JsonOptions);
+
+        Assert.NotNull(contract);
+        Assert.Equal("tenant-roundtrip", contract.TenantId);
+        Assert.Equal("corr-chat-roundtrip", contract.CorrelationId);
+        Assert.Equal("How does Aspire orchestrate services?", contract.Query);
+        Assert.Equal(Contracts.ChatMode.Critique, contract.Mode);
+        Assert.Equal("conv-123", contract.ConversationId);
+        Assert.Equal(10, contract.TopK);
+
+        var csharpJson = JsonSerializer.Serialize(contract, JsonOptions);
+        var tempFilePath = Path.GetTempFileName();
+
+        try
+        {
+            await File.WriteAllTextAsync(tempFilePath, csharpJson, TestContext.Current.CancellationToken);
+            var normalizedPythonJson = await RunPythonHelperAsync(helperScriptPath, "validate-brain-chat-request", tempFilePath);
+
+            AssertJsonEquivalent(pythonJson, csharpJson);
+            AssertJsonEquivalent(csharpJson, normalizedPythonJson);
+        }
+        finally
+        {
+            File.Delete(tempFilePath);
+        }
+    }
+
+    [Fact]
     public async Task CanonicalDocument_RoundTrips_Between_Python_And_CSharp()
     {
         var helperScriptPath = GetRepositoryPath("src", "AspireApp.PythonServices", "tests", "contract_roundtrip_helper.py");

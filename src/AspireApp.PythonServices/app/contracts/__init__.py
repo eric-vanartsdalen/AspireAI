@@ -2,9 +2,11 @@
 
 from .interfaces import IKnowledgeRetriever
 from .models import (
+    BrainChatRequest,
     BrainQueryRequest,
     BrainContractModel,
     CanonicalDocument,
+    ChatMode,
     Claim,
     Contradiction,
     EnvelopeMixin,
@@ -18,9 +20,11 @@ from .models import (
 )
 
 __all__ = [
+    "BrainChatRequest",
     "BrainContractModel",
     "BrainQueryRequest",
     "CanonicalDocument",
+    "ChatMode",
     "Claim",
     "Contradiction",
     "EnvelopeMixin",

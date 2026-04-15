@@ -24,7 +24,7 @@ public sealed class ChatConversationServiceTests
             "demo-taylor-jones",
             "tenant-alpha",
             "How do I configure Neo4j indexes for better performance?",
-            TestContext.Current.CancellationToken);
+            cancellationToken: TestContext.Current.CancellationToken);
 
         Assert.Equal("How do I configure Neo4j indexes", summary.Title);
         Assert.Equal("tenant-alpha", summary.TenantId);
@@ -50,7 +50,7 @@ public sealed class ChatConversationServiceTests
             "demo-taylor-jones",
             "tenant-alpha",
             "How do I configure Neo4j indexes for better performance?",
-            TestContext.Current.CancellationToken);
+            cancellationToken: TestContext.Current.CancellationToken);
 
         var updated = await service.AddMessageAsync(
             started.ConversationId,
@@ -77,7 +77,7 @@ public sealed class ChatConversationServiceTests
             "demo-taylor-jones",
             "tenant-alpha",
             "Help me plan my document ingestion workflow",
-            TestContext.Current.CancellationToken);
+            cancellationToken: TestContext.Current.CancellationToken);
 
         var renamed = await service.RenameConversationAsync(
             started.ConversationId,
