@@ -5,6 +5,33 @@
 - **Stack:** C# (.NET 9), Blazor, Minimal API, Python (FastAPI), Neo4j, Ollama, Docker, Aspire
 - **Created:** 2026-02-21T23:32:00Z
 
+## Core Context
+
+**Active Themes (as of 2026-04-15):**
+- **P2-C Embedding Orchestration:** AppHost now passes embedding config (OLLAMA_ENDPOINT, EMBEDDING_MODEL, EMBEDDING_DIM) to Python services; startup dependencies ensure model readiness before ingestion
+- **AI Latency Variance:** Product code handling AI response timing is correct; test infrastructure must account for legitimate 180s+ Ollama response windows (test timeouts at 90s race this)
+- **Chat Persistence:** Rename-typing focus interference solved via explicit render-time flags instead of eager autofocus; owner-message privacy tests require only persistence + visibility validation, not full AI response
+- **Upload Test Architecture:** Async background processing means test must poll for eventual completion, not assert synchronously at controller return
+
+**Key Technical Decisions:**
+1. P2-C embedding config wired via Aspire environment variables (consistent with LightRAG pattern)
+2. Python services wait for Ollama + embedding model before startup (prevents cold-start failures)
+3. Chat focus managed by explicit `ShouldFocusQuestionInput`/`ShouldFocusConversationTitleInput` flags (no eager autofocus)
+4. Vector infrastructure foundation complete; embedding population + retriever wiring deferred (honest roadmap)
+5. Playwright browser installation not bundled (must be documented in dev prerequisites)
+
+**Cross-Service Patterns:**
+- AppHost orchestration via typed endpoints and service discovery
+- Environment variable configuration surface minimal (only what services need)
+- Dependency ordering critical (wait for AI models, DBs before service startup)
+- Health check endpoints monitored by Aspire dashboard
+
+**Working Relationships:**
+- Close collaboration with Bob on architecture and orchestration wiring
+- Buster drives QA validation and test infrastructure decisions
+- Jarvis implements Python/Neo4j details
+- Eric provides user direction and design feedback
+
 ## Learnings
 
 <!-- Append new learnings below. Each entry is something lasting about the project. -->

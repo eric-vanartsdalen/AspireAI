@@ -5,6 +5,27 @@
 - **Stack:** C# (.NET 9), Blazor, Minimal API, Python (FastAPI), Neo4j, Ollama, Docker, Aspire
 - **Created:** 2026-02-21T23:32:00Z
 
+## Core Context
+
+**Active Themes (as of 2026-04-15):**
+- **P2-C Vector Infrastructure:** Foundation-first scoping validated; embedding population + retriever wiring in progress
+- **Test Reliability:** Intermittent failures traced to environmental prerequisites (Playwright Chromium) and timing assumptions (Ollama latency variance). Must document setup; test infrastructure hardening in progress
+- **Aspire Orchestration:** Service dependency ordering critical; health checks prevent false-positive startup; environment variable configuration passes across service boundaries cleanly
+- **Document Processing Pipeline:** Background task queuing (fire-and-forget) must preserve status polling; async patterns require explicit event-loop management to avoid starving FastAPI
+
+**Key Technical Decisions:**
+1. Upload processing deferred to background task after response returns (status reporting via polling)
+2. Python background work must not block FastAPI event loop (`asyncio.to_thread()` pattern)
+3. Chat focus state managed via explicit render-time flags, not eager autofocus (prevents rename-typing interference)
+4. Playwright browser installation must be documented as dev prerequisite (not bundled in repo)
+5. Ollama contention serialized (defer LightRAG handoff until Python embedding work complete)
+
+**Working Relationships:**
+- Close collaboration with Jeff on timing/architecture issues
+- Bob drives Phase roadmap and architecture decisions
+- Jarvis handles Python/Neo4j implementation details
+- Eric provides user direction and design intent
+
 ## Learnings
 
 <!-- Append new learnings below. Each entry is something lasting about the project. -->
