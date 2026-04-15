@@ -38,7 +38,7 @@ class FakeNeo4jService:
     def search_similar_content(self, query: str, limit: int) -> list[dict]:
         self.calls.append({"query": query, "limit": limit})
         return self.results
-    
+
     def get_confidence_by_provenance(
         self, 
         document_id: int, 
@@ -87,6 +87,16 @@ class CapturingRetriever(IKnowledgeRetriever):
                 )
             ],
         )
+
+
+class _UnavailableEmbedding:
+    """Stub embedding service that reports itself as unavailable."""
+
+    def is_available(self) -> bool:
+        return False
+
+    def embed_text(self, text: str) -> list[float]:
+        raise RuntimeError("unavailable")
 
 
 class LightRagRetrieverTests(unittest.TestCase):
@@ -325,7 +335,7 @@ class LightRagRetrieverTests(unittest.TestCase):
                 }
             ]
         )
-        result = asyncio.run(rag.semantic_search(query=rag.SemanticQuery(query="fallback", limit=4), neo4j=neo4j))
+        result = asyncio.run(rag.semantic_search(query=rag.SemanticQuery(query="fallback", limit=4), neo4j=neo4j, embedding=_UnavailableEmbedding()))
 
         self.assertEqual("fallback", result["query"])
         self.assertEqual(1, result["count"])

@@ -3,6 +3,7 @@ from typing import List, Dict, Any, Optional
 import logging
 
 from ..services.database_service import DatabaseService
+from ..services.embedding_service import EmbeddingService
 from ..services.neo4j_service import Neo4jService
 from ..brain.knowledge import BrainKnowledgeRetriever, LightRagRetriever
 from ..contracts import BrainQueryRequest, IKnowledgeRetriever, KnowledgeResult
@@ -20,6 +21,10 @@ def get_neo4j_service():
     return Neo4jService()
 
 
+def get_embedding_service():
+    return EmbeddingService()
+
+
 def get_knowledge_retriever(
     neo4j: Neo4jService = Depends(get_neo4j_service),
 ) -> IKnowledgeRetriever:
@@ -28,8 +33,9 @@ def get_knowledge_retriever(
 
 def get_brain_knowledge_retriever(
     neo4j: Neo4jService = Depends(get_neo4j_service),
+    embedding: EmbeddingService = Depends(get_embedding_service),
 ) -> IKnowledgeRetriever:
-    return BrainKnowledgeRetriever(neo4j_service=neo4j)
+    return BrainKnowledgeRetriever(neo4j_service=neo4j, embedding_service=embedding)
 
 
 @router.get("/search-documents")
@@ -112,23 +118,30 @@ async def get_surrounding_pages(
 @router.post("/semantic-search")
 async def semantic_search(
     query: SemanticQuery,
-    neo4j: Neo4jService = Depends(get_neo4j_service)
+    neo4j: Neo4jService = Depends(get_neo4j_service),
+    embedding: EmbeddingService = Depends(get_embedding_service),
 ):
-    """Perform semantic search across documents"""
+    """Perform semantic search across documents using vector similarity when available."""
     try:
-        # For now, use simple text search - can be enhanced with embeddings later
-        results = neo4j.search_similar_content(query.query, query.limit)
-        
-        # Filter by document IDs if specified
+        query_embedding = embedding.embed_text(query.query) if embedding.is_available() else None
+
+        if query_embedding is not None:
+            results = neo4j.search_pages_vector(
+                query_embedding, query.limit, query.similarity_threshold,
+            )
+        else:
+            results = neo4j.search_similar_content(query.query, query.limit)
+
         if query.document_ids:
             results = [r for r in results if r["document_id"] in query.document_ids]
-        
+
         return {
             "query": query.query,
             "similarity_threshold": query.similarity_threshold,
             "document_ids": query.document_ids,
             "results": results,
-            "count": len(results)
+            "count": len(results),
+            "search_mode": "vector" if query_embedding is not None else "text",
         }
     except Exception as e:
         logger.error(f"Error performing semantic search: {e}")

@@ -79,6 +79,22 @@ class CapturingRetriever(IKnowledgeRetriever):
         )
 
 
+class _FakeEmbeddingService:
+    """Lightweight stand-in for ``EmbeddingService`` used in vector-search tests."""
+
+    def __init__(self, embedding: list[float] | None = None, error: Exception | None = None):
+        self._embedding = embedding
+        self._error = error
+
+    def is_available(self) -> bool:
+        return self._error is None
+
+    def embed_text(self, text: str) -> list[float]:
+        if self._error is not None:
+            raise self._error
+        return self._embedding or []
+
+
 class KnowledgeRetrieverTests(unittest.TestCase):
     def test_lightrag_retriever_shapes_chunks_into_contract_items(self):
         payload = {
@@ -444,6 +460,174 @@ class KnowledgeRetrieverTests(unittest.TestCase):
         self.assertEqual("Scoped page fallback content.", result.results[0].content)
         self.assertEqual(0.67, result.results[0].confidence)
         self.assertEqual(["document:7/page:4", "file:scoped.pdf"], result.results[0].source_refs)
+
+    # ------------------------------------------------------------------
+    # P2-C: Vector search wiring
+    # ------------------------------------------------------------------
+
+    def test_semantic_retriever_uses_vector_search_when_embedding_available(self):
+        """P2-C: When EmbeddingService is provided and working, vector search is used."""
+        neo4j = FakeNeo4jService([])
+
+        vector_claim_results = [
+            {
+                "content": "Vector-matched claim.",
+                "confidence": 0.92,
+                "relevance_score": 0.92,
+                "document_id": 10,
+                "page_number": 3,
+                "filename": "vector.pdf",
+                "result_type": "claim",
+            }
+        ]
+
+        def search_claims_vector(query_embedding, limit, threshold=0.7):
+            neo4j.calls.append({"method": "search_claims_vector", "limit": limit})
+            return vector_claim_results
+
+        def search_pages_vector(query_embedding, limit, threshold=0.7):
+            neo4j.calls.append({"method": "search_pages_vector", "limit": limit})
+            return []
+
+        neo4j.search_claims_vector = search_claims_vector
+        neo4j.search_pages_vector = search_pages_vector
+
+        fake_embedding = _FakeEmbeddingService(embedding=[0.1, 0.2, 0.3])
+        retriever = SemanticKnowledgeRetriever(neo4j, embedding_service=fake_embedding)
+        result = asyncio.run(retriever.retrieve("vector query", limit=5))
+
+        self.assertEqual(1, len(result.results))
+        self.assertEqual("Vector-matched claim.", result.results[0].content)
+        self.assertEqual(0.92, result.results[0].confidence)
+        # Should have used vector search, not text search
+        methods = [c["method"] for c in neo4j.calls if "method" in c]
+        self.assertIn("search_claims_vector", methods)
+        self.assertNotIn("search_claims", methods)
+        self.assertNotIn("search_similar_content", methods)
+
+    def test_semantic_retriever_vector_falls_back_to_pages_vector(self):
+        """P2-C: When vector claim search returns empty, falls back to vector page search."""
+        neo4j = FakeNeo4jService([])
+
+        vector_page_results = [
+            {
+                "content": "Vector page match.",
+                "confidence": 0.78,
+                "document_id": 11,
+                "page_number": 1,
+                "filename": "pages.pdf",
+            }
+        ]
+
+        def search_claims_vector(query_embedding, limit, threshold=0.7):
+            neo4j.calls.append({"method": "search_claims_vector", "limit": limit})
+            return []
+
+        def search_pages_vector(query_embedding, limit, threshold=0.7):
+            neo4j.calls.append({"method": "search_pages_vector", "limit": limit})
+            return vector_page_results
+
+        neo4j.search_claims_vector = search_claims_vector
+        neo4j.search_pages_vector = search_pages_vector
+
+        fake_embedding = _FakeEmbeddingService(embedding=[0.4, 0.5, 0.6])
+        retriever = SemanticKnowledgeRetriever(neo4j, embedding_service=fake_embedding)
+        result = asyncio.run(retriever.retrieve("page query", limit=5))
+
+        methods = [c["method"] for c in neo4j.calls if "method" in c]
+        self.assertEqual(["search_claims_vector", "search_pages_vector"], methods)
+        self.assertEqual(1, len(result.results))
+        self.assertEqual("Vector page match.", result.results[0].content)
+
+    def test_semantic_retriever_falls_back_to_text_when_embedding_unavailable(self):
+        """P2-C: When EmbeddingService raises, retriever falls back to text search."""
+        neo4j = FakeNeo4jService([])
+        neo4j.search_claims_results = [
+            {
+                "content": "Text claim fallback.",
+                "confidence": 0.70,
+                "document_id": 5,
+                "page_number": 1,
+                "filename": "text.pdf",
+                "result_type": "claim",
+            }
+        ]
+
+        fake_embedding = _FakeEmbeddingService(error=RuntimeError("Ollama offline"))
+        retriever = SemanticKnowledgeRetriever(neo4j, embedding_service=fake_embedding)
+        result = asyncio.run(retriever.retrieve("fallback query", limit=3))
+
+        self.assertEqual(1, len(result.results))
+        self.assertEqual("Text claim fallback.", result.results[0].content)
+        # Should have used text search
+        call_kinds = [c.get("method") for c in neo4j.calls]
+        self.assertNotIn("search_claims_vector", call_kinds)
+
+    def test_semantic_retriever_falls_back_to_text_when_no_embedding_service(self):
+        """P2-C: Without an EmbeddingService, retriever uses text search (backward compat)."""
+        neo4j = FakeNeo4jService(
+            [
+                {
+                    "content": "Text-only result.",
+                    "document_id": 1,
+                    "page_number": 1,
+                    "filename": "compat.pdf",
+                    "score": 0.55,
+                }
+            ]
+        )
+        neo4j.search_claims_results = []
+        retriever = SemanticKnowledgeRetriever(neo4j)  # No embedding service
+
+        result = asyncio.run(retriever.retrieve("backwards compat", limit=5))
+
+        self.assertEqual(1, len(result.results))
+        self.assertEqual("Text-only result.", result.results[0].content)
+
+    def test_brain_retriever_passes_embedding_service_through(self):
+        """P2-C: BrainKnowledgeRetriever forwards embedding_service to SemanticKnowledgeRetriever."""
+        neo4j = FakeNeo4jService([])
+
+        vector_claim_results = [
+            {
+                "content": "Brain vector claim.",
+                "confidence": 0.88,
+                "document_id": 20,
+                "page_number": 1,
+                "filename": "brain.pdf",
+                "result_type": "claim",
+            }
+        ]
+
+        def search_claims_vector(query_embedding, limit, threshold=0.7):
+            neo4j.calls.append({"method": "search_claims_vector", "limit": limit})
+            return vector_claim_results
+
+        def search_pages_vector(query_embedding, limit, threshold=0.7):
+            neo4j.calls.append({"method": "search_pages_vector", "limit": limit})
+            return []
+
+        neo4j.search_claims_vector = search_claims_vector
+        neo4j.search_pages_vector = search_pages_vector
+
+        fake_embedding = _FakeEmbeddingService(embedding=[0.7, 0.8, 0.9])
+
+        # LightRAG returns empty → triggers semantic fallback
+        light_rag = CapturingRetriever(
+            KnowledgeResult(tenant_id="t", correlation_id="c", results=[])
+        )
+        retriever = BrainKnowledgeRetriever(
+            light_rag_retriever=light_rag,
+            neo4j_service=neo4j,
+            embedding_service=fake_embedding,
+        )
+
+        result = asyncio.run(retriever.retrieve("brain vector", limit=3))
+
+        self.assertEqual(1, len(result.results))
+        self.assertEqual("Brain vector claim.", result.results[0].content)
+        methods = [c["method"] for c in neo4j.calls if "method" in c]
+        self.assertIn("search_claims_vector", methods)
 
 
 if __name__ == "__main__":

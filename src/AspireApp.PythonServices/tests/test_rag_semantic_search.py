@@ -28,6 +28,26 @@ class FakeNeo4jService:
         self.calls.append((query, limit))
         return list(self.results)
 
+    def search_pages_vector(self, query_embedding, limit: int = 10, threshold: float = 0.7):
+        self.calls.append(("vector", limit))
+        return getattr(self, "vector_results", [])
+
+
+class _FakeEmbeddingService:
+    """Lightweight stand-in for ``EmbeddingService``."""
+
+    def __init__(self, embedding: list[float] | None = None, available: bool = True):
+        self._embedding = embedding
+        self._available = available
+
+    def is_available(self) -> bool:
+        return self._available
+
+    def embed_text(self, text: str) -> list[float]:
+        if not self._available:
+            raise RuntimeError("unavailable")
+        return self._embedding or []
+
 
 class RagSemanticSearchTests(unittest.TestCase):
     def test_semantic_search_preserves_scored_results_after_filtering(self):
@@ -58,6 +78,7 @@ class RagSemanticSearchTests(unittest.TestCase):
             rag.semantic_search(
                 SemanticQuery(query="Aspire", document_ids=[7], limit=3),
                 neo4j=neo4j,
+                embedding=_FakeEmbeddingService(available=False),
             )
         )
 
@@ -67,6 +88,7 @@ class RagSemanticSearchTests(unittest.TestCase):
         self.assertEqual(0.91, response["results"][0]["confidence"])
         self.assertEqual(0.91, response["results"][0]["relevance_score"])
         self.assertEqual(0.91, response["results"][0]["source_confidence"])
+        self.assertEqual("text", response["search_mode"])
 
     def test_search_similar_content_projects_confidence_fields(self):
         service = Neo4jService(uri="bolt://test", user="neo4j", password="secret")
@@ -129,6 +151,32 @@ class RagSemanticSearchTests(unittest.TestCase):
         self.assertIn("CONTAINS_CLAIM", count_query)
         self.assertIn("deleted_claims", count_query)
         self.assertIn("FOREACH (claim IN claims | DETACH DELETE claim)", delete_query)
+
+    def test_semantic_search_uses_vector_when_embedding_available(self):
+        """P2-C: semantic-search endpoint should use vector search when embeddings are available."""
+        neo4j = FakeNeo4jService([])
+        neo4j.vector_results = [
+            {
+                "content": "Vector-matched page content.",
+                "page_number": 5,
+                "filename": "vec.pdf",
+                "document_id": 15,
+                "confidence": 0.95,
+                "relevance_score": 0.95,
+            }
+        ]
+
+        response = asyncio.run(
+            rag.semantic_search(
+                SemanticQuery(query="vector test", limit=5),
+                neo4j=neo4j,
+                embedding=_FakeEmbeddingService(embedding=[0.1, 0.2, 0.3], available=True),
+            )
+        )
+
+        self.assertEqual("vector", response["search_mode"])
+        self.assertEqual(1, response["count"])
+        self.assertEqual("Vector-matched page content.", response["results"][0]["content"])
 
 
 if __name__ == "__main__":

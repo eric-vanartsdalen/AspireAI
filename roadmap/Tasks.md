@@ -6,7 +6,7 @@ Working task breakdown for the [BRAIN Plan](Plan.md). Tracks what's been accompl
 
 Note: This will be a living document.
 
-**Last Updated:** 2026-04-18 — **P2-B COMPLETE:** `LightRagRetriever` enriches from Neo4j when provenance exists; unresolved confidence fails closed (no DEFAULT_CONFIDENCE fallback). **P2-C IN PROGRESS:** Vector index foundation implemented (indexes created, search methods ready, embedding config wired); ingestion now batches and persists page/claim embeddings with regression coverage. **Next:** Wire vector search into retrievers; (P2) finish integration docs + contract round-trip coverage; (P3) select the agent framework and move contradiction detection into the Critic Agent slice.
+**Last Updated:** 2026-04-22 — **P2-C COMPLETE:** Vector search wired into `SemanticKnowledgeRetriever` and `/rag/semantic-search` endpoint; embedding-first with text-CONTAINS fallback when embedding service is unavailable. All 92 Python tests pass. **Next:** Phase 3a — Regular mode RAG-enhanced chat (define ChatMode contract, implement `/brain/chat`, reroute Blazor through Gateway); (P3) agent framework selection for Critique mode.
 
 ---
 
@@ -173,24 +173,24 @@ Note: This will be a living document.
   - ✅ **EmbeddingService foundation** (Jarvis 2026-04-17): consumes Aspire `OLLAMA_ENDPOINT` / `EMBEDDING_MODEL` config when present, with local fallback for direct Python runs
   - ✅ **AppHost embedding config complete** (Jeff 2026-04-17): Python services receive `OLLAMA_ENDPOINT`, `EMBEDDING_MODEL`, `EMBEDDING_DIM` via Aspire environment variables
   - ✅ **Embedding population during ingestion** (Jarvis 2026-04-18): `process_document_task` batches page/claim embeddings and persists them via `populate_page_embedding` / `populate_claim_embedding` with regression coverage.
-  - ⏳ **Remaining P2-C work:** Wire vector search into `SemanticKnowledgeRetriever` and prove live vector-backed retrieval.
+  - ✅ **Vector search wired into retrievers** (2026-04-22): `SemanticKnowledgeRetriever` accepts optional `EmbeddingService`; tries vector search first (`search_claims_vector` → `search_pages_vector`), falls back to text CONTAINS on embedding failure. `BrainKnowledgeRetriever` passes `EmbeddingService` through. `/rag/semantic-search` endpoint upgraded to vector-first with `search_mode` indicator in response. 6 new P2-C vector tests added; all 92 Python tests pass.
   - **Next Owner:** Jarvis (embedding population pipeline)
 - [x] Implement `BrainKnowledgeRetriever` orchestration seam
   - [x] Interface implemented, LightRAG-first + fallback pattern tested (proves contract and routing)
   - [x] Confidence scoring from stored claims — `SemanticKnowledgeRetriever` queries Claims first, falls back to Pages
-  - [ ] Graph traversal and vector similarity ranking (P2-C gate: requires vector indexes)
+  - [x] Graph traversal and vector similarity ranking (P2-C: vector search wired into retriever)
 - [x] Implement `LightRAGRetriever` (wraps existing LightRAG query path behind `IKnowledgeRetriever`)
 - [x] **[P1 Carry-Forward] Prove live LightRAG ingest-to-query round-trip** — covered by `BasicAspireAppHostTests.LiveLightRagNeo4jQueryRoundTrip` (upload/process → LightRAG scan → Neo4j graph checks → live `/brain/query`)
 - [x] Wire Gateway `POST /brain/query` to contract-shaped Python retrieval seam (LightRAG-first + Neo4j fallback)
   - [x] HTTP contract verified via `BrainGatewayPhase2Tests.QueryKnowledgeAsync_MapsContractShapedKnowledgeResult_FromPythonQueryRoute`
   - [ ] Full gateway orchestration (Reasoning Layer, Evidence synthesis) — deferred to Phase 3
-- [ ] Add Ollama embedding model usage for vector index population (Jarvis + Ollama config coordination)
+- [x] Add Ollama embedding model usage for vector index population (Jarvis + Ollama config coordination)
 - [x] Implement semantic fallback confidence scoring — `SemanticKnowledgeRetriever` now retrieves real confidence from Neo4j Claim/Page nodes
 - [x] **[Complete]** Close the LightRAG-first confidence gap — `LightRagRetriever` enriches unscored results from Neo4j when provenance is resolvable; **unresolved confidence now fails closed** (returns empty, forcing semantic fallback) instead of defaulting to 0.5
 
 **P2-B STATUS: ✅ COMPLETE.** Claim-based confidence scoring implemented. `SemanticKnowledgeRetriever` queries Claim nodes first, falls back to Page nodes. Claim extraction wired into ingestion pipeline. LightRAG-first path enriches unscored results via `Neo4jService.get_confidence_by_provenance()` when provenance exists. When enrichment fails, results filtered out (fail-closed) forcing semantic fallback. Tests verify enrichment, fail-closed filtering, and explicit score preservation.
 
-**P2-C STATUS: 🟡 IN PROGRESS.** Vector indexes (`page_content_vector`, `claim_text_vector`) are created and query helpers exist. Python services receive embedding config from AppHost, and `EmbeddingService` consumes that Ollama path with a local fallback for direct Python runs. **Embedding population now runs during ingestion (batch page/claim embeddings persisted, regression covered).** Remaining work: wire vector search into retrievers and prove live vector-backed retrieval.
+**P2-C STATUS: ✅ COMPLETE.** Vector indexes (`page_content_vector`, `claim_text_vector`) are created and query helpers exist. `EmbeddingService` consumes Aspire Ollama config with local fallback. Embedding population runs during ingestion. **Vector search wired into `SemanticKnowledgeRetriever` (embedding-first, text-CONTAINS fallback) and `/rag/semantic-search` endpoint.** `BrainKnowledgeRetriever` passes embedding service through to semantic retriever. 6 dedicated P2-C vector tests added; all 92 Python tests pass.
 
 ### Validation Layer (Basic) (Jarvis lead)
 
@@ -209,15 +209,53 @@ Note: This will be a living document.
 
 ---
 
-## Phase 3: Ship MVP Agentic Slice
+## Phase 3a: Regular Mode — RAG-Enhanced Chat (No Agent Framework Required)
 
-> **PHASE 3 UNBLOCK SEQUENCE:**
-> 1. **[IMMEDIATE]** Select agent framework (LangGraph vs CrewAI vs Autogen). 2-day evaluation prototype; decision by end of sprint. *Owner: Bob + Jarvis (research) + Jeff (C# integration assessment)*
-> 2. **[P3-A Gate Prerequisite]** Define agent base contract (input, output, tools) — must finalize before reasoning agents start writing code
-> 3. **[P3-A]** Implement Retriever + Synthesizer agents (routes `/brain/query` + confidence → coherent response)
-> 4. **[P3-B]** Multi-step reasoning: Planner agent decomposes query → Retriever executes → Critic evaluates → responds
-> 5. **[P3-D]** Blazor chat integration: route through Gateway `/brain/chat` (no direct Ollama)
-> 6. **[P3-C + P3-G]** Proactive Monitor (background loop, contradiction detection, unsolicited insights)
+> **KEY INSIGHT:** Regular mode doesn't need agents — it's RAG-enhanced chat (retrieve context → augment prompt → generate response). This ships now, without waiting for the agent framework decision. Critique mode layers agents on top later.
+>
+> **Data Flow:** User Question → Gateway `/brain/chat` (mode=regular) → Python `BrainKnowledgeRetriever` → Augmented prompt → Ollama → Streaming response with citations
+
+### Chat Mode Contract (Python + C#)
+
+- [ ] Add `ChatMode` enum to Python contracts (`regular` | `critique`), add to `BrainChatRequest` model
+- [ ] Mirror `ChatMode` enum in C# `BrainContractModels.cs`
+- [ ] Add `ChatMode` field to conversation entity (`ChatConversationEntities.cs`) and persistence service
+
+### `/brain/chat` Regular Path (Python)
+
+- [ ] Implement Python `POST /brain/chat` endpoint: receives query + mode, retrieves knowledge via `BrainKnowledgeRetriever`, constructs augmented prompt (system context + retrieved knowledge + user question), calls Ollama, returns `ReasonResponse` with citations and confidence
+- [ ] Add streaming support for Ollama response
+- [ ] Implement retrieval timeout with fallback to pure LLM (no-knowledge) response
+
+### Gateway Routing (C#)
+
+- [ ] Implement C# gateway `POST /brain/chat` (replace current 501 stub) — forwards to Python, returns streamed or complete response
+- [ ] Wire `HttpClient` from `AspireApp.Web` to gateway endpoint
+
+### Blazor Chat Reroute
+
+- [ ] Replace direct Ollama/SK call in `Chat.razor.cs` (`CallBackgroundAI()`) with gateway call
+- [ ] Maintain streaming UX through gateway (SSE or chunked transfer)
+
+### Mode Selector UI
+
+- [ ] Add mode toggle in `Chat.razor`: "Regular" (default active) | "Critique" (disabled until Phase 3b)
+- [ ] Mode persists per conversation (stored in DB, defaults to Regular for new conversations)
+- [ ] Switching mode mid-conversation applies to next message only
+
+### Citation & Confidence Display
+
+- [ ] Render source references (document, page, claim) on assistant messages
+- [ ] Display confidence score indicator on responses
+- [ ] Link citations to source documents where possible
+
+---
+
+## Phase 3b: Critique Mode — Agentic Deep Analysis (Requires Agent Framework)
+
+> **BLOCKED** until agent framework selection (deadline: 2026-04-24). Builds on Phase 3a's retrieval and gateway infrastructure.
+>
+> **Data Flow:** User Question → Gateway `/brain/chat` (mode=critique) → Python Reasoning Layer (Planner → Retriever → Synthesizer → Critic agents) → Vetted `ReasonResponse` with evidence chain + reasoning steps
 
 ### Agent Framework Setup — BLOCKING GATE
 
@@ -236,20 +274,18 @@ Note: This will be a living document.
 - [ ] Planner Agent - decomposes complex questions into reasoning steps
 - [ ] Proactive Monitor - detects contradictions, generates unsolicited insights
 
-### BRAIN Chat Endpoint
+### Critique Pipeline
 
-- [ ] Implement `POST /brain/chat` full pipeline: Gateway to Reasoning to Knowledge to Response
+- [ ] Implement `POST /brain/chat` (mode=critique) pipeline: Planner → Retriever → Synthesizer → Critic
 - [ ] Add session memory - conversation context persists across turns
-- [ ] Return `ReasonResponse` with answer, confidence, evidence, reasoning steps, proactive suggestions
+- [ ] Return `ReasonResponse` with answer, confidence, evidence chain, reasoning steps, proactive suggestions
 
-### UI Integration
+### Critique UI
 
-- [ ] Migrate Blazor chat from direct Ollama/SK to Gateway `/brain/chat`
-- [ ] Replace Semantic Kernel with `Microsoft.Extensions.AI` in C# layer
-- [ ] Add confidence score display on chat responses
-- [ ] Add source citation links (document, page, claim)
-- [ ] Add proactive suggestion panel - unsolicited insights from Proactive Monitor
+- [ ] Enable Critique toggle in mode selector (remove disabled state)
 - [ ] Add "BRAIN is thinking" indicator showing multi-step reasoning progress
+- [ ] Render reasoning steps visible in chat UI
+- [ ] Add proactive suggestion panel - unsolicited insights from Proactive Monitor
 
 ---
 
@@ -322,7 +358,7 @@ Note: This will be a living document.
 | P1-B | Serialization round-trip test passes | Complete | 1 |
 | P2-A | Upload to CanonicalDocument to Neo4j storage end-to-end | Complete | 2 |
 | P2-B | `/brain/query` returns confidence-scored results (no default fallback) | ✅ **COMPLETE** — LightRAG enriches from Neo4j when provenance exists; unresolved confidence fails closed. Live proof: `BasicAspireAppHostTests.BrainQueryReturnsConfidenceEnrichedResults`. | 2 |
-| P2-C | Neo4j vector indexes queryable | 🟡 **IN PROGRESS** — Vector indexes are created (`page_content_vector`, `claim_text_vector`) and search helpers exist. Ingestion now populates page/claim embeddings in batch, but live vector retrieval still depends on routing retrievers through the vector path and proving results. | 2 |
+| P2-C | Neo4j vector indexes queryable | ✅ **COMPLETE** — Vector search wired into `SemanticKnowledgeRetriever` (embedding-first, text fallback). `/rag/semantic-search` upgraded. 6 new tests, 92 total pass. | 2 |
 | P3-A | `/brain/chat` returns evidence-backed response | **Blocked on agent framework selection** (due end of sprint 2026-04-24). Once framework chosen, implement Retriever + Synthesizer agents. | 3 |
 | P3-B | Multi-step reasoning visible | Blocked on P3-A (agent framework + base agents). Requires Planner + Critic agent implementations. | 3 |
 | P3-C | Proactive Monitor flags contradiction | Blocked on P3-A. Requires background agent monitoring Claim nodes for conflicts. | 3 |

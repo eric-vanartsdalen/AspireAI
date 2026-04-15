@@ -7,10 +7,15 @@ import uuid
 from collections.abc import Mapping
 from typing import Any, Iterable
 
+import logging
+
 from ...contracts import IKnowledgeRetriever, KnowledgeItem, KnowledgeResult
 from ...models.models import LightRagQueryRequest
+from ...services.embedding_service import EmbeddingService
 from ...services.lightrag_query_service import LightRagQueryService
 from ...services.neo4j_service import Neo4jService
+
+_logger = logging.getLogger(__name__)
 
 DEFAULT_CONFIDENCE = 0.5
 SCORE_KEYS = ("confidence", "relevance_score", "score", "similarity", "source_confidence")
@@ -478,10 +483,22 @@ class LightRagRetriever(_KnowledgeItemFactory, IKnowledgeRetriever):
 
 
 class SemanticKnowledgeRetriever(_KnowledgeItemFactory, IKnowledgeRetriever):
-    """Retrieve knowledge from the current Neo4j-backed semantic search surface."""
+    """Retrieve knowledge from the current Neo4j-backed semantic search surface.
 
-    def __init__(self, neo4j_service: Neo4jService | None = None) -> None:
+    When an ``EmbeddingService`` is provided and available, queries are embedded
+    and routed through the Neo4j vector indexes (``search_claims_vector`` /
+    ``search_pages_vector``).  If embedding is unavailable the retriever falls
+    back transparently to text-based ``CONTAINS`` matching so that the system
+    remains functional even when the embedding backend is offline.
+    """
+
+    def __init__(
+        self,
+        neo4j_service: Neo4jService | None = None,
+        embedding_service: EmbeddingService | None = None,
+    ) -> None:
         self._neo4j_service = neo4j_service or Neo4jService()
+        self._embedding_service = embedding_service
 
     async def retrieve(
         self,
@@ -493,31 +510,22 @@ class SemanticKnowledgeRetriever(_KnowledgeItemFactory, IKnowledgeRetriever):
         **options: Any,
     ) -> KnowledgeResult:
         resolved_limit = max(limit, 1)
-
         document_ids = options.get("document_ids")
 
-        # Try claims first (Validation Layer output)
-        claim_results = await asyncio.to_thread(
-            self._neo4j_service.search_claims,
-            query,
-            resolved_limit,
-        )
+        query_embedding = await self._try_embed(query)
 
-        raw_results = self._filter_results_by_document_ids(claim_results, document_ids)
-
-        # Fall back to page search if no scoped claims found
-        if not raw_results:
-            page_results = await asyncio.to_thread(
-                self._neo4j_service.search_similar_content,
-                query,
-                resolved_limit,
+        if query_embedding is not None:
+            raw_results = await self._vector_search(
+                query_embedding, resolved_limit, document_ids,
             )
-            raw_results = self._filter_results_by_document_ids(page_results, document_ids)
+        else:
+            raw_results = await self._text_search(query, resolved_limit, document_ids)
 
         items = [
             item
             for item in (
-                self._build_item(result, enrich_confidence=False) for result in raw_results[:resolved_limit]
+                self._build_item(result, enrich_confidence=False)
+                for result in raw_results[:resolved_limit]
             )
             if item is not None and item.content
         ]
@@ -527,6 +535,70 @@ class SemanticKnowledgeRetriever(_KnowledgeItemFactory, IKnowledgeRetriever):
             correlation_id=correlation_id or uuid.uuid4().hex,
             results=items,
         )
+
+    # ------------------------------------------------------------------
+    # Vector search path (P2-C)
+    # ------------------------------------------------------------------
+
+    async def _try_embed(self, text: str) -> list[float] | None:
+        """Embed *text* via the configured service, returning ``None`` on any failure."""
+        if self._embedding_service is None:
+            return None
+        try:
+            return await asyncio.to_thread(self._embedding_service.embed_text, text)
+        except Exception:
+            _logger.warning("Query embedding failed — falling back to text search", exc_info=True)
+            return None
+
+    async def _vector_search(
+        self,
+        query_embedding: list[float],
+        limit: int,
+        document_ids: Any,
+    ) -> list[Mapping[str, Any]] | list[dict[str, Any]]:
+        """Claims-first vector search with page fallback."""
+        _logger.debug("Using vector search (claims → pages)")
+        claim_results = await asyncio.to_thread(
+            self._neo4j_service.search_claims_vector,
+            query_embedding,
+            limit,
+        )
+        raw = self._filter_results_by_document_ids(claim_results, document_ids)
+        if not raw:
+            page_results = await asyncio.to_thread(
+                self._neo4j_service.search_pages_vector,
+                query_embedding,
+                limit,
+            )
+            raw = self._filter_results_by_document_ids(page_results, document_ids)
+        return raw
+
+    # ------------------------------------------------------------------
+    # Text search fallback (pre-P2-C path)
+    # ------------------------------------------------------------------
+
+    async def _text_search(
+        self,
+        query: str,
+        limit: int,
+        document_ids: Any,
+    ) -> list[Mapping[str, Any]] | list[dict[str, Any]]:
+        """Claims-first text-CONTAINS search with page fallback."""
+        _logger.debug("Using text search fallback (claims → pages)")
+        claim_results = await asyncio.to_thread(
+            self._neo4j_service.search_claims,
+            query,
+            limit,
+        )
+        raw = self._filter_results_by_document_ids(claim_results, document_ids)
+        if not raw:
+            page_results = await asyncio.to_thread(
+                self._neo4j_service.search_similar_content,
+                query,
+                limit,
+            )
+            raw = self._filter_results_by_document_ids(page_results, document_ids)
+        return raw
 
     @staticmethod
     def _filter_results_by_document_ids(
@@ -555,9 +627,12 @@ class BrainKnowledgeRetriever(IKnowledgeRetriever):
         light_rag_retriever: IKnowledgeRetriever | None = None,
         semantic_retriever: IKnowledgeRetriever | None = None,
         neo4j_service: Neo4jService | None = None,
+        embedding_service: EmbeddingService | None = None,
     ) -> None:
         self._light_rag_retriever = light_rag_retriever or LightRagRetriever(neo4j_service=neo4j_service)
-        self._semantic_retriever = semantic_retriever or SemanticKnowledgeRetriever(neo4j_service)
+        self._semantic_retriever = semantic_retriever or SemanticKnowledgeRetriever(
+            neo4j_service, embedding_service=embedding_service,
+        )
 
     async def retrieve(
         self,
