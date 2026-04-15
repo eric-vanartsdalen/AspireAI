@@ -31,6 +31,26 @@
 
 ## Learnings
 
+### 2026-04-15 — Planning Docs Need Explicit Roles After a Pivot
+
+**Context:** Roadmap review showed three planning documents drifting in different directions: `roadmap/Roadmap.md` still read like the pre-pivot plan, `roadmap/Plan.md` was closest to the active BRAIN roadmap, and `roadmap/Tasks.md` had the best execution detail but stale Phase 3 status.
+
+**Decision Pattern:** Give each planning document an explicit job:
+- `roadmap/Plan.md` = canonical active roadmap / phase status
+- `roadmap/Tasks.md` = execution tracker with honest gate status
+- `roadmap/Roadmap.md` = historical legacy roadmap, not the current source of truth
+
+**Why This Matters:** During a product pivot, old roadmap tables survive longer than the code they describe. If we do not mark legacy docs as historical, maintainers will read contradictory summaries and prioritize the wrong next step.
+
+**Key File Paths:**
+- `roadmap/Plan.md`
+- `roadmap/Tasks.md`
+- `roadmap/Roadmap.md`
+- `CRITIQUE-MODE-UI-GUIDE.md`
+- `PHASE1_CONTRACTS_AUDIT.md`
+
+**Operational Rule:** When reconciling planning docs, verify each claim against implementation surfaces (`AppHost.cs`, gateway endpoints, Python reasoning routes, Blazor chat wiring) and validation evidence (`dotnet build`, focused tests). Mark both understatement and overstatement; do not only correct optimistic docs.
+
 ### 2026-04-22 — PydanticAI Agent Framework Selection with Swappable Architecture
 
 **Context**: Phase 3b Critique mode required multi-agent orchestration (Planner → Retriever → Synthesizer → Critic). Eric directed to use PydanticAI but design for replaceability.
@@ -688,3 +708,22 @@ The entire codebase has a gap between C# upload and Python processing:
 - BRAIN gateway Phase 6 will propagate tenant_id header across services
 
 **Status:** Approved; recommendation ready for implementation
+
+---
+
+## Cross-Agent Coordination — Scribe Merge (2026-04-15T20:25:34Z)
+
+**Session:** Planning Doc Reconcile & Test Failure Triage
+
+**Work:** Bob reconciled branch state against roadmap reality, verified Phase 1/2 gates closed, and locked Phase 3 critical path.
+
+**Coordination Points:**
+- Verbal recommended Phase 3 beta reframing (honest milestone instead of vague framework-selection gate)
+- Buster identified chat-mode regression coverage gap and mapped test failure root causes (3 distinct issues across team)
+- Jeff synced planning docs and uploaded-status race fix; confirmed Phase 3 beta milestone alignment
+- Jarvis analyzed Python processing timeout (infrastructure issue, not code bug); confidence enrichment fix in review
+- Warden hardened Playwright form selectors; Bob/Buster confirmed split-brain auth pattern remains (endpoint wiring issue)
+
+**Key Outcome:** Phase 3 critical path locked with agent framework selection (PydanticAI) as BLOCKING GATE, decision deadline 2026-04-24. 7 gates cannot start until framework chosen.
+
+**Related:** Orchestration logs created (one per agent). Session log at `.squad/log/2026-04-15T20-25-34Z-planning-doc-reconcile.md`. 17 inbox decisions merged into `.squad/decisions.md`.

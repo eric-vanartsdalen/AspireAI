@@ -1515,3 +1515,25 @@ The failing UI test checks `Assert.Equal("uploaded", uploadedFile.Status)` at li
 **Orchestration Log:** .squad/orchestration-log/2026-04-15T19-37-41Z-jeff.md
 
 **Session:** Critique Mode UI Batch (2026-04-15T19:37:41Z, log: .squad/log/2026-04-15T19-37-41Z-critique-ui-batch.md)
+---
+
+## Cross-Agent Coordination — Scribe Merge (2026-04-15T20:25:34Z)
+
+**Session:** Planning Doc Reconcile & Test Failure Triage
+
+**Work:** Jeff synced planning documents, analyzed auth/upload test failures, and coordinated cross-service fixes.
+
+**Coordination Points:**
+- Verbal recommended Phase 3 beta reframing; Jeff updated roadmap to reflect foundation reality
+- Bob reconciled branch state; verified Phase 1/2 gates closed; locked Phase 3 critical path
+- Buster identified chat-mode regression coverage gap; Jeff incorporated into Phase 3b roadmap with honest wording
+- Jarvis analyzed Python processing timeout; Jeff coordinated orchestration/infrastructure debugging
+- Warden hardened auth test selectors; Jeff/Buster confirmed split-brain pattern (endpoint wiring issue)
+
+**Key Outcomes:**
+- Planning docs synchronized: Plan.md, Tasks.md, Roadmap.md, identity/now.md all reflect Phase 1/2 completion and Phase 3b next milestone
+- Upload status race fix already implemented (background fire-and-forget processing); next step is Buster test assertion update
+- Auth cookie hydration decision documented; hard-navigation proof pattern recommended for future tests
+- WebTest fixture improvements: isolated per-run state, graceful Aspire health-check failures
+
+**Related:** Orchestration logs created. Session log at .squad/log/2026-04-15T20-25-34Z-planning-doc-reconcile.md. 17 inbox decisions merged into .squad/decisions.md.

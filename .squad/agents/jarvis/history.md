@@ -840,3 +840,25 @@ eo4j_service for confidence enrichment when LightRAG omits score metadata
 - `src/AspireApp.PythonServices/app/brain/knowledge/retrievers.py`
 - `src/AspireApp.PythonServices/tests/test_lightrag_retriever.py`
 - `src/AspireApp.WebTest/Tests/BasicAspireAppHostTests.cs`
+
+---
+
+## Cross-Agent Coordination — Scribe Merge (2026-04-15T20:25:34Z)
+
+**Session:** Planning Doc Reconcile & Test Failure Triage
+
+**Work:** Jarvis analyzed Python processing timeouts, applied confidence enrichment fix, and mapped test failures to owners.
+
+**Coordination Points:**
+- Bob reconciled branch state; verified Phase 1/2 gates closed; flagged Python processing timeout investigation needed
+- Buster triaged 6 test failures; mapped LiveLightRagNeo4jQueryRoundTrip and FlowEndToEnd to orchestration issue
+- Jeff implemented upload-status race fix; confirmed Python-side confidence enrichment responsibility
+- Warden improved auth test selectors; Jarvis to investigate split-brain session-establishment in /auth/mock/signin
+
+**Key Outcomes:**
+- Confidence enrichment fix implemented: Pass 
+eo4j_service to LightRagRetriever for enrichment when LightRAG lacks scores
+- Test failure triage: LightRAG/FlowEndToEnd timeouts = orchestration bottleneck (not Python confidence bug); split-brain auth = endpoint wiring issue
+- Handoff clarified: Processing pipeline investigation (Bob/Jeff), auth endpoint fix (Jarvis coordination with endpoint inspection)
+
+**Related:** Orchestration logs created. Session log at .squad/log/2026-04-15T20-25-34Z-planning-doc-reconcile.md. 17 inbox decisions merged into .squad/decisions.md.

@@ -218,6 +218,7 @@
 ### 2026-04-15 — Phase 1 Validation: Contract Parity ≠ Pipeline Completion
 
 **Clarified:**
+
 - Phase 1 gates are **contract readiness** only: definitions and serialization parity across C# ↔ Python.
 - Phase 1 is NOT blocked by pipeline incompleteness (ingestion, query, storage, retrieval).
 - Tests will fail when exercising Phase 2+ paths; these are expected failures, not Phase 1 gate failures.
@@ -1772,3 +1773,47 @@ High — Three independent test failures all exhibit the same LightRAG stuck-in-
 - Test infrastructure patterns (parameterized factories, test doubles, data-testid scoping) proved flexible enough to handle framework constraints
 - Initial blocker had three valid fix options; choosing the one most consistent with existing patterns was key
 - All 9 tests passing without assertion weakening validates that UI/product layer behaves as designed
+
+### 2026-04-15 — Chat mode switch-back coverage gap is real and should be planned honestly
+
+**Task:** Audit whether the chat tests already cover a saved conversation that moves Regular → Critique → Regular across multiple turns.
+
+**What I Found:**
+- `ChatCritiqueModeTests` covers single-send mode routing (`SendingMessage_InCritiqueMode_PassesCritiqueModeToClient`, `SendingMessage_InRegularMode_PassesRegularModeToClient`) plus loading a conversation whose stored mode is already Critique (`ExistingConversation_LoadsWithStoredChatMode`).
+- No current test exercises the full transition sequence: start in Regular, switch to Critique mid-thread, continue, then switch back to Regular and verify the later send is truly Regular again.
+- `ChatConversation` persists `chat_mode` on the conversation row only; `ChatConversationMessage` has no per-message mode field, so historical turn mode is not persisted today.
+- `Chat.razor.cs` sends `SelectedChatMode` to `BrainChatClient.ChatAsync`, but loading a conversation clears `_messageEvidence`, which means critique reasoning/evidence is an in-memory seam rather than a persisted transcript contract.
+
+**Why This Matters:**
+- The missing regression test is exactly where mode leakage would hide: a critique turn could accidentally poison a later regular turn, or reload behavior could imply false historical fidelity.
+- Planning language must stay honest: test per-message request routing and conversation-level persistence boundaries, but do not promise persisted per-turn mode history unless Jeff/Bob fund a schema change.
+
+**Key file paths:**
+- `src\AspireApp.WebTest\Tests\ChatCritiqueModeTests.cs`
+- `src\AspireApp.WebTest\Tests\ChatConversationServiceTests.cs`
+- `src\AspireApp.Web\Data\ChatConversationEntities.cs`
+- `src\AspireApp.Web\Services\ChatConversationService.cs`
+- `src\AspireApp.Web\Components\Pages\Chat.razor.cs`
+
+---
+
+## Cross-Agent Coordination — Scribe Merge (2026-04-15T20:25:34Z)
+
+**Session:** Planning Doc Reconcile & Test Failure Triage
+
+**Work:** Buster audited chat-mode test coverage, triaged 6 reported test failures, and mapped root causes to owners.
+
+**Coordination Points:**
+- Verbal recommended Phase 3 beta reframing (honest milestone reflects foundation reality)
+- Bob reconciled branch state against roadmap; verified Phase 1/2 gates closed; locked Phase 3 critical path
+- Jeff synced planning docs; incorporated regression testing task into Phase 3b roadmap
+- Jarvis analyzed Python processing timeout (infrastructure issue); confidence enrichment fix applied
+- Warden hardened auth test selectors; Buster confirmed split-brain session-establishment pattern remains (endpoint fix needed)
+
+**Key Outcomes:**
+- Chat-mode transition regression coverage gap identified and added to Phase 3b roadmap with honest persistence-boundary wording
+- 6 test failures triaged: 2 upload status race (test assumption), 3 Python processing timeout (infrastructure), 1 auth split-brain (endpoint)
+- WebTest fixture guard decision: skip gracefully when Aspire health checks fail (preserves signal in lighter tests)
+- Auth split-brain pattern diagnosed: hard-navigation proof recommended over passive UI observation
+
+**Related:** Orchestration logs created. Session log at .squad/log/2026-04-15T20-25-34Z-planning-doc-reconcile.md. 17 inbox decisions merged into .squad/decisions.md.
