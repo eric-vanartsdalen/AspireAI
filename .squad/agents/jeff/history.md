@@ -1467,3 +1467,51 @@ The failing UI test checks `Assert.Equal("uploaded", uploadedFile.Status)` at li
 
 **Validation Notes:**
 - `dotnet test src\AspireApp.WebTest\AspireApp.WebTest.csproj --filter "FullyQualifiedName~ChatCritiqueModeTests" -v q`
+
+### 2026-04-15T19:37:41Z — Critique Mode UI Product Layer: Complete and Validated
+
+**Status:** Implemented, tested, and approved for Phase 3b integration.
+
+**Work Completed:**
+- Enabled Blazor Critique-mode toggle (removed disabled attribute from radio button)
+- Rendered reasoning/progress details using framework-agnostic CSS classes (.reasoning-panel, .reasoning-step, etc.)
+- Wired SelectedChatMode to BrainChatClient.ChatAsync call path (mode reaches gateway)
+- Maintained framework agnosticism: UI consumes generic BrainChatResponse.ReasoningSteps, not PydanticAI types
+
+**Test Harness Fix (Blocker Resolution):**
+- Initial issue: ChatCritiqueModeTests.cs used unsupported RemoveAll() on Bunit's BunitServiceProvider
+- Root cause: Bunit doesn't allow service replacement after context creation
+- Solution: Implemented Option A (parameterized factory) — CreateTestContext() now accepts optional service overrides
+- Tests now compile and all 9 targeted tests passing (9/9)
+
+**Validation Results:**
+- ✅ Critique toggle enabled and persists mode
+- ✅ Reasoning steps render with step title + reasoning + optional tool badge + result
+- ✅ Mode reaches gateway correctly
+- ✅ Regular mode unchanged (no regression)
+- ✅ Mode hint text updates based on selection
+- ✅ Conversation persistence preserves mode
+
+**Cross-Team Updates:**
+- **Buster (QA):** Reviewed harness fix and approved test suite; 9/9 tests passing
+- **Jarvis (Python):** Critique reasoning pipeline ready to feed reasoning steps into UI
+- **Bob (Architecture):** Swappable agent framework validated in C# layer
+
+**Residual Risk Noted:**
+- No dedicated test yet exercises mode switching after loading an existing conversation (manual spot-check recommended for Phase 3b polish)
+
+**Key Files Modified:**
+- src\AspireApp.Web\Components\Pages\Chat.razor
+- src\AspireApp.Web\Components\Pages\Chat.razor.cs
+- src\AspireApp.Web\Components\Pages\Chat.razor.css
+- src\AspireApp.WebTest\Tests\ChatCritiqueModeTests.cs (test harness fix)
+
+**Related Decisions Merged:**
+- Critique Mode UI Implementation (Jeff, 2026-04-22)
+- Critique-Mode UI Test Coverage Strategy (Buster, 2026-04-22)
+- Critique-Mode UI Test Blocker + Resolution (Buster, 2026-04-22, resolved)
+- Critique-Mode Harness Revision Approved (Buster, 2026-04-23)
+
+**Orchestration Log:** .squad/orchestration-log/2026-04-15T19-37-41Z-jeff.md
+
+**Session:** Critique Mode UI Batch (2026-04-15T19:37:41Z, log: .squad/log/2026-04-15T19-37-41Z-critique-ui-batch.md)

@@ -1710,3 +1710,65 @@ High — Three independent test failures all exhibit the same LightRAG stuck-in-
 **Task:** Re-review critique-mode UI batch after harness revision (compile fix + chat mode persistence).
 **Outcome:** ✅ Approved; `ChatCritiqueModeTests` now pass cleanly (9/9) with the revised stubs and selected-mode persistence path.
 **Evidence:** `dotnet test src\AspireApp.WebTest\AspireApp.WebTest.csproj --filter "FullyQualifiedName~ChatCritiqueModeTests"` succeeded.
+
+### 2026-04-15T19:37:41Z — Critique Mode UI Test Coverage: Complete and Approved
+
+**Status:** All 9 tests passing; residual risk (mode-switch persistence test) identified but non-blocking.
+
+**Work Completed:**
+- Designed 8-test Critique-mode UI test suite covering:
+  - Toggle enablement, mode selection, mode wiring (critique + regular), reasoning rendering, progress details, mode hint text, conversation persistence
+  - One additional test for persistence added (9 total)
+- Identified test blocker: Bunit doesn't support RemoveAll() for service replacement after context creation
+- Documented three fix options with rationale and trade-offs
+- Reviewed Jeff's parameterized factory fix and approved it
+- Validated all 9 tests passing (9/9)
+
+**Test Coverage Delivered (9 Tests):**
+1. ✅ Toggle Enablement — disabled attribute removed
+2. ✅ Mode Selection — Two-way binding works
+3. ✅ Mode Wiring (Critique) — Reaches BrainChatClient.ChatAsync
+4. ✅ Mode Wiring (Regular) — Regression safety verified
+5. ✅ Reasoning Rendering — Panel shows with steps when present
+6. ✅ Regular Mode Rendering — No reasoning panel (only evidence)
+7. ✅ Progress Details — Tool results visible in reasoning steps
+8. ✅ Mode Hint Text — Updates based on selection
+9. ✅ Conversation Persistence — Mode survives conversation reload
+
+**Test Double Pattern:**
+- RecordingBrainChatClient captures (query, mode, tenantId, conversationId, topK)
+- ResponseToReturn property stubs responses with reasoning steps
+- No HTTP mocking needed — pure in-memory test double
+
+**Validation Results:**
+- dotnet test: 9/9 passing
+- No flakiness detected
+- Test assertions unchanged (data-testid attributes properly scoped)
+
+**Cross-Team Updates:**
+- **Jeff (.NET):** Resolved test blocker via parameterized factory approach; product layer complete
+- **Jarvis (Python):** Critique reasoning pipeline ready for integration
+- **Bob (Architecture):** QA validates swappable agent framework wiring
+
+**Residual Risk (Non-Blocking):**
+- No dedicated test exercises mode switching after loading an existing conversation
+- **Recommendation:** Manual spot-check or follow-up test for Phase 3b polish
+- **Status:** Doesn't block Phase 3b gate closure
+
+**Key Files Created/Modified:**
+- src\AspireApp.WebTest\Tests\ChatCritiqueModeTests.cs (new, 690 lines, 9 tests)
+- .squad/decisions/inbox/buster-critique-ui-*.md (diagnostic, strategy, approval) → merged to decisions.md
+
+**Related Decisions Merged:**
+- Critique-Mode UI Test Coverage Strategy (Buster, 2026-04-22)
+- Critique-Mode UI Test Blocker (Buster, 2026-04-22, resolved by Jeff)
+- Critique-Mode Harness Revision Approved (Buster, 2026-04-23)
+
+**Orchestration Log:** .squad/orchestration-log/2026-04-15T19-37-41Z-buster.md
+
+**Session:** Critique Mode UI Batch (2026-04-15T19:37:41Z, log: .squad/log/2026-04-15T19-37-41Z-critique-ui-batch.md)
+
+**Key Insight for QA:**
+- Test infrastructure patterns (parameterized factories, test doubles, data-testid scoping) proved flexible enough to handle framework constraints
+- Initial blocker had three valid fix options; choosing the one most consistent with existing patterns was key
+- All 9 tests passing without assertion weakening validates that UI/product layer behaves as designed

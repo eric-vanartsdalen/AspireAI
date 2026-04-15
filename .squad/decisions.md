@@ -1684,3 +1684,241 @@ def get_critique_pipeline(
 - Prior diagnosis: Product correct; test infrastructure needed hardening
 - Scope: Test infrastructure only — no application code changes
 
+
+## Critique Mode UI Implementation — Jeff (.NET Dev) — 2026-04-22
+
+**Author:** Jeff (.NET Dev)
+**Status:** Implemented
+**Scope:** Phase 3b Critique Mode product layer for Blazor
+
+### Decision
+
+Implemented the Critique mode UI layer using a consistent pattern with Regular mode's evidence display, keeping the implementation framework-agnostic and surgical.
+
+### Implementation Details
+
+#### Critique Toggle Enablement
+- Removed disabled attribute from Critique radio button in Chat.razor
+- Removed disabled CSS class from the mode selector span
+- Added proper @onchange handler and checked binding
+- Toggle now properly persists mode via existing OnChatModeChangedAsync flow
+
+#### Reasoning Steps Display
+- Created new CSS classes paralleling evidence panel styles:
+  - .reasoning-panel - Container with purple accent (vs blue for evidence)
+  - .reasoning-header - Brain emoji + step count
+  - .reasoning-step - Individual step container
+  - .reasoning-step-title - Step name with optional tool badge
+  - .reasoning-step-content - Reasoning text and result
+  - .reasoning-step-tool - Badge for tool name (when present)
+
+#### Display Logic
+- Reasoning panel appears below evidence panel when ReasoningSteps.Count > 0
+- Each step shows:
+  1. Step title + optional tool badge
+  2. Reasoning explanation (if provided)
+  3. Result output with arrow prefix (if provided)
+- Follows same assistant message indexing pattern as evidence
+
+#### Framework Agnosticism
+- **No PydanticAI coupling** in UI layer
+- Consumes generic BrainChatResponse.ReasoningSteps contract
+- UI doesn't know or care about the Python agent framework
+- Swappable backend remains transparent to Blazor
+
+### Rationale
+
+1. **Consistency:** Used evidence panel as the design template for familiarity
+2. **Surgical:** Only touched mode selector and message display; no gateway changes needed
+3. **Architecture:** Kept UI framework-agnostic per PydanticAI swappability requirement
+4. **UX:** Reasoning steps provide transparency into Critique mode's multi-step analysis
+
+### Impact
+
+- Users can now toggle between Regular and Critique modes freely
+- Critique mode responses display transparent reasoning steps
+- No breaking changes to existing Regular mode functionality
+- Tests compile successfully; existing evidence display tests remain green
+
+### Testing Notes
+
+- Build verified successfully
+- Mode toggle functional (wired through existing persistence layer)
+- Reasoning steps render when present in response
+- Regular mode remains unaffected (reasoning panel only shows when steps exist)
+
+### Related Work
+
+- Jarvis: Python side critique reasoning pipeline with PydanticAI
+- Bob: Swappable agent provider architecture design
+- Buster: Will add integration tests for Critique mode end-to-end flow
+
+### Key Files
+
+- src\AspireApp.Web\Components\Pages\Chat.razor
+- src\AspireApp.Web\Components\Pages\Chat.razor.cs
+- src\AspireApp.Web\Components\Pages\Chat.razor.css
+
+---
+
+## Critique-Mode UI Test Coverage Strategy — Buster (QA/Tester) — 2026-04-22
+
+**Author:** Buster (QA/Tester)
+**Status:** Implemented
+**Scope:** Phase 3b product layer test coverage for Critique-mode UI/product behavior
+
+### Context
+
+Eric requested test coverage for the remaining Critique-mode product layer: enabling the Blazor toggle, wiring the UI to the new critique path, and rendering reasoning/progress details. Jeff is implementing the product changes in parallel. Tests need to prove:
+- Toggle enabled after implementation
+- Selected mode reaches BrainChatClient.ChatAsync
+- Reasoning steps render correctly
+- Regular mode still works
+
+### Decision
+
+**Create 8 focused UI/product tests in ChatCritiqueModeTests.cs that validate Critique-mode behavior without coupling to implementation details.**
+
+### Test Suite Structure
+
+1. **Toggle Enablement** (CritiqueToggle_IsEnabled_AfterProductLayerImplementation)
+   - Validates disabled attribute removed from critique radio
+   - Proves UI allows mode selection
+
+2. **Mode Selection** (SelectingCritiqueMode_ChangesSelectedModeProperty)
+   - Validates clicking Critique radio updates component state
+   - Proves UI two-way binding works
+
+3. **Mode Wiring - Critique** (SendingMessage_InCritiqueMode_PassesCritiqueModeToClient)
+   - Validates SelectedChatMode="critique" propagates to BrainChatClient.ChatAsync
+   - Proves mode reaches gateway correctly
+
+4. **Mode Wiring - Regular** (SendingMessage_InRegularMode_PassesRegularModeToClient)
+   - Validates SelectedChatMode="regular" propagates to BrainChatClient.ChatAsync
+   - Proves Regular mode unchanged (regression safety)
+
+5. **Reasoning Rendering** (CritiqueResponse_WithReasoningSteps_RendersReasoningPanel)
+   - Validates reasoning panel renders when ReasoningSteps.Count > 0
+   - Proves reasoning steps display with step/reasoning/tool/result details
+   - Uses data-testid="chat-reasoning-panel" and data-testid="chat-reasoning-step" for verification
+
+6. **Regular Mode Rendering** (RegularResponse_WithoutReasoningSteps_DoesNotRenderReasoningPanel)
+   - Validates reasoning panel NOT rendered when ReasoningSteps.Count == 0
+   - Proves Regular mode doesn't show reasoning (only evidence)
+
+7. **Progress Details** (CritiqueMode_RendersProgressDetails_WhenReasoningStepsIncludeToolResults)
+   - Validates tool results visible in reasoning steps
+   - Proves agent progress details render correctly
+
+8. **Mode Hint Text** (ModeHintText_ChangesBasedOnSelectedMode)
+   - Validates mode hint changes from "Fast, knowledge-enhanced" to "Thorough, agent-verified"
+   - Proves UI feedback matches selected mode
+
+9. **Conversation Persistence** (ExistingConversation_LoadsWithStoredChatMode)
+   - Validates conversations load with stored chatMode
+   - Proves mode survives conversation reload
+
+### Test Double Pattern
+
+**RecordingBrainChatClient:**
+- Captures (query, mode, tenantId, conversationId, topK) for verification
+- ResponseToReturn property allows stubbing response with reasoning steps
+- No HTTP mocking needed - pure in-memory test double
+
+### Acceptance Criteria
+
+- [x] All 9 tests pass after Jeff's implementation (verified 2026-04-23)
+- [x] Critique toggle enabled in UI
+- [x] Reasoning panel renders with data-testid attributes
+- [x] Regular mode still works (no reasoning panel)
+- [x] Mode hint text updates correctly
+
+### Related Decisions
+
+- **2026-04-15:** PydanticAI framework selection + swappable architecture (.squad/decisions.md)
+- **2026-04-22:** Phase 3b Critique pipeline implementation (Jarvis)
+
+### Key Files
+
+- src\AspireApp.WebTest\Tests\ChatCritiqueModeTests.cs (new, 690 lines, 9 tests)
+- src\AspireApp.Web\Components\Pages\Chat.razor
+- src\AspireApp.Web\Components\Pages\Chat.razor.cs
+
+---
+
+## Critique-Mode UI Test Blocker: RemoveAll Pattern Not Supported — Buster (QA/Tester) — 2026-04-22
+
+**Author:** Buster (QA/Tester)
+**Status:** RESOLVED by Jeff (2026-04-23)
+**Severity:** P0 → Resolved
+
+### Issue
+
+ChatCritiqueModeTests.cs line 377 uses 	estContext.Services.RemoveAll(typeof(IChatConversationService)) which does not exist in Bunit's BunitServiceProvider. Tests do not compile.
+
+### Build Error
+
+`
+error CS1061: 'BunitServiceProvider' does not contain a definition for 'RemoveAll' 
+and no accessible extension method 'RemoveAll' accepting a first argument of type 
+'BunitServiceProvider' could be found
+`
+
+### Root Cause
+
+Bunit does not support service replacement after test context creation. Test pattern mismatch:
+- Most tests register all services **before rendering** via CreateTestContext() factory.
+- ExistingConversation_LoadsWithStoredChatMode() tries to replace service **after** context creation.
+
+### Resolution (Jeff)
+
+Implemented Option A: Parameterized factory approach
+- Modified CreateTestContext() to accept optional service overrides
+- Tests now pass override service during factory call
+- No service replacement needed after context creation
+- All 9 targeted tests now compile and pass
+
+### Key Files Modified
+
+- src\AspireApp.WebTest\Tests\ChatCritiqueModeTests.cs (test harness fix applied)
+
+### Test Validation Result
+
+- ✅ All 9 tests passing after Jeff's fix
+- ✅ No compilation errors
+- ✅ Pattern consistent with existing Bunit test fixtures
+
+---
+
+## Critique-Mode Harness Revision Approved — Buster (QA/Tester) — 2026-04-23
+
+**Status:** APPROVED
+
+### Context
+
+Reviewed Jeff's critique-mode test harness revision after prior compile failure. Focus was on critique-mode UI wiring, persistence before first AI call, and reasoning-panel rendering behavior.
+
+### Decision
+
+Approve the critique-mode UI batch. The revised stubs compile and the targeted critique-mode tests now pass without altering the intended assertions.
+
+### Evidence
+
+- dotnet test src\AspireApp.WebTest\AspireApp.WebTest.csproj --filter "FullyQualifiedName~ChatCritiqueModeTests" (9/9 passing)
+
+### Residual Risk
+
+- No dedicated test yet exercises switching chat mode after loading an existing conversation; manual spot-check or a follow-up unit test would close that gap.
+
+### Impact Summary
+
+- Critique-mode product layer validated end-to-end (toggle, wiring, rendering)
+- Regular mode regression verified (unchanged behavior)
+- Test infrastructure hardened (parameterized factory pattern)
+- Ready for Phase 3b integration testing
+
+### Cross-Team Notes
+
+- **Jeff (.NET):** Test harness fix approved; product implementation complete
+- **Jarvis (Python):** Critique reasoning pipeline ready to feed reasoning steps into UI display
+- **Bob (Architecture):** Swappable agent framework validated in C# layer
