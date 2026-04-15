@@ -19,6 +19,7 @@
 > **Note (2026-04-15T18:38:37Z):** Merged 4 inbox decisions from PydanticAI framework selection + Critique pipeline implementation session (Bob, Jarvis, Eric directive). Key outcomes: (1) User directive captured: Use PydanticAI for Phase 3b, design for swappability. (2) Bob defined architecture boundary with `IAgentProvider` protocol abstraction, enabling zero-refactor framework swaps via env-var config. (3) Jarvis implemented Python-side seam: `PydanticAIProvider`, `CritiquePipeline` orchestrator, 33 targeted tests passing. (4) Jeff confirms C# gateway ready (no changes needed). (5) 6 acceptance gates (P3b-A through P3b-F) defined; 4 already met. Decision deadline 2026-04-24 confirmed. No duplicates found. Inbox cleared. See orchestration logs for details.
 > **Note (2026-04-15T19:37:41Z):** Merged 4 inbox decisions from Critique Mode UI product layer + test coverage batch (Jeff, Buster). Key outcomes: (1) Critique-mode toggle enabled in `Chat.razor`; `disabled` attribute removed. (2) Reasoning steps render with progress details using framework-agnostic CSS classes. (3) Mode wiring to `BrainChatClient.ChatAsync` confirmed working. (4) UI/product test coverage (8 tests + 1 persistence test) now all passing (9/9 after Jeff's test harness fix). (5) Residual risk noted: no dedicated test yet exercises mode switching after loading conversation (non-blocking, for Phase 3b polish). No exact duplicates found. Inbox cleared.
 > **Note (2026-04-15T20:25:34Z):** Merged 17 inbox decisions from planning doc reconcile + test failure triage session (Verbal, Buster, Jeff, Bob, Jarvis, Warden). Key outcomes: (1) Planning docs reframed to reflect Phase 1/2 foundation completion (gateway, contracts, retrieval, chat UI all complete; not "future setup"); next honest milestone is "Phase 3 beta: prove one end-to-end Aspire chat flow with citations/confidence in Web UI". (2) Test failure triage: 6 failures → 3 root causes: upload status race (test assumption fix), Python processing timeout (infrastructure investigation), auth split-brain (endpoint wiring fix). (3) Chat-mode regression coverage gap identified (Regular → Critique → Regular); added to Phase 3b roadmap with honest persistence boundary wording. (4) Phase 3 critical path locked: agent framework selection (PydanticAI) is BLOCKING GATE with 2026-04-24 decision deadline. (5) Webtest fixture guard decision: skip gracefully when Aspire health checks fail. (6) Auth split-brain pattern diagnosed; hard-navigation proof recommended over passive UI observation. (7) Planning document roles clarified (Plan.md = active roadmap, Tasks.md = execution tracker, Roadmap.md = historical legacy). No exact duplicates found. Inbox cleared.
+> **Note (2026-04-15T21:17:30Z):** Merged 3 inbox decisions from critique-mode configuration failure fix session (Jarvis, Jeff, Buster). Key outcome: Fixed deterministic critique-mode config failure across three seams: (1) Python PydanticAI provider now uses explicit Ollama path instead of late env mutation. (2) .NET gateway/Web clients preserve downstream HTTP errors and disable unsafe POST retries. (3) Regression coverage consolidates all three seams with evidence paths. No exact duplicates found. Inbox cleared. See session log `2026-04-15T21-17-30Z-critique-mode-fix.md` and orchestration logs for details.
 
 <!-- Decisions are appended below. Each entry starts with ## -->
 
@@ -2704,3 +2705,126 @@ Playwright auth helpers must wait for the provider-specific form seam before cli
 - `src\AspireApp.WebTest\Tests\BasicAspireAppHostTests.cs`
 - `src\AspireApp.WebTest\Tests\AuthUxFoundationTests.cs`
 
+
+## PydanticAI Critique Mode Must Use Explicit Ollama Provider — Jarvis — 2026-04-15
+
+**Author:** Jarvis (Python / Data Dev)  
+**Status:** IMPLEMENTED  
+**Scope:** Critique mode provider wiring, local Ollama configuration, environment initialization order.
+
+### Context
+
+Critique mode failed on the local Aspire/Ollama path with /brain/chat returning 500 because the PydanticAI planner was created with the OpenAI provider path and only afterward tried to patch OPENAI_BASE_URL and OPENAI_API_KEY via environment mutation. The environment variables were not set by the time provider initialization occurred.
+
+### Decision
+
+Use PydanticAI's explicit Ollama configuration path in pp/brain/reasoning/pydantic_ai_provider.py:
+
+- Build OpenAIChatModel(model_name, provider=OllamaProvider(base_url=OLLAMA_ENDPOINT))
+- Do not rely on late OPENAI_* environment mutation
+- Prefer CHAT_MODEL for critique mode so it stays aligned with the same Aspire chat model wiring as regular chat
+
+### Why
+
+This keeps critique mode on the same local runtime contract as the rest of the Python service. It fixes the root cause instead of masking it with an unrelated API key requirement. Provider initialization now happens after Aspire environment is fully configured.
+
+### Validation
+
+- Focused: pytest tests/test_critique_pipeline.py tests/test_brain_chat.py -q → 35/35 passed
+- Full: pytest -q in src/AspireApp.PythonServices → 127/127 passed
+- No regressions detected
+
+### Consequences
+
+- Critique mode uses same provider and model discovery as regular chat mode
+- Environment initialization no longer requires late patching
+- Supports gateway-level error preservation (see related decision below)
+
+## BRAIN gateway should preserve downstream HTTP failures and avoid retrying unsafe POST seams — Jeff — 2026-04-15
+
+**Author:** Jeff (.NET / Web Dev)  
+**Status:** IMPLEMENTED  
+**Scope:** HTTP client configuration, error handling, resilience policy on unsafe methods.
+
+### Context
+
+Critique-mode configuration failures in Python were returning deterministic and descriptive 503 responses with ProblemDetails, but:
+1. The gateway client was collapsing these to generic 502 responses, obscuring the root cause
+2. Both gateway and Web clients were using standard resilience retries on POST requests, which amplified the same deterministic failure multiple times and risked duplicate downstream work
+
+### Decision
+
+For the BRAIN gateway and Web chat clients, preserve explicit downstream HTTP error statuses/details from Python and disable resilience retries for unsafe HTTP methods on these typed clients:
+
+- BrainBackendClient in src/AspireApp.ApiService/Services/ now preserves downstream status codes and reads ProblemDetails responses
+- BrainChatClient in src/AspireApp.Web/Services/ disables resilience retries for POST operations
+- Chat.razor.cs parses ProblemDetails and displays actionable error messages instead of generic "try again" feedback
+
+### Why
+
+- Deterministic configuration-driven failures should surface with accurate status codes and detail, not be masked by resilience policies
+- Retrying unsafe methods (POST) on deterministic failures is incorrect—the same failure will recur and amplify error visibility
+- Users benefit from actionable error messages in the Blazor chat UI instead of generic recovery prompts
+
+### Implementation paths
+
+- src/AspireApp.ApiService/Services/BrainBackendClient.cs — Preserve downstream HTTP status and ProblemDetails
+- src/AspireApp.ApiService/Services/BrainBackendClientServiceCollectionExtensions.cs — Remove retry policy on POST
+- src/AspireApp.ApiService/Program.cs — Configure client without unsafe retries
+- src/AspireApp.Web/Services/BrainChatClient.cs — Preserve ProblemDetails responses
+- src/AspireApp.Web/Services/BrainChatClientServiceCollectionExtensions.cs — Disable POST retries
+- src/AspireApp.Web/Components/Pages/Chat.razor.cs — Parse and display error details
+
+### Validation
+
+- Focused: dotnet test src/AspireApp.WebTest/AspireApp.WebTest.csproj --filter "FullyQualifiedName~ChatCritiqueModeTests|FullyQualifiedName~BrainGatewayPhase2Tests" → All passed
+- Build: dotnet build AspireApp.sln --no-restore → Success
+- No regressions in existing .NET critique/gateway tests
+
+### Consequences
+
+- HTTP errors now surface accurately across gateway/Web client boundary
+- Blazor UI can display actionable feedback instead of generic retry messages
+- Prevents resilience policy from amplifying deterministic failures
+- Supports configuration-driven feature gating (e.g., disable critique mode via Ollama availability)
+
+## Critique mode regression coverage — Buster — 2026-04-15
+
+**Author:** Buster (QA / Tester)  
+**Status:** VALIDATED  
+**Scope:** Regression test consolidation, three-seam coverage strategy, saved conversation persistence.
+
+### Context
+
+Critique-mode configuration failures presented as transient HTTP errors but were actually deterministic problems at the provider initialization boundary. The observed failure pattern became harder to diagnose because HTTP retries amplified the same error. Regression coverage needed to consolidate across three independent boundaries: provider wiring, HTTP client error handling, and saved conversation reload.
+
+### Decision
+
+Treat critique-mode configuration failures as deterministic single-attempt faults, and cover them at three seams:
+
+1. **Python provider wiring** — Prove the PydanticAI adapter uses the Ollama OpenAI-compatible endpoint without relying on ambient OPENAI_API_KEY
+2. **Gateway/web HTTP clients** — Disable retries for unsafe POST chat calls so 503-style configuration failures are surfaced once instead of duplicated by resilience handlers
+3. **Saved conversation mode reload** — Keep regression tests proving persisted chat_mode survives reload and that switching between saved critique and regular threads updates the UI mode selector
+
+### Why
+
+The observed failure pattern was not a transient outage. It was a deterministic critique-mode configuration problem that became harder to diagnose because retrying POST chat calls amplified the same error. Regression coverage must span all three boundaries to prevent future breaks at any seam.
+
+### Evidence paths
+
+- **Provider wiring:** src/AspireApp.PythonServices/app/brain/reasoning/pydantic_ai_provider.py, src/AspireApp.PythonServices/tests/test_critique_pipeline.py
+- **HTTP clients:** src/AspireApp.WebTest/Tests/BrainGatewayPhase2Tests.cs (gateway), src/AspireApp.Web/Services/BrainChatClient.cs (Web client)
+- **Saved conversation:** src/AspireApp.WebTest/Tests/ChatConversationServiceTests.cs, src/AspireApp.WebTest/Tests/ChatCritiqueModeTests.cs
+
+### Validation
+
+- Focused: .NET → dotnet test src/AspireApp.WebTest/AspireApp.WebTest.csproj → 30/30 targeted tests passed
+- Focused: Python → pytest tests/test_critique_pipeline.py tests/test_brain_chat.py → 36/36 targeted tests passed
+- Full: No regressions across complete test suites
+
+### Consequences
+
+- Critique-mode failures are now caught at provider initialization, not by retry exhaustion
+- Regression suite validates all three boundaries and prevents cross-seam breaks
+- Saved conversation persistence behavior is explicitly tested alongside mode wiring
+- Configuration-driven failures surface accurately and immediately in Blazor UI

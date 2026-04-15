@@ -862,3 +862,49 @@ eo4j_service to LightRagRetriever for enrichment when LightRAG lacks scores
 - Handoff clarified: Processing pipeline investigation (Bob/Jeff), auth endpoint fix (Jarvis coordination with endpoint inspection)
 
 **Related:** Orchestration logs created. Session log at .squad/log/2026-04-15T20-25-34Z-planning-doc-reconcile.md. 17 inbox decisions merged into .squad/decisions.md.
+### 2026-04-15 — Critique Mode Must Use PydanticAI's Ollama Provider, Not OpenAI Env Shims
+**Problem:**
+- Critique mode was constructing `Agent(model="openai:...")` and only then mutating `OPENAI_BASE_URL` / `OPENAI_API_KEY`.
+- PydanticAI resolved the default OpenAI client before those env mutations mattered, so `/brain/chat` in critique mode failed with `The api_key client option must be set...` even on the local Ollama/Aspire path.
+- The failure was configuration-path specific: regular chat used `LlmChatService` with `OLLAMA_ENDPOINT`, while critique mode took a separate OpenAI-compatible shim path.
+
+**Fix:**
+- Updated `app/brain/reasoning/pydantic_ai_provider.py` to build an explicit `OpenAIChatModel` with `OllamaProvider(base_url=OLLAMA_ENDPOINT)`.
+- Removed runtime mutation of `OPENAI_*` environment variables.
+- Aligned critique-mode model selection with Aspire chat config by preferring `CHAT_MODEL` before the legacy `OLLAMA_MODEL` fallback.
+
+**Result:**
+- Critique mode now stays on the same local Ollama/Aspire path as regular chat.
+- No unrelated OpenAI API key is required for planner/synthesizer/critic agents.
+- Regression coverage added in `src/AspireApp.PythonServices/tests/test_critique_pipeline.py`; focused suite (35 tests) and full Python suite (127 tests) passed.
+
+
+### 2026-04-15 — PydanticAI Critique Mode Explicit Ollama Provider Configuration
+
+**Problem:**
+- Critique mode failing deterministically with /brain/chat returning 500 on local Aspire/Ollama setup.
+- Root cause: PydanticAI provider initialized with OpenAI path; late environment mutation (OPENAI_BASE_URL, OPENAI_API_KEY) happened after provider creation, so credentials never applied.
+
+**Fix:**
+- Updated pp/brain/reasoning/pydantic_ai_provider.py to use explicit OllamaProvider(base_url=OLLAMA_ENDPOINT) configuration instead of relying on late env patching.
+- Provider now builds OpenAIChatModel(model_name, provider=OllamaProvider(...)) at initialization time, before any Aspire environment mutation.
+- Aligned critique mode with same local Ollama contract as regular chat mode.
+
+**Result:**
+- Critique mode now properly configured on local Aspire runtime.
+- HTTP errors from Python now surface correctly through gateway/Web client layers (see Jeff's HTTP error preservation fix).
+- Focused tests: 35/35 passed (test_critique_pipeline.py + test_brain_chat.py).
+- Full regression: 127/127 passed (complete Python test suite).
+
+**Cross-Agent Impact:**
+- **Jeff (.NET):** Provider fix surfaces correct HTTP status codes. Jeff updated gateway/Web clients to preserve 503 responses instead of collapsing to 502. Configuration failures now visible to Blazor UI.
+- **Buster (QA):** Provider fix provides foundation for three-seam regression suite. Python provider wiring validated; HTTP clients + saved conversation reload tests complete coverage.
+
+**Key Pattern:**
+- **Provider initialization order:** Late environment mutation is not reliable. Explicit configuration at init time ensures dependencies are satisfied before provider creation. Keeps provider discovery aligned across chat modes.
+
+**Key file paths:**
+- src/AspireApp.PythonServices/app/brain/reasoning/pydantic_ai_provider.py (provider initialization)
+- src/AspireApp.PythonServices/tests/test_critique_pipeline.py (provider validation)
+- .squad/decisions.md (full decision details + validation)
+- .squad/orchestration-log/2026-04-15T21-17-30Z-jarvis.md (session details)

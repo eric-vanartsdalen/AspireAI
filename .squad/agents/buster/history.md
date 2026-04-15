@@ -30,6 +30,24 @@
 
 <!-- Append new learnings below. Each entry is something lasting about the project. -->
 
+### 2026-04-15 — Critique mode failures need provider-level and no-retry regression coverage
+
+**Task:** Reproduce the critique-mode 502/api-key failure, validate Jeff/Jarvis fixes, and close the most obvious regression gaps.
+
+**Key findings:**
+- `pydantic-ai==0.0.55` in this repo does **not** expose `OpenAIChatModel` or `pydantic_ai.providers.ollama`; the working Ollama seam uses `OpenAIModel` plus `OpenAIProvider(base_url=f"{OLLAMA_ENDPOINT}/v1", api_key="ollama")` so critique mode does not depend on ambient `OPENAI_API_KEY`.
+- BRAIN gateway/chat POST clients now live behind `AddBrainBackendClient()` and `AddBrainGatewayChatClient()` extension methods, and both explicitly disable retries for unsafe HTTP methods so deterministic critique-mode 503s are surfaced once instead of fanning out into Polly retry noise.
+- Saved conversation coverage needed one more seam: service tests now assert `chat_mode` persistence/normalization, and UI tests now assert switching between saved critique and regular threads flips the radio state correctly after reload.
+
+**Key file paths:**
+- `src\AspireApp.PythonServices\app\brain\reasoning\pydantic_ai_provider.py`
+- `src\AspireApp.PythonServices\tests\test_critique_pipeline.py`
+- `src\AspireApp.WebTest\Tests\BrainGatewayPhase2Tests.cs`
+- `src\AspireApp.WebTest\Tests\ChatConversationServiceTests.cs`
+- `src\AspireApp.WebTest\Tests\ChatCritiqueModeTests.cs`
+- `src\AspireApp.Web\Services\BrainChatClientServiceCollectionExtensions.cs`
+- `src\AspireApp.ApiService\Services\BrainBackendClientServiceCollectionExtensions.cs`
+
 ### 2026-04-15 — Upload regression fixes were test-scaffolding, not product regressions
 
 **Task:** Reproduce and fix failing `BasicAspireAppHostTests.FlowEndToEnd` and `FileUploadControllerTests`.
@@ -1817,3 +1835,44 @@ High — Three independent test failures all exhibit the same LightRAG stuck-in-
 - Auth split-brain pattern diagnosed: hard-navigation proof recommended over passive UI observation
 
 **Related:** Orchestration logs created. Session log at .squad/log/2026-04-15T20-25-34Z-planning-doc-reconcile.md. 17 inbox decisions merged into .squad/decisions.md.
+
+### 2026-04-15 — Critique Mode Regression Coverage — Three-Seam Validation
+
+**Problem:**
+- Critique mode failing deterministically with 502/503 errors. Root causes spread across three independent boundaries:
+  1. Python provider wiring (PydanticAI initialization order)
+  2. .NET gateway/Web HTTP clients (error preservation + retry behavior)
+  3. Saved conversation persistence (chat_mode reload + UI mode selector consistency)
+
+**Fix & Validation:**
+- **Python provider seam:** Verified Jarvis's explicit OllamaProvider config eliminates reliance on late env mutation
+- **HTTP client seam:** Confirmed Jeff's error preservation prevents 503→502 collapse; no-retry policy stops resilience amplification
+- **Saved conversation seam:** Added tests proving persisted chat_mode survives reload; UI mode selector updates correctly when switching between critique and regular threads
+
+**Result:**
+- Focused .NET tests: 30/30 passed (ChatCritiqueModeTests + BrainGatewayPhase2Tests + ChatConversationServiceTests)
+- Focused Python tests: 36/36 passed (test_critique_pipeline.py + test_brain_chat.py)
+- Full suite regressions: 0 failures
+- Three-seam regression coverage now guards against cross-boundary initialization, HTTP, and persistence failures
+
+**Key Validation Paths:**
+- **Provider wiring:** src/AspireApp.PythonServices/tests/test_critique_pipeline.py (proves Ollama config without OPENAI_API_KEY)
+- **HTTP clients:** src/AspireApp.WebTest/Tests/BrainGatewayPhase2Tests.cs + src/AspireApp.Web/Services/BrainChatClient.cs (error preservation)
+- **Saved conversation:** src/AspireApp.WebTest/Tests/ChatCritiqueModeTests.cs + src/AspireApp.WebTest/Tests/ChatConversationServiceTests.cs (mode reload consistency)
+
+**Cross-Agent Impact:**
+- **Jarvis (Python):** Provider fix provides foundation; Python tests validate provider wiring seam.
+- **Jeff (.NET):** Error preservation + no-retry policy enable accurate Blazor UI feedback and prevent retry amplification.
+- **Overall:** Three-seam strategy prevents future cross-boundary failures; regression suite validates all initialization, HTTP, and persistence paths.
+
+**Key Pattern:**
+- **Multi-seam regression strategy:** Deterministic failures often span multiple boundaries (init → HTTP → persistence). Regression suite must validate all seams independently and together to prevent breaks at any interface.
+- **Saved conversation mode switching:** Regression tests should cover both initial load and mode-switch reload scenarios; UI state must stay consistent with persisted state.
+
+**Key file paths:**
+- src/AspireApp.PythonServices/tests/test_critique_pipeline.py (provider validation)
+- src/AspireApp.WebTest/Tests/ChatCritiqueModeTests.cs (mode persistence)
+- src/AspireApp.WebTest/Tests/ChatConversationServiceTests.cs (conversation reload)
+- src/AspireApp.WebTest/Tests/BrainGatewayPhase2Tests.cs (gateway error handling)
+- .squad/decisions.md (full decision details + evidence paths)
+- .squad/orchestration-log/2026-04-15T21-17-30Z-buster.md (session details)

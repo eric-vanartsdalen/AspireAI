@@ -66,6 +66,28 @@ Build verified successfully. Tests were running but took longer than expected du
 
 <!-- Append new learnings below. Each entry is something lasting about the project. -->
 
+### 2026-04-18 — BRAIN gateway chat failures should preserve downstream ProblemDetails and never retry unsafe POSTs
+
+**Status:** Implemented and validated for Critique-mode failure handling.
+
+**Key insight:**
+- `src\AspireApp.ApiService\Services\PythonBrainBackendClient.cs` must preserve explicit Python HTTP statuses like `503 Service Unavailable` instead of collapsing them to `502`, otherwise deterministic configuration failures look like generic gateway faults.
+- `src\AspireApp.Web\Services\BrainChatClient.cs` should parse `title`/`detail` from gateway ProblemDetails payloads and surface the human-readable `detail` directly into chat status UI instead of replacing it with a generic retry message.
+- For BRAIN POST seams (`/brain/chat`, `/brain/query`, `/brain/ingest`), resilience retries are the wrong default: they can duplicate real work and amplify deterministic failures. Disable retries for unsafe HTTP methods on the typed clients instead.
+
+**Validation:**
+- `dotnet test src\AspireApp.WebTest\AspireApp.WebTest.csproj --filter "FullyQualifiedName~ChatCritiqueModeTests|FullyQualifiedName~BrainGatewayPhase2Tests" --logger "console;verbosity=minimal"`
+- `dotnet build AspireApp.sln --no-restore`
+
+**Key paths:**
+- `src\AspireApp.Web\Services\BrainChatClient.cs`
+- `src\AspireApp.Web\Services\BrainChatClientServiceCollectionExtensions.cs`
+- `src\AspireApp.ApiService\Services\BrainBackendClient.cs`
+- `src\AspireApp.ApiService\Services\BrainBackendClientServiceCollectionExtensions.cs`
+- `src\AspireApp.Web\Components\Pages\Chat.razor.cs`
+- `src\AspireApp.WebTest\Tests\BrainGatewayPhase2Tests.cs`
+- `src\AspireApp.WebTest\Tests\ChatCritiqueModeTests.cs`
+
 ### 2026-04-18 — Chat Conversation Persistence Test Timeout Alignment
 
 **Status:** Implemented and validated for the conversation persistence test suite.
@@ -1537,3 +1559,39 @@ The failing UI test checks `Assert.Equal("uploaded", uploadedFile.Status)` at li
 - WebTest fixture improvements: isolated per-run state, graceful Aspire health-check failures
 
 **Related:** Orchestration logs created. Session log at .squad/log/2026-04-15T20-25-34Z-planning-doc-reconcile.md. 17 inbox decisions merged into .squad/decisions.md.
+
+### 2026-04-15 — BRAIN Gateway/Web HTTP Error Preservation + No-Retry Policy for Unsafe Methods
+
+**Problem:**
+- Critique mode configuration failures in Python returned deterministic 503 + ProblemDetails, but:
+  1. Gateway client collapsed 503 → generic 502, obscuring root cause
+  2. Both gateway and Web clients retried unsafe POST requests, amplifying same deterministic failure
+
+**Fix:**
+- Updated BrainBackendClient in src/AspireApp.ApiService/Services/ to preserve downstream HTTP status codes and read ProblemDetails responses
+- Updated BrainChatClient in src/AspireApp.Web/Services/ to disable resilience retries on POST operations
+- Updated Chat.razor.cs to parse and display ProblemDetails errors instead of generic retry feedback
+
+**Result:**
+- Configuration-driven HTTP failures now surface with accurate status codes to Blazor UI
+- Deterministic 503 errors no longer amplified by retry policies
+- Chat UI displays actionable error messages (e.g., "Critique model not available") instead of generic "try again"
+- Focused tests: 30/30 passed (ChatCritiqueModeTests + BrainGatewayPhase2Tests)
+- Full build: Success (no regressions)
+
+**Cross-Agent Impact:**
+- **Jarvis (Python):** Provider fix now flows through unmodified; HTTP status codes correctly forwarded.
+- **Buster (QA):** Gateway error preservation enables HTTP client validation; combined with provider fix + saved conversation reload tests for three-seam regression coverage.
+
+**Key Pattern:**
+- **Error transparency:** Preserve and surface downstream errors instead of collapsing to generic status. Enables operators to diagnose and fix configuration issues quickly.
+- **Unsafe method resilience:** Disable retries for POST/PUT/DELETE on deterministic faults. Only retry for transient I/O failures.
+
+**Key file paths:**
+- src/AspireApp.ApiService/Services/BrainBackendClient.cs (error preservation)
+- src/AspireApp.ApiService/Services/BrainBackendClientServiceCollectionExtensions.cs (policy config)
+- src/AspireApp.Web/Services/BrainChatClient.cs (error preservation + retry disable)
+- src/AspireApp.Web/Components/Pages/Chat.razor.cs (error parsing + display)
+- src/AspireApp.WebTest/Tests/BrainGatewayPhase2Tests.cs (validation)
+- .squad/decisions.md (full decision details + validation)
+- .squad/orchestration-log/2026-04-15T21-17-30Z-jeff.md (session details)
