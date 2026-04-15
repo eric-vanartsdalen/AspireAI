@@ -442,6 +442,57 @@ opacity: 0.7;
 font-size: 0.8rem;
 }
 
+.reasoning-panel {
+margin-top: 0.75rem;
+padding: 0.5rem 0.75rem;
+border-left: 3px solid rgba(128, 90, 213, 0.6);
+border-radius: 0 0.375rem 0.375rem 0;
+background-color: rgba(128, 90, 213, 0.08);
+font-size: 0.85rem;
+}
+
+.reasoning-header {
+display: flex;
+align-items: center;
+gap: 0.5rem;
+margin-bottom: 0.5rem;
+font-weight: 600;
+opacity: 0.9;
+}
+
+.reasoning-step {
+margin-bottom: 0.5rem;
+padding: 0.35rem 0;
+border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+}
+
+.reasoning-step:last-child {
+border-bottom: none;
+}
+
+.reasoning-step-title {
+font-weight: 600;
+opacity: 0.9;
+font-size: 0.8rem;
+margin-bottom: 0.2rem;
+}
+
+.reasoning-step-content {
+opacity: 0.75;
+font-size: 0.8rem;
+margin-left: 0.5rem;
+}
+
+.reasoning-step-tool {
+display: inline-block;
+padding: 0.1rem 0.4rem;
+border-radius: 0.25rem;
+background-color: rgba(255, 255, 255, 0.1);
+font-size: 0.7rem;
+margin-left: 0.3rem;
+opacity: 0.8;
+}
+
 .speech-status {
 margin-left: 1rem;
 display: inline-flex;
@@ -759,6 +810,39 @@ else
                                                 }
                                             </div>
                                         }
+                                        @if (message.User == "Assistant" && currentAssistantIdx >= 0 && _messageEvidence.TryGetValue(currentAssistantIdx, out var reasoningData))
+                                        {
+                                            @if (reasoningData.ReasoningSteps.Count > 0)
+                                            {
+                                                <div class="reasoning-panel" data-testid="chat-reasoning-panel">
+                                                    <div class="reasoning-header">
+                                                        🧠 Reasoning Steps (@reasoningData.ReasoningSteps.Count)
+                                                    </div>
+                                                    @foreach (var step in reasoningData.ReasoningSteps)
+                                                    {
+                                                        <div class="reasoning-step" data-testid="chat-reasoning-step">
+                                                            <div class="reasoning-step-title">
+                                                                @step.Step
+                                                                @if (!string.IsNullOrWhiteSpace(step.Tool))
+                                                                {
+                                                                    <span class="reasoning-step-tool">@step.Tool</span>
+                                                                }
+                                                            </div>
+                                                            @if (!string.IsNullOrWhiteSpace(step.Reasoning))
+                                                            {
+                                                                <div class="reasoning-step-content">@step.Reasoning</div>
+                                                            }
+                                                            @if (!string.IsNullOrWhiteSpace(step.Result))
+                                                            {
+                                                                <div class="reasoning-step-content" style="font-style: italic; opacity: 0.65;">
+                                                                    → @step.Result
+                                                                </div>
+                                                            }
+                                                        </div>
+                                                    }
+                                                </div>
+                                            }
+                                        }
                                     </td>
                                 </tr>
                             }
@@ -847,12 +931,14 @@ else
                            data-testid="chat-mode-regular" />
                     <label for="mode-regular">Regular</label>
                 </span>
-                <span class="chat-mode-option disabled" title="Critique mode is coming soon — requires agent framework">
+                <span class="chat-mode-option">
                     <input type="radio"
                            id="mode-critique"
                            name="chatMode"
                            value="@ChatConversationModes.Critique"
-                           disabled
+                           checked="@(SelectedChatMode == ChatConversationModes.Critique)"
+                           @onchange="@(() => OnChatModeChangedAsync(ChatConversationModes.Critique))"
+                           disabled="@IsAIResponsing"
                            data-testid="chat-mode-critique" />
                     <label for="mode-critique">Critique</label>
                 </span>

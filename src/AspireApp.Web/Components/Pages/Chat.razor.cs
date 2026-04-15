@@ -426,7 +426,8 @@ namespace AspireApp.Web.Components.Pages
                 conversationSummary = await ChatConversationService.StartConversationAsync(
                     user.UserId,
                     TenantContext.CurrentTenantId,
-                    message);
+                    message,
+                    SelectedChatMode);
             }
             else
             {

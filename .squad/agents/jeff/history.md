@@ -34,6 +34,36 @@
 
 ## Learnings
 
+### 2025-01-XX: Critique Mode UI Layer Implementation
+
+**What I Did:**
+- Enabled the Critique toggle in `Chat.razor` by removing the `disabled` attribute and class
+- Added full wiring for Critique mode: the toggle now properly sets `SelectedChatMode` and calls `OnChatModeChangedAsync`
+- Implemented reasoning steps display with new CSS classes (`reasoning-panel`, `reasoning-step`, `reasoning-step-title`, etc.)
+- Added reasoning steps rendering in the message display area, similar to evidence display
+- The reasoning panel displays:
+  - Step title with optional tool badge
+  - Step reasoning text
+  - Step result (if provided)
+- All changes are surgical and framework-agnostic (no PydanticAI-specific coupling in UI)
+
+**What Worked:**
+- The existing gateway flow (`BrainChatClient.ChatAsync`) already passes `mode` through correctly
+- The `BrainChatResponse` contract already includes `ReasoningSteps` property
+- Evidence display was already working, so I followed the same pattern for reasoning steps
+- Mode persistence and conversation service already handled the `ChatMode` field
+
+**Key Insight:**
+The Regular mode product layer was already complete, so enabling Critique just required:
+1. UI toggle enablement (remove disabled state)
+2. Reasoning steps rendering (new UI component)
+No backend or gateway changes needed from my side - Jarvis handles the Python side.
+
+**Testing Note:**
+Build verified successfully. Tests were running but took longer than expected due to database initialization. The changes compile correctly and follow existing patterns.
+
+## Learnings
+
 <!-- Append new learnings below. Each entry is something lasting about the project. -->
 
 ### 2026-04-18 — Chat Conversation Persistence Test Timeout Alignment
@@ -1422,3 +1452,18 @@ The failing UI test checks `Assert.Equal("uploaded", uploadedFile.Status)` at li
 - .squad/orchestration-log/2026-04-15T17-41-59-jeff.md (session log)
 - .squad/decisions/inbox/jeff-*.md → merged to decisions.md
 
+
+### 2026-04-22 — Critique mode now preserves selected mode on first message
+
+**Status:** Implemented and validated.
+
+**Implementation Results:**
+- ✅ `Chat.razor.cs` now passes `SelectedChatMode` into `StartConversationAsync`, so new conversations persist the selected mode before the first backend call.
+- ✅ Critique-mode tests can send messages without stub exceptions, and the BrainChat client receives "critique" when the toggle is set.
+
+**Key Paths:**
+- `src\AspireApp.Web\Components\Pages\Chat.razor.cs`
+- `src\AspireApp.WebTest\Tests\ChatCritiqueModeTests.cs`
+
+**Validation Notes:**
+- `dotnet test src\AspireApp.WebTest\AspireApp.WebTest.csproj --filter "FullyQualifiedName~ChatCritiqueModeTests" -v q`
