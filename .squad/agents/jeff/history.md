@@ -9,6 +9,23 @@
 
 <!-- Append new learnings below. Each entry is something lasting about the project. -->
 
+### 2026-04-15 — Chat focus should use explicit render-time focus flags
+
+**Status:** Implemented and validated for the chat rename regression slice.
+
+**Key insight:**
+- `src\AspireApp.Web\Components\Pages\Chat.razor.cs` should not refocus `chat-message-input` from `OnAfterRenderAsync` on every non-edit render.
+- The stable Blazor pattern here is to queue focus explicitly with `ShouldFocusQuestionInput` and `ShouldFocusConversationTitleInput`, then consume those flags during the next render.
+- Conversation selection and rename exit paths can request question-input focus without stealing focus from the title editor while the user is typing.
+
+**Validation:**
+- `dotnet test src\AspireApp.WebTest\AspireApp.WebTest.csproj --filter "FullyQualifiedName~ChatFocusTests|FullyQualifiedName~ChatConversationServiceTests" --logger "console;verbosity=minimal"`
+
+**Key paths:**
+- `src\AspireApp.Web\Components\Pages\Chat.razor.cs`
+- `src\AspireApp.WebTest\Tests\ChatFocusTests.cs`
+- `src\AspireApp.WebTest\Tests\ChatConversationServiceTests.cs`
+
 ### 2026-04-17 — Python processing background work must leave FastAPI responsive
 
 **Status:** Implemented and validated for the current upload regressions.

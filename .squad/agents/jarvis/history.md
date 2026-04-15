@@ -9,6 +9,40 @@
 
 <!-- Append new learnings below. Each entry is something lasting about the project. -->
 
+### 2026-04-15 — LightRAG Retrieval Multi-Shape Compatibility + Filename-Parsed Provenance
+
+**Problem:**
+- `BasicAspireAppHostTests.LiveLightRagNeo4jQueryRoundTrip` passed ingestion and Neo4j growth but returned empty retrieval results.
+- LightRAG response shape varies between newer `contexts` format and legacy `/query/data` chunk rows.
+- Some chunks lack explicit confidence scores, and document IDs were missing when LightRAG returned results by file path only.
+
+**Fix:**
+- Updated `LightRagRetriever` to accept both response shapes: try `contexts` first, fall back to `/query/data` chunks if absent.
+- Implemented filename parsing in `BrainKnowledgeRetriever.parse_document_id_from_path()` to extract document ID from staged patterns like `000007-guide.md` → ID 7.
+- Confidence enrichment now uses parsed document ID to query Neo4j for metadata (source_confidence, claim confidence).
+- Updated `app/services/lightrag_query_service.py` and `app/brain/knowledge/retrievers.py` to handle both shapes end-to-end.
+
+**Result:**
+- Retrieval now works with multiple LightRAG response schemas; no single schema assumption.
+- Provenance recoverable from filename parsing when explicit document IDs absent.
+- Confidence enrichment bridges legacy chunks to Neo4j metadata via filename → document ID mapping.
+- Live round-trip test passing (27/27 Python LightRAG tests passing).
+
+**Key Pattern:**
+- **Multi-shape API compatibility:** When LightRAG (or similar services) return multiple response formats, retriever must detect and handle all variants rather than failing on unexpected shape.
+- **Provenance recovery:** Use available metadata (filename, path, source_doc) to reconstruct missing IDs; enables confidence enrichment even when LightRAG response incomplete.
+
+**Key file paths:**
+- `src/AspireApp.PythonServices/app/services/lightrag_query_service.py` (response shape detection + chunk extraction)
+- `src/AspireApp.PythonServices/app/brain/knowledge/retrievers.py` (filename parsing, confidence enrichment)
+- `src/AspireApp.PythonServices/tests/test_lightrag_retriever.py` (multi-shape validation)
+- `src/AspireApp.PythonServices/tests/test_knowledge_retriever.py` (provenance + confidence tests)
+- `src/AspireApp.WebTest/Tests/BasicAspireAppHostTests.cs` (LiveLightRagNeo4jQueryRoundTrip validation)
+
+**Related Work:**
+- Builds on P1 Docling → LightRAG → Neo4j integration audit (2026-04-13)
+- Enables Phase 2 retrieval to work with production LightRAG without schema rework
+
 ### 2026-04-18 — Confidence Enrichment Fix for BrainKnowledgeRetriever
 
 **Problem:**
@@ -744,3 +778,21 @@ eo4j_service for confidence enrichment when LightRAG omits score metadata
 - src/AspireApp.PythonServices/tests/test_lightrag_retriever.py (6 new tests: enrichment, ref parsing, fallback scenarios)
 - oadmap/Tasks.md (updated P2-B progress: enrichment implemented, fail-closed behavior still deferred)
 
+
+### 2026-04-15 — LightRAG Query Provenance Must Tolerate `contexts` and Unscored `chunks`
+
+**Completed:**
+- Updated `LightRagRetriever` to read both legacy `data.chunks` payloads and newer top-level/data `contexts` payloads from LightRAG.
+- Added provenance parsing from LightRAG `file_path` / `source_doc` fields so the retriever can recover `document:{id}` refs from staged filenames like `000007-guide.md`.
+- Used that parsed provenance to enrich missing confidence from Neo4j when `/query/data` returns chunk text without a score.
+- Added regression tests covering modern `contexts` responses and unscored chunk payloads.
+
+**Key pattern:**
+- Treat LightRAG retrieval as a version-tolerant seam: accept both `contexts` and `chunks`, and never assume score/provenance fields arrive in one fixed shape.
+- When LightRAG omits scores, derive document provenance from the staged file path and ask Neo4j for stored confidence instead of returning an empty result.
+- Deterministic staged filenames (`{document_id:06d}-{name}.md`) are now part of the retrieval confidence path, not just the ingestion handoff.
+
+**Key file paths:**
+- `src/AspireApp.PythonServices/app/brain/knowledge/retrievers.py`
+- `src/AspireApp.PythonServices/tests/test_lightrag_retriever.py`
+- `src/AspireApp.WebTest/Tests/BasicAspireAppHostTests.cs`

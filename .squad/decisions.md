@@ -14,6 +14,7 @@
 > **Note (2026-04-14T06:17:03Z):** Merged 1 inbox decision from Phase 0 gate closeout session (Bob). "Phase 0 Gate Closeout: BRAIN Pivot Decision Recording Complete" — Decision-recording gate closed; BRAIN pivot recorded; Docker validation caveat noted as outstanding quality gate (not blocking Phase 1 parallel work). No duplicates found. Inbox cleared.
 > **Note (2026-04-17T23:55:30Z):** Merged 0 new inbox decisions from roadmap/Tasks.md cleanup session (Bob, Buster). Session summary: Bob updated Tasks.md and highlighted Phase 2/3 sequencing; Buster verified honesty against test evidence and approved; Bob performed surgical cleanup (removed duplicate contradiction-detection entry and stale outstanding Phase 2 proof item); Buster rechecked for internal consistency and approved final state. Roadmap now internally consistent. No inbox files generated. See session log `20260417-roadmap-cleanup.md` for details.
 > **Note (2026-04-17T23:50:00Z):** Merged 2 inbox decisions from roadmap/Tasks.md update session (Bob, Buster). Key outcome: P2-B gate closure confirmed (confidence fail-closed + Neo4j enrichment verified); P2-C unblocked (embedding infrastructure identified as blocker, not code); Phase 3 critical path locked (agent framework selection is BLOCKING GATE with 2026-04-24 decision deadline). Contradiction detection deferred to Phase 3 Critic Agent integration. No exact duplicates found. Inbox cleared.
+> **Note (2026-04-15T07:42:56Z):** Merged 2 inbox decisions from chat focus + LightRAG round-trip regression fix session (Jeff, Jarvis). Key outcome: (1) Chat focus seam uses explicit render-time flags (`ShouldFocusQuestionInput`/`ShouldFocusConversationTitleInput`) instead of eager autofocus in `OnAfterRenderAsync`, preventing rename-typing focus theft. (2) LightRAG retriever updated to handle multiple response shapes (`contexts` + `/query/data` chunks) and recover provenance from filename parsing (e.g., `000007-guide.md` → document ID). Both regression tests passing (ChatFocusTests 7/7, LightRAG tests 27/27, LiveLightRagNeo4jQueryRoundTrip ✅). No duplicates found. Inbox cleared.
 
 <!-- Decisions are appended below. Each entry starts with ### -->
 
@@ -641,3 +642,124 @@ Treat these upload failures as test-scaffolding issues, not app regressions:
 
 ---
 
+
+## Chat Focus: Explicit Render-Time Flags (No Eager Autofocus) — Jeff — 2026-04-15
+
+**Author:** Jeff (.NET Dev)  
+**Status:** IMPLEMENTED  
+**Scope:** Blazor chat component focus seam, rename-title workflow stability
+
+### Decision
+
+Use explicit render-time focus flags in src\AspireApp.Web\Components\Pages\Chat.razor.cs for both the question input and the conversation-title input. OnAfterRenderAsync should only call ocusElement when a user action has queued that focus change (via ShouldFocusQuestionInput or ShouldFocusConversationTitleInput flags). Never attempt to autofocus question-input on every non-edit render.
+
+### Why
+
+The previous OnAfterRenderAsync behavior could attempt to refocus the question box on any non-edit render, which makes Blazor rerenders a potential focus thief. This breaks the rename-title workflow: user types a new name, then a render happens (e.g., another component updates state), and the focus jumps back to the question input, interrupting the edit.
+
+Matching the existing title-input pattern with dedicated ShouldFocusQuestionInput flag keeps rename typing stable and makes the regression easy to test with bUnit and JSInterop call counts.
+
+### Implementation
+
+1. **Chat.razor.cs:**
+   - Add boolean flags: ShouldFocusQuestionInput and ShouldFocusConversationTitleInput (default: alse)
+   - In OnAfterRenderAsync, only call ocusElement if the corresponding flag is 	rue
+   - Consume the flag (set to alse) after focus call completes
+   - Set flags explicitly from user actions (conversation selected, rename exited)
+
+2. **Chat.razor:**
+   - Update @ref="questionInput" to check ShouldFocusQuestionInput flag
+   - Keep title-input focus directive unchanged (already follows this pattern)
+
+3. **Tests:**
+   - ChatFocusTests.RenameTitleInput_DoesNotRefocusQuestionInputWhileTyping now passes ✅
+   - ChatConversationServiceTests validates focus queuing (7/7 tests passing)
+
+### Key Paths
+
+- src\AspireApp.Web\Components\Pages\Chat.razor.cs
+- src\AspireApp.Web\Components\Pages\Chat.razor
+- src\AspireApp.WebTest\Tests\ChatFocusTests.cs
+- src\AspireApp.WebTest\Tests\ChatConversationServiceTests.cs
+
+### Validation
+
+- ✓ Rename-title typing no longer interrupted by question-input refocus
+- ✓ Question-input focus only happens on explicit user action (conversation select, rename exit)
+- ✓ JSInterop focus call counts stable under rename workflow
+- ✓ Regression test passing
+
+### Relationship to Other Decisions
+
+- **Related:** Chat persistence fixes (2026-04-10) — This work complements message history stability by adding input focus stability.
+- **No Impact:** OAuth, auth, tenant isolation, Python services
+
+---
+
+## LightRAG Query Provenance Compatibility (Multi-Shape + Filename Parsing) — Jarvis — 2026-04-15
+
+**Author:** Jarvis (Python/Neo4j specialist)  
+**Status:** IMPLEMENTED  
+**Scope:** Python LightRAG retrieval seam, knowledge contract compatibility, provenance enrichment
+
+### Decision
+
+Support both newer LightRAG \contexts\ payloads and legacy \/query/data\ chunk payloads in \LightRagRetriever\, and recover provenance from \ile_path\ / \source_doc\ when explicit document IDs are absent. Use filename parsing (e.g., \ 00007-guide.md\ → document ID 7) to enrich confidence scores via Neo4j lookup.
+
+### Why
+
+The live LightRAG round-trip test passed ingestion and Neo4j growth but returned empty Python retrieval results because:
+
+1. **Response Shape Variance:** LightRAG now surfaces retrieval data in multiple formats. Some responses return \contexts\ (structured); others return \/query/data\ chunk rows.
+2. **Missing Score Fields:** The legacy \/query/data\ format may carry only \ile_path\ + \eference_id\ without an explicit score field.
+3. **Provenance Gap:** When a chunk lacks a document ID, we can still recover it by parsing the staged filename pattern.
+
+This update bridges the gap: retriever accepts both shapes, extracts provenance flexibly, and enriches confidence from Neo4j when available.
+
+### Implementation
+
+1. **LightRagRetriever** (pp\services\lightrag_query_service.py):
+   - Check for \contexts\ field first; if present, iterate over contexts
+   - Fall back to \/query/data\ chunk list if \contexts\ absent
+   - Extract \ile_path\ / \source_doc\ for each chunk
+   - Use filename parsing to recover document ID when needed
+
+2. **BrainKnowledgeRetriever** (pp\brain\knowledge\retrievers.py):
+   - Parse filename patterns like \ 00007-guide.md\ → extract numeric prefix as document ID
+   - Query Neo4j for document metadata by ID
+   - Enrich confidence score from Neo4j doc data if available
+
+3. **Tests:**
+   - \	est_lightrag_retriever.py\ validates response shape flexibility (unit tests)
+   - \	est_knowledge_retriever.py\ validates provenance recovery and confidence enrichment
+   - \	est_processing_pipeline_regression.py\ end-to-end ingest + query round-trip
+
+### Key Paths
+
+- \src\AspireApp.PythonServices\app\services\lightrag_query_service.py\
+- \src\AspireApp.PythonServices\app\brain\knowledge\retrievers.py\
+- \src\AspireApp.PythonServices\tests\test_lightrag_retriever.py\
+- \src\AspireApp.PythonServices\tests\test_knowledge_retriever.py\
+- \src\AspireApp.WebTest\Tests\BasicAspireAppHostTests.cs\ (LiveLightRagNeo4jQueryRoundTrip)
+
+### Validation
+
+- ✓ LiveLightRagNeo4jQueryRoundTrip test passing (C# / Aspire integration)
+- ✓ Python LightRAG retrieval tests all passing (27/27)
+- ✓ Provenance recovered from filename parsing (document ID + filename → confidence)
+- ✓ Response shape flexibility confirmed (both \contexts\ and \/query/data\ handled)
+
+### Consequences
+
+- Python retrieval stays compatible with multiple LightRAG response shapes.
+- Confidence enrichment can use Neo4j by parsing staged filenames.
+- Future LightRAG upgrades should preserve this multi-shape seam unless contract tests intentionally narrow it.
+- If LightRAG changes filename pattern, update parsing logic in \BrainKnowledgeRetriever.parse_document_id_from_path()\
+
+### Relationship to Other Decisions
+
+- **Related:** P1 Docling-to-LightRAG-to-Neo4j audit (2026-04-13) — This work closes the retrieval gap identified in that audit.
+- **Upstream:** LightRAG integration basics — This decision assumes LightRAG handoff and query services already functional.
+- **No Impact:** C# API, Blazor, chat, auth, tenant isolation
+
+---
