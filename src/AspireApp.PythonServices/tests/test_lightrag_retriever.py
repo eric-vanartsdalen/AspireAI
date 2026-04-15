@@ -203,6 +203,66 @@ class LightRagRetrieverTests(unittest.TestCase):
         self.assertEqual(0.41, result.results[0].relevance_score)
         self.assertEqual(["document:3/page:4"], result.results[0].source_refs)
 
+    def test_retrieve_maps_contexts_results_to_knowledge_contract(self):
+        retriever = LightRagRetriever(
+            FakeLightRagQueryService(
+                {
+                    "answer": "Aspire keeps orchestration explicit.",
+                    "contexts": [
+                        {
+                            "content": "Aspire routes dependencies through the AppHost.",
+                            "score": 0.73,
+                            "source_doc": "/app/data/inputs/000004-guide.md",
+                        }
+                    ],
+                }
+            )
+        )
+
+        result = asyncio.run(retriever.retrieve("Aspire"))
+
+        self.assertEqual(1, len(result.results))
+        self.assertEqual("Aspire routes dependencies through the AppHost.", result.results[0].content)
+        self.assertEqual(0.73, result.results[0].confidence)
+        self.assertIn("file:000004-guide.md", result.results[0].source_refs)
+
+    def test_retrieve_enriches_chunk_confidence_from_lightrag_file_path(self):
+        neo4j = FakeNeo4jService(results=[])
+        neo4j._mock_confidence = 0.84
+        retriever = LightRagRetriever(
+            FakeLightRagQueryService(
+                {
+                    "status": "success",
+                    "message": "Query executed successfully",
+                    "data": {
+                        "chunks": [
+                            {
+                                "content": "Stored chunk content from LightRAG.",
+                                "file_path": "/app/data/inputs/000007-guide.md",
+                                "reference_id": "ref-1",
+                            }
+                        ],
+                        "references": [
+                            {
+                                "reference_id": "ref-1",
+                                "file_path": "/app/data/inputs/000007-guide.md",
+                            }
+                        ],
+                    },
+                }
+            ),
+            neo4j_service=neo4j,
+        )
+
+        result = asyncio.run(retriever.retrieve("guide"))
+
+        self.assertEqual(1, len(result.results))
+        self.assertEqual("Stored chunk content from LightRAG.", result.results[0].content)
+        self.assertEqual(0.84, result.results[0].confidence)
+        self.assertIn("document:7", result.results[0].source_refs)
+        self.assertIn("file:000007-guide.md", result.results[0].source_refs)
+        self.assertEqual([{"document_id": 7, "page_number": None}], neo4j.confidence_lookups)
+
     def test_retrieve_preserves_zero_confidence_scores(self):
         retriever = LightRagRetriever(
             FakeLightRagQueryService(

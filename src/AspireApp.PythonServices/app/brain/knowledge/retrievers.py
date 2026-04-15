@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import re
 import uuid
 from collections.abc import Mapping
 from typing import Any, Iterable
@@ -13,6 +14,8 @@ from ...services.neo4j_service import Neo4jService
 
 DEFAULT_CONFIDENCE = 0.5
 SCORE_KEYS = ("confidence", "relevance_score", "score", "similarity", "source_confidence")
+DOCUMENT_ID_IN_FILENAME_PATTERN = re.compile(r"^0*(\d+)(?:[-_]|$)")
+PAGE_NUMBER_PATTERN = re.compile(r"(?:^|[^0-9])page[:=_-]?(\d+)(?:[^0-9]|$)", re.IGNORECASE)
 
 
 class _KnowledgeItemFactory:
@@ -116,6 +119,11 @@ class _KnowledgeItemFactory:
                     result["page_number"] = int(page_part.split(":")[1])
                 except (ValueError, IndexError):
                     pass
+
+        if result["document_id"] is None and ref.startswith("file:"):
+            result["document_id"] = self._extract_document_id_from_path(ref[5:])
+            if result["page_number"] is None:
+                result["page_number"] = self._extract_page_number_from_text(ref[5:])
         
         return result
 
@@ -184,13 +192,20 @@ class _KnowledgeItemFactory:
         generated: list[str] = []
         document_id = self._extract_int(item, "document_id")
         page_number = self._extract_int(item, "page_number")
+        if document_id is None:
+            document_id = self._extract_document_id_from_mapping(item)
+        if page_number is None:
+            page_number = self._extract_page_number_from_mapping(item)
         if document_id is not None:
             if page_number is not None:
                 generated.append(f"document:{document_id}/page:{page_number}")
             else:
                 generated.append(f"document:{document_id}")
 
-        filename = self._first_string(item, ("filename", "file_name", "source"))
+        filename = (
+            self._first_string(item, ("filename", "file_name", "source"))
+            or self._extract_file_name_from_mapping(item)
+        )
         if filename:
             generated.append(f"file:{filename}")
 
@@ -206,7 +221,15 @@ class _KnowledgeItemFactory:
 
             document_id = self._extract_int(value, "document_id") or self._extract_int(value, "id")
             page_number = self._extract_int(value, "page_number")
-            filename = self._first_string(value, ("filename", "file_name", "source"))
+            if document_id is None:
+                document_id = self._extract_document_id_from_mapping(value)
+            if page_number is None:
+                page_number = self._extract_page_number_from_mapping(value)
+            filename = (
+                self._first_string(value, ("filename", "file_name", "source"))
+                or self._extract_file_name_from_mapping(value)
+            )
+            reference_id = self._first_string(value, ("reference_id",))
 
             refs: list[str] = []
             if document_id is not None:
@@ -217,6 +240,8 @@ class _KnowledgeItemFactory:
 
             if filename:
                 refs.append(f"file:{filename}")
+            if reference_id:
+                refs.append(f"reference:{reference_id}")
 
             return refs
 
@@ -262,6 +287,86 @@ class _KnowledgeItemFactory:
             metadata_value = data["metadata"].get(key)
             if isinstance(metadata_value, str) and metadata_value.strip():
                 return metadata_value
+        return None
+
+    @staticmethod
+    def _extract_file_name(path_value: str) -> str:
+        normalized = path_value.replace("\\", "/").strip()
+        return normalized.rsplit("/", 1)[-1] if normalized else ""
+
+    def _extract_file_name_from_mapping(self, item: Mapping[str, Any]) -> str | None:
+        file_path = self._first_string(item, ("file_path", "filepath", "path", "source_doc"))
+        if file_path:
+            filename = self._extract_file_name(file_path)
+            if filename:
+                return filename
+
+        metadata = self._metadata(item)
+        metadata_file_path = self._first_string(metadata, ("file_path", "filepath", "path", "source_doc"))
+        if metadata_file_path:
+            filename = self._extract_file_name(metadata_file_path)
+            if filename:
+                return filename
+
+        return None
+
+    @staticmethod
+    def _extract_document_id_from_path(path_value: str) -> int | None:
+        filename = _KnowledgeItemFactory._extract_file_name(path_value)
+        match = DOCUMENT_ID_IN_FILENAME_PATTERN.match(filename)
+        if match is None:
+            return None
+
+        try:
+            return int(match.group(1))
+        except ValueError:
+            return None
+
+    @staticmethod
+    def _extract_page_number_from_text(value: str) -> int | None:
+        match = PAGE_NUMBER_PATTERN.search(value)
+        if match is None:
+            return None
+
+        try:
+            return int(match.group(1))
+        except ValueError:
+            return None
+
+    def _extract_document_id_from_mapping(self, item: Mapping[str, Any]) -> int | None:
+        file_path = self._first_string(item, ("file_path", "filepath", "path", "source_doc"))
+        if file_path:
+            document_id = self._extract_document_id_from_path(file_path)
+            if document_id is not None:
+                return document_id
+
+        metadata = self._metadata(item)
+        metadata_file_path = self._first_string(metadata, ("file_path", "filepath", "path", "source_doc"))
+        if metadata_file_path:
+            return self._extract_document_id_from_path(metadata_file_path)
+
+        source_ref = self._first_string(item, ("source_ref", "source", "reference"))
+        if source_ref:
+            return self._extract_document_id_from_path(source_ref)
+
+        return None
+
+    def _extract_page_number_from_mapping(self, item: Mapping[str, Any]) -> int | None:
+        file_path = self._first_string(item, ("file_path", "filepath", "path", "source_doc"))
+        if file_path:
+            page_number = self._extract_page_number_from_text(file_path)
+            if page_number is not None:
+                return page_number
+
+        metadata = self._metadata(item)
+        metadata_file_path = self._first_string(metadata, ("file_path", "filepath", "path", "source_doc"))
+        if metadata_file_path:
+            return self._extract_page_number_from_text(metadata_file_path)
+
+        source_ref = self._first_string(item, ("source_ref", "source", "reference"))
+        if source_ref:
+            return self._extract_page_number_from_text(source_ref)
+
         return None
 
 
@@ -318,11 +423,11 @@ class LightRagRetriever(_KnowledgeItemFactory, IKnowledgeRetriever):
         if not isinstance(payload, Mapping):
             return []
 
-        items = self._first_list(payload, ("results", "items", "chunks"))
+        items = self._first_list(payload, ("results", "items", "chunks", "contexts"))
         if items is None:
             data = payload.get("data")
             if isinstance(data, Mapping):
-                items = self._first_list(data, ("results", "items", "chunks"))
+                items = self._first_list(data, ("results", "items", "chunks", "contexts"))
 
         if items is not None:
             return [

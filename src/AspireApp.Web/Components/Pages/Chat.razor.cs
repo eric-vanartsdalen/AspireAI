@@ -55,6 +55,7 @@ namespace AspireApp.Web.Components.Pages
         private string ConversationTitleDraft { get; set; } = string.Empty;
         private bool IsEditingConversationTitle { get; set; }
         private bool ShouldFocusConversationTitleInput { get; set; }
+        private bool ShouldFocusQuestionInput { get; set; } = true;
         private string ConversationStatusMessage { get; set; } = string.Empty;
         private bool ConversationStatusIsError { get; set; }
         private AuthenticatedUser? CurrentUser { get; set; }
@@ -177,16 +178,17 @@ namespace AspireApp.Web.Components.Pages
             ApplyConversationSummary(activeConversation);
         }
 
-        private async Task StartNewConversationAsync()
+        private Task StartNewConversationAsync()
         {
             if (IsAIResponsing)
             {
-                return;
+                return Task.CompletedTask;
             }
 
             ResetConversationDraft();
-            await FocusQuestionInput();
+            RequestQuestionInputFocus();
             StateHasChanged();
+            return Task.CompletedTask;
         }
 
         private async Task SelectConversationAsync(Guid conversationId)
@@ -213,6 +215,7 @@ namespace AspireApp.Web.Components.Pages
 
             ApplyConversationDetail(conversation);
             ClearConversationStatus();
+            RequestQuestionInputFocus();
             await ScrollChatToBottomAsync();
         }
 
@@ -225,6 +228,7 @@ namespace AspireApp.Web.Components.Pages
 
             ConversationTitleDraft = ActiveConversationTitle;
             IsEditingConversationTitle = true;
+            ShouldFocusQuestionInput = false;
             ShouldFocusConversationTitleInput = true;
         }
 
@@ -233,6 +237,7 @@ namespace AspireApp.Web.Components.Pages
             IsEditingConversationTitle = false;
             ShouldFocusConversationTitleInput = false;
             ConversationTitleDraft = ActiveConversationTitle;
+            RequestQuestionInputFocus();
         }
 
         private async Task SaveConversationTitleAsync()
@@ -272,6 +277,7 @@ namespace AspireApp.Web.Components.Pages
             ApplyConversationSummary(renamedConversation);
             IsEditingConversationTitle = false;
             ShouldFocusConversationTitleInput = false;
+            RequestQuestionInputFocus();
             await LoadConversationSummariesAsync();
             ClearConversationStatus();
         }
@@ -335,6 +341,8 @@ namespace AspireApp.Web.Components.Pages
             ActiveConversationTitle = ChatConversationTitleHelper.BuildFallbackTitle(string.Empty);
             ConversationTitleDraft = string.Empty;
             IsEditingConversationTitle = false;
+            ShouldFocusConversationTitleInput = false;
+            ShouldFocusQuestionInput = false;
             Question = string.Empty;
             AIResponse = string.Empty;
             ElapsedTimeMessage = string.Empty;
@@ -856,8 +864,9 @@ namespace AspireApp.Web.Components.Pages
                 ShouldFocusConversationTitleInput = false;
                 await FocusConversationTitleInput();
             }
-            else if ((firstRender || !IsAIResponsing) && !IsEditingConversationTitle)
+            else if (ShouldFocusQuestionInput && !IsEditingConversationTitle)
             {
+                ShouldFocusQuestionInput = false;
                 await FocusQuestionInput();
             }
 
@@ -865,6 +874,17 @@ namespace AspireApp.Web.Components.Pages
             {
                 await ScrollChatToBottomAsync(delayMs: 10);
             }
+        }
+
+        private void RequestQuestionInputFocus()
+        {
+            if (IsEditingConversationTitle)
+            {
+                return;
+            }
+
+            ShouldFocusConversationTitleInput = false;
+            ShouldFocusQuestionInput = true;
         }
 
         private async Task FocusQuestionInput()
