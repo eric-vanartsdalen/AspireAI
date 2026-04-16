@@ -32,6 +32,7 @@ public class BasicAspireAppHostTests : IClassFixture<TestFixture>
     private static readonly string TestFile = Path.Combine(AppContext.BaseDirectory, "..", "..", "..", "..",
             "AspireApp.WebTest", "DataExample", "processing-smoke.pdf");
     private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web);
+    private const int LightRagIngestionTimeoutMs = 300_000;
     private static readonly TimeSpan PythonVisibilityTimeout = TimeSpan.FromSeconds(30);
     private static readonly TimeSpan WebApiTimeout = TimeSpan.FromSeconds(90);
     private static readonly TimeSpan PythonVisibilityPollInterval = TimeSpan.FromMilliseconds(500);
@@ -289,7 +290,7 @@ public class BasicAspireAppHostTests : IClassFixture<TestFixture>
 
             var artifacts = await WaitForProcessedArtifactsAsync(documentId);
             using var lightRagClient = CreateLightRagHttpClient();
-            await WaitForLightRagIngestionAsync(lightRagClient, artifacts);
+            await WaitForLightRagIngestionAsync(lightRagClient, artifacts, timeoutMs: LightRagIngestionTimeoutMs);
             Assert.True(File.Exists(artifacts.DocumentJsonPath),
                 $"Expected Docling document artifact at '{artifacts.DocumentJsonPath}', but it was not created.");
             Assert.True(File.Exists(artifacts.FirstPagePath),
@@ -321,7 +322,7 @@ public class BasicAspireAppHostTests : IClassFixture<TestFixture>
 
         var artifacts = await WaitForProcessedArtifactsAsync(uploadedFile.Id);
         using var lightRagClient = CreateLightRagHttpClient();
-        await WaitForLightRagIngestionAsync(lightRagClient, artifacts, timeoutMs: 300000);
+        await WaitForLightRagIngestionAsync(lightRagClient, artifacts, timeoutMs: LightRagIngestionTimeoutMs);
 
         var knowledgeQuery = SmokeRoundTripQuery;
 
@@ -393,7 +394,7 @@ public class BasicAspireAppHostTests : IClassFixture<TestFixture>
 
         var artifacts = await WaitForProcessedArtifactsAsync(uploadedFile.Id);
         using var lightRagClient = CreateLightRagHttpClient();
-        await WaitForLightRagIngestionAsync(lightRagClient, artifacts, timeoutMs: 300000);
+        await WaitForLightRagIngestionAsync(lightRagClient, artifacts, timeoutMs: LightRagIngestionTimeoutMs);
 
         using var brainGatewayClient = CreateBrainGatewayHttpClient();
         var gatewayResult = await WaitForKnowledgeQueryResultAsync(
@@ -436,7 +437,7 @@ public class BasicAspireAppHostTests : IClassFixture<TestFixture>
         Assert.Equal("processed", finalStatus.Status);
         var artifacts = await WaitForProcessedArtifactsAsync(uploadedFile.Id);
         using var lightRagClient = CreateLightRagHttpClient();
-        await WaitForLightRagIngestionAsync(lightRagClient, artifacts);
+        await WaitForLightRagIngestionAsync(lightRagClient, artifacts, timeoutMs: LightRagIngestionTimeoutMs);
 
         await WithPageAsync(async page =>
         {
@@ -1001,7 +1002,7 @@ public class BasicAspireAppHostTests : IClassFixture<TestFixture>
         return default!;
     }
 
-    private static async Task WaitForLightRagIngestionAsync(HttpClient lightRagClient, ProcessedArtifactsInfo artifacts, int timeoutMs = 120000)
+    private static async Task WaitForLightRagIngestionAsync(HttpClient lightRagClient, ProcessedArtifactsInfo artifacts, int timeoutMs = LightRagIngestionTimeoutMs)
     {
         var stagedInputFileName = Path.GetFileName(artifacts.LightRagStagedInputPath);
         Assert.False(string.IsNullOrWhiteSpace(stagedInputFileName), "Processed artifacts did not record a LightRAG staged input path.");

@@ -13,7 +13,7 @@ public static class BrainBackendClientServiceCollectionExtensions
                 string.IsNullOrWhiteSpace(configuredBaseAddress)
                     ? "http://localhost:8000/"
                     : EnsureTrailingSlash(configuredBaseAddress));
-            client.Timeout = TimeSpan.FromMinutes(2);
+            client.Timeout = TimeSpan.FromMinutes(3);
         });
 
 #pragma warning disable EXTEXP0001
@@ -23,9 +23,9 @@ public static class BrainBackendClientServiceCollectionExtensions
             // The gateway issues POST requests that may enqueue work or generate responses,
             // so retries on non-idempotent methods create noisy duplicate failures.
             options.Retry.DisableForUnsafeHttpMethods();
-            options.TotalRequestTimeout.Timeout = TimeSpan.FromMinutes(3);
-            options.AttemptTimeout.Timeout = TimeSpan.FromSeconds(90);
-            options.CircuitBreaker.SamplingDuration = TimeSpan.FromMinutes(3);
+            options.TotalRequestTimeout.Timeout = TimeSpan.FromMinutes(4);
+            options.AttemptTimeout.Timeout = TimeSpan.FromMinutes(3);
+            options.CircuitBreaker.SamplingDuration = TimeSpan.FromMinutes(6);
         });
 #pragma warning restore EXTEXP0001
 

@@ -25,8 +25,8 @@ public static class BrainChatClientServiceCollectionExtensions
             // amplifies deterministic failures and risks duplicate side effects.
             options.Retry.DisableForUnsafeHttpMethods();
             options.TotalRequestTimeout.Timeout = TimeSpan.FromMinutes(4);
-            options.AttemptTimeout.Timeout = TimeSpan.FromMinutes(2);
-            options.CircuitBreaker.SamplingDuration = TimeSpan.FromMinutes(4);
+            options.AttemptTimeout.Timeout = TimeSpan.FromMinutes(3);
+            options.CircuitBreaker.SamplingDuration = TimeSpan.FromMinutes(6);
         });
 #pragma warning restore EXTEXP0001
 
