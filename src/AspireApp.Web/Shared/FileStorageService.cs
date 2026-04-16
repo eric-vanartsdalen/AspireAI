@@ -340,11 +340,11 @@ public class FileStorageService(
                     _logger.LogInformation("Deleted file from data directory: {FilePath}", filePath);
                 }
             }
-            else if (file.SourceType == "url")
+            else if (!string.IsNullOrWhiteSpace(file.SourceUrl))
             {
                 if (_logger.IsEnabled(LogLevel.Information))
                 {
-                    _logger.LogInformation("Deleted URL datasource: {Url}", file.SourceUrl);
+                    _logger.LogInformation("Deleted URL datasource: {SourceType} {Url}", file.SourceType, file.SourceUrl);
                 }
             }
             else
@@ -398,7 +398,13 @@ public class FileStorageService(
     /// <summary>
     /// Adds a URL datasource entry with hash generation for consistent duplicate detection
     /// </summary>
-    public async Task<FileMetadata> AddUrlAsync(string sourceName, string sourceUrl, string status = "uploaded", string tenantId = "default")
+    public async Task<FileMetadata> AddUrlAsync(
+        string sourceName,
+        string sourceUrl,
+        string sourceType = UrlSourceTypeClassifier.GenericUrl,
+        string? mimeType = null,
+        string status = "uploaded",
+        string tenantId = "default")
     {
         try
         {
@@ -417,9 +423,9 @@ public class FileStorageService(
                 UploadedAt = DateTime.UtcNow,
                 Status = status,
                 FileHash = urlHash, // Store URL hash for duplicate detection
-                SourceType = "url",
+                SourceType = sourceType,
                 SourceUrl = sourceUrl,
-                MimeType = "text/html", // Default to HTML for web pages
+                MimeType = mimeType ?? UrlSourceTypeClassifier.GetDefaultMimeType(sourceType),
                 TenantId = tenantId
             };
 
@@ -456,11 +462,6 @@ public class FileStorageService(
 
     private static bool RequiresExternalCleanup(FileMetadata file)
     {
-        if (!string.Equals(file.SourceType, "upload", StringComparison.OrdinalIgnoreCase))
-        {
-            return false;
-        }
-
         return string.Equals(file.Status, "processing", StringComparison.OrdinalIgnoreCase)
             || string.Equals(file.Status, "processed", StringComparison.OrdinalIgnoreCase)
             || string.Equals(file.Status, "error", StringComparison.OrdinalIgnoreCase)

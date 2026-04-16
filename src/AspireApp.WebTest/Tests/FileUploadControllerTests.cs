@@ -107,6 +107,44 @@ public sealed class FileUploadControllerTests
         }
     }
 
+    [Theory]
+    [InlineData("https://www.microsoft.com", "url")]
+    [InlineData("https://www.youtube.com/watch?v=dQw4w9WgXcQ", "youtube_video")]
+    [InlineData("https://youtu.be/dQw4w9WgXcQ", "youtube_video")]
+    [InlineData("https://www.youtube.com/@happy-gilmore/videos", "youtube_channel")]
+    public async Task UploadUrl_PersistsDetectedSourceType_AndQueuesProcessing(string url, string expectedSourceType)
+    {
+        await using var context = CreateDbContext();
+        var tenantId = "tenant-allowed";
+        var currentUser = SeedTenantMembership(context, tenantId);
+        var dataDirectory = CreateDataDirectory();
+
+        try
+        {
+            var processingCoordinator = new FakeDocumentProcessingCoordinator();
+            var controller = CreateController(context, currentUser, dataDirectory, processingCoordinator);
+
+            var result = await controller.UploadUrl(
+                new UrlUploadRequest { Url = url },
+                TestContext.Current.CancellationToken);
+
+            var ok = Assert.IsAssignableFrom<ObjectResult>(result);
+            Assert.Equal(StatusCodes.Status200OK, ok.StatusCode ?? StatusCodes.Status200OK);
+
+            var storedFile = await context.Datasources.SingleAsync(TestContext.Current.CancellationToken);
+            Assert.Equal(url, storedFile.SourceUrl);
+            Assert.Equal(expectedSourceType, storedFile.SourceType);
+            Assert.Equal(tenantId, storedFile.TenantId);
+
+            await WaitForQueuedDocumentAsync(processingCoordinator, storedFile.Id);
+            Assert.Equal([storedFile.Id], processingCoordinator.QueuedDocumentIds);
+        }
+        finally
+        {
+            DeleteDirectoryIfPresent(dataDirectory);
+        }
+    }
+
     [Fact]
     public async Task GetUploadedFiles_UsesDefaultTenant_WhenHeaderMissing()
     {
@@ -234,6 +272,40 @@ public sealed class FileUploadControllerTests
     }
 
     [Fact]
+    public async Task UploadFile_AllowsJsonPayloads()
+    {
+        await using var context = CreateDbContext();
+        var tenantId = "tenant-allowed";
+        var currentUser = SeedTenantMembership(context, tenantId);
+        var dataDirectory = CreateDataDirectory();
+
+        try
+        {
+            var processingCoordinator = new FakeDocumentProcessingCoordinator();
+            var controller = CreateController(context, currentUser, dataDirectory, processingCoordinator);
+
+            var content = """{"city":"Seattle","population":755078}"""u8.ToArray();
+            await using var stream = new MemoryStream(content);
+            IFormFile file = new FormFile(stream, 0, stream.Length, "file", "city-locations-pops.json");
+
+            var result = await controller.UploadFile(file, TestContext.Current.CancellationToken);
+
+            var ok = Assert.IsAssignableFrom<ObjectResult>(result);
+            Assert.Equal(StatusCodes.Status200OK, ok.StatusCode ?? StatusCodes.Status200OK);
+
+            var storedFile = await context.Datasources.SingleAsync(TestContext.Current.CancellationToken);
+            Assert.Equal("upload", storedFile.SourceType);
+            Assert.Equal("city-locations-pops.json", storedFile.OriginalFileName);
+
+            await WaitForQueuedDocumentAsync(processingCoordinator, storedFile.Id);
+        }
+        finally
+        {
+            DeleteDirectoryIfPresent(dataDirectory);
+        }
+    }
+
+    [Fact]
     public async Task DeleteFile_CleansProcessedArtifactsBeforeRemovingMetadata()
     {
         await using var context = CreateDbContext();
@@ -251,6 +323,45 @@ public sealed class FileUploadControllerTests
                 FilePath = dataDirectory,
                 FileHash = "HASH-PROCESSED",
                 SourceType = "upload",
+                Status = "processed",
+                TenantId = tenantId,
+                DoclingDocumentPath = Path.Combine(dataDirectory, "processed", "documents", "1", "document.json")
+            });
+            await context.SaveChangesAsync(TestContext.Current.CancellationToken);
+            var fileId = await context.Datasources.Select(file => file.Id).SingleAsync(TestContext.Current.CancellationToken);
+
+            var controller = CreateController(context, currentUser, dataDirectory, processingCoordinator);
+            var result = await controller.DeleteFile(fileId, TestContext.Current.CancellationToken);
+
+            var ok = Assert.IsAssignableFrom<ObjectResult>(result);
+            Assert.Equal(StatusCodes.Status200OK, ok.StatusCode ?? StatusCodes.Status200OK);
+            Assert.Equal([fileId], processingCoordinator.CleanedDocumentIds);
+        }
+        finally
+        {
+            DeleteDirectoryIfPresent(dataDirectory);
+        }
+    }
+
+    [Fact]
+    public async Task DeleteFile_CleansProcessedArtifacts_ForProcessedUrlSources()
+    {
+        await using var context = CreateDbContext();
+        var tenantId = "tenant-allowed";
+        var currentUser = SeedTenantMembership(context, tenantId);
+        var dataDirectory = CreateDataDirectory();
+
+        try
+        {
+            var processingCoordinator = new FakeDocumentProcessingCoordinator();
+            context.Datasources.Add(new FileMetadata
+            {
+                FileName = "youtube-source",
+                OriginalFileName = "youtube-source",
+                FilePath = string.Empty,
+                FileHash = "HASH-YOUTUBE",
+                SourceType = "youtube_video",
+                SourceUrl = "https://youtu.be/dQw4w9WgXcQ",
                 Status = "processed",
                 TenantId = tenantId,
                 DoclingDocumentPath = Path.Combine(dataDirectory, "processed", "documents", "1", "document.json")

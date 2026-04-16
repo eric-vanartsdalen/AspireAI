@@ -892,3 +892,51 @@ The entire codebase has a gap between C# upload and Python processing:
 
 **Related Decision:** .squad/decisions/inbox/bob-mvp-docs.md — Documents the MVP declaration pattern and post-MVP fix prioritization strategy
 
+
+### 2026-04-22 — Extensible URL & Document Ingestion Architecture
+
+**Context:** Eric requested support for additional document types (txt, md, docx, json) and URL ingestion including YouTube videos and channels with transcript extraction.
+
+**Analysis of Existing System:**
+- Document processing: docling_service_fallback.py already handles PDF, DOCX, TXT, MD with fallback processors
+- URL storage: iles table has source_type and source_url columns (existing infrastructure)
+- Gap: JSON file processing missing, URL content not fetched, no YouTube handling
+
+**Architecture Decision — Handler Registry Pattern:**
+Created pluggable URL handler infrastructure with explicit extensibility seams:
+- UrlHandler abstract base class defines can_handle() and etch() interface
+- FetchedContent dataclass returns extracted text + metadata + optional child URLs
+- Handlers sorted by priority (YouTube > Generic Webpage)
+- UrlContentFetcher service orchestrates handler selection
+
+**Key Pattern — Child URL Expansion:**
+YouTube channels return child_urls list (video URLs). Processing router creates new iles rows for each child, queuing them for individual transcript extraction. This allows single URL submission to ingest entire channel content.
+
+**Implementation Phases:**
+1. JSON support added to docling fallback (immediate value, low risk)
+2. URL handler infrastructure created (pp/services/url_handlers/)
+3. Processing router updated to detect source_type == "url" and fetch before docling
+4. YouTube handlers implemented with youtube-transcript-api dependency
+
+**Files Created/Modified:**
+- src/AspireApp.PythonServices/app/services/url_handlers/__init__.py
+- src/AspireApp.PythonServices/app/services/url_handlers/base.py
+- src/AspireApp.PythonServices/app/services/url_handlers/webpage.py
+- src/AspireApp.PythonServices/app/services/url_handlers/youtube.py
+- src/AspireApp.PythonServices/app/services/url_content_fetcher.py
+- src/AspireApp.PythonServices/app/services/docling_service_fallback.py (JSON handler)
+- src/AspireApp.PythonServices/app/routers/processing.py (URL fetch integration)
+- src/AspireApp.PythonServices/app/services/database_service.py (URL datasource methods)
+- src/AspireApp.Web/Controllers/FileUploadController.cs (.json extension)
+
+**Dependencies Added:**
+- httpx (async HTTP client)
+- eautifulsoup4 (HTML parsing)
+- 	rafilatura (main content extraction)
+- youtube-transcript-api (video transcripts)
+
+**Extensibility for Future:**
+- RSS feed handler: implement RssFeedHandler, return child URLs for articles
+- GitHub repo handler: parse README/docs, queue individual files
+- PDF at URL: download to temp file, route to existing PDF processing
+- Playlist handler: extract video URLs like channel handler

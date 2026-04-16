@@ -15,6 +15,8 @@ DEFAULT_SOURCE_CONFIDENCE_BY_TYPE = {
     "textbook_pdf": 0.9,
     "upload": 0.7,
     "url": 0.5,
+    "youtube_video": 0.4,
+    "youtube_channel": 0.5,
     "user_note": 0.3,
 }
 

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import os
 import sys
 import tempfile
 import unittest
@@ -22,6 +23,7 @@ from fastapi import BackgroundTasks, HTTPException
 from app.contracts import CanonicalDocument
 from app.routers import processing
 from app.services.lightrag_handoff_service import LightRagHandoffService
+from app.services.url_handlers.base import FetchedContent
 
 
 class FakeDatabaseService:
@@ -32,6 +34,8 @@ class FakeDatabaseService:
         self.processing_updates: list[dict] = []
         self.saved_pages: list[dict] = []
         self.file_record: dict | None = None
+        self.duplicate_urls: set[str] = set()
+        self.added_url_sources: list[dict] = []
 
     def get_document_by_id(self, document_id: int):
         if self.document and self.document.id == document_id:
@@ -43,6 +47,32 @@ class FakeDatabaseService:
 
     def resolve_upload_path(self, document):
         return document.file_path
+
+    def find_duplicate_by_url(self, source_url: str, tenant_id: str = "default"):
+        if source_url in self.duplicate_urls:
+            return {"source_url": source_url, "tenant_id": tenant_id}
+        return None
+
+    def add_url_datasource(
+        self,
+        source_name: str,
+        source_url: str,
+        source_type: str = "url",
+        mime_type: str | None = None,
+        status: str = "uploaded",
+        tenant_id: str = "default",
+    ) -> int:
+        self.added_url_sources.append(
+            {
+                "source_name": source_name,
+                "source_url": source_url,
+                "source_type": source_type,
+                "mime_type": mime_type,
+                "status": status,
+                "tenant_id": tenant_id,
+            }
+        )
+        return len(self.added_url_sources)
 
     def update_file_processing_results(self, **kwargs) -> None:
         self.processing_updates.append(kwargs)
@@ -276,6 +306,83 @@ class ProcessingPipelineRegressionTests(unittest.TestCase):
         for embedding in neo4j.claim_embeddings.values():
             self.assertEqual(384, len(embedding))
 
+    def test_process_document_task_fetches_classified_url_sources_and_queues_children(self):
+        document = SimpleNamespace(
+            id=77,
+            filename="happy-gilmore-channel",
+            original_filename="happy-gilmore-channel",
+            file_path="",
+            mime_type="text/html",
+            processing_status="uploaded",
+            tenant_id="tenant-a",
+            source_type="youtube_channel",
+            source_url="https://www.youtube.com/@happy-gilmore/videos",
+        )
+        db = FakeDatabaseService(document)
+        neo4j = FakeNeo4jService()
+
+        class FakeFetcher:
+            async def fetch(self, url: str):
+                return FetchedContent(
+                    text="",
+                    content_type="youtube_channel",
+                    metadata={"title": "Happy Gilmore", "source_type": "youtube_channel"},
+                    child_urls=[
+                        "https://www.youtube.com/watch?v=aaaaaaaaaaa",
+                        "https://www.youtube.com/watch?v=bbbbbbbbbbb",
+                    ],
+                )
+
+            def get_handler(self, url: str):
+                if "watch?v=" in url:
+                    return SimpleNamespace(handler_name="youtube_video")
+                return SimpleNamespace(handler_name="youtube_channel")
+
+        captured_paths: list[Path] = []
+
+        def process_document(doc, path):
+            path_value = Path(path)
+            captured_paths.append(path_value)
+            self.assertTrue(path_value.exists())
+            self.assertEqual(".md", path_value.suffix)
+            saved_text = path_value.read_text(encoding="utf-8")
+            self.assertIn("# Type: youtube_channel", saved_text)
+            self.assertIn("Queued child URLs for processing:", saved_text)
+            self.assertIn("https://www.youtube.com/watch?v=aaaaaaaaaaa", saved_text)
+            return (
+                SimpleNamespace(
+                    docling_document_path="/app/data/processed/documents/77/document.json",
+                    total_pages=1,
+                    neo4j_node_id=None,
+                    processing_metadata={"markdown_path": "/app/data/processed/documents/77/output.md"},
+                ),
+                [SimpleNamespace(page_number=1, content="Queued child URLs for processing.", metadata={"page": 1})],
+            )
+
+        docling = SimpleNamespace(process_document=process_document)
+
+        with tempfile.TemporaryDirectory() as temp_dir, \
+            patch.dict(os.environ, {"ASPIRE_DATA_PATH": temp_dir}, clear=False), \
+            patch("app.routers.processing.get_url_content_fetcher", return_value=FakeFetcher()):
+            asyncio.run(
+                processing.process_document_task(
+                    document_id=77,
+                    db=db,
+                    docling=docling,
+                    neo4j=neo4j,
+                    lightrag_handoff=FakeLightRagHandoffService(),
+                )
+            )
+
+        self.assertEqual((77, "processing", None), db.status_updates[0])
+        self.assertEqual((77, "processed", None), db.status_updates[-1])
+        self.assertEqual(2, len(db.added_url_sources))
+        self.assertEqual(
+            ["youtube_video", "youtube_video"],
+            [item["source_type"] for item in db.added_url_sources],
+        )
+        self.assertTrue(captured_paths)
+
     def test_process_document_task_marks_error_when_docling_fails(self):
         document = SimpleNamespace(
             id=7,
@@ -323,11 +430,19 @@ class ProcessingPipelineRegressionTests(unittest.TestCase):
             document_dir = Path(temp_dir) / "processed" / "documents" / "42"
             outputs_dir = document_dir / "outputs"
             outputs_dir.mkdir(parents=True, exist_ok=True)
+            url_source_path = Path(temp_dir) / "url_content" / "url_42.md"
+            url_source_path.parent.mkdir(parents=True, exist_ok=True)
+            url_source_path.write_text("# staged url content", encoding="utf-8")
             document_json_path = document_dir / "document.json"
             document_json_path.write_text("{}", encoding="utf-8")
             metadata_path = document_dir / "metadata.json"
             metadata_path.write_text(
-                json.dumps({"lightrag": {"staged_input_path": str(Path(temp_dir) / "inputs" / "000042-test.md")}}),
+                json.dumps(
+                    {
+                        "lightrag": {"staged_input_path": str(Path(temp_dir) / "inputs" / "000042-test.md")},
+                        "source_path": str(url_source_path),
+                    }
+                ),
                 encoding="utf-8",
             )
 
@@ -342,6 +457,7 @@ class ProcessingPipelineRegressionTests(unittest.TestCase):
             db.file_record = {
                 "id": 42,
                 "docling_document_path": str(document_json_path),
+                "source_url": "https://example.com/article",
             }
             neo4j = FakeNeo4jService()
             lightrag = FakeLightRagHandoffService()
@@ -359,6 +475,7 @@ class ProcessingPipelineRegressionTests(unittest.TestCase):
             self.assertEqual([42], neo4j.deleted_document_ids)
             self.assertEqual([(42, str(Path(temp_dir) / "inputs" / "000042-test.md"))], lightrag.cleaned_documents)
             self.assertFalse(document_dir.exists())
+            self.assertFalse(url_source_path.exists())
 
     def test_cleanup_document_rejects_processing_document(self):
         document = SimpleNamespace(

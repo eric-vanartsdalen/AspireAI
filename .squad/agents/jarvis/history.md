@@ -1002,3 +1002,52 @@ eo4j_service to LightRagRetriever for enrichment when LightRAG lacks scores
 
 **Status:** MVP locked; post-MVP priorities ordered; Neo4j schema investigation begins 2026-04-30
 
+
+## Learnings
+
+### 2025-01-19: URL Ingestion Architecture Design
+
+**Context:** User requested support for txt/md/docx/json uploads plus URL ingestion (web pages, YouTube videos/channels).
+
+**Architecture Decision:**
+- Designed pluggable handler architecture using Protocol pattern
+- Decouples content acquisition (fetch) from extraction (parse) from persistence
+- Handlers: FileUploadHandler, WebPageHandler, YouTubeVideoHandler, YouTubeChannelHandler, JsonHandler
+
+**Key File Paths:**
+- Design doc: src/AspireApp.PythonServices/docs/INGESTION_HANDLER_DESIGN.md
+- Decision log: .squad/decisions/inbox/jarvis-url-ingestion-architecture.md
+- Current ingestion flow: pp/routers/processing.py::process_document_task()
+- Fallback extractors: pp/services/docling_service_fallback.py (_extract_pages_pdf, _extract_pages_docx, _extract_pages_text)
+- Database entry point: pp/services/database_service.py::create_file_record() (supports source_url, source_type fields)
+- C# upload gate: src/AspireApp.Web/Controllers/FileUploadController.cs::_allowedExtensions
+
+**Current State Analysis:**
+- ✅ PDF/DOCX supported via Docling or PyPDF2/python-docx fallback
+- ⚠️ TXT/MD blocked in C# controller but fallback exists in Python
+- ❌ JSON not implemented (no structured handler)
+- ❌ URL ingestion missing (no fetch/download logic)
+
+**User Preferences:**
+- Wants extensible design for future sources (RSS, podcasts, APIs)
+- Concerned about YouTube API reliability and quota limits
+- Needs clear decision points for YouTube API key requirement
+
+**Dependency Risks:**
+- youtube-transcript-api — relies on undocumented YouTube API (may break)
+- google-api-python-client — requires API key for channel expansion
+- eautifulsoup4 — stable, low risk
+- Large JSON files could cause memory issues (need chunking strategy)
+
+**Patterns:**
+- Protocol-based handlers enable testability (mock fetch, real parse)
+- Registry pattern for handler dispatch (can_handle → get_handler)
+- Source confidence scores vary by type (YouTube: 0.4, JSON: 0.8, upload: 0.7)
+- Temp file strategy: /app/data/temp/ for fetched content, cleanup after processing
+
+**Next Steps:**
+- Phase 1: JSON support (update C# allowed extensions, implement JsonHandler)
+- Phase 2: WebPageHandler with BeautifulSoup
+- Phase 3: YouTube handlers (conditional on API key decision)
+- Update C# contracts in BrainContractModels.cs for URL ingestion requests
+

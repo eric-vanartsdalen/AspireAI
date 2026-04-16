@@ -138,6 +138,9 @@ class DoclingService:
         elif file_extension in ['.docx', '.doc'] and DOCX_AVAILABLE:
             pages = self._extract_pages_docx(file_path, pages_dir)
             processor = "python-docx"
+        elif file_extension == '.json':
+            pages = self._extract_pages_json(file_path, pages_dir)
+            processor = "json-extractor"
         else:
             # Basic text extraction for any file
             pages = self._extract_pages_text(file_path, pages_dir)
@@ -333,6 +336,70 @@ class DoclingService:
             
         except Exception as e:
             raise RuntimeError(f"Failed to process DOCX: {e}")
+
+    def _extract_pages_json(self, file_path: Path, pages_dir: Path) -> List[PageContent]:
+        """Extract pages from JSON files by recursively extracting text content"""
+        try:
+            with open(file_path, 'r', encoding='utf-8') as f:
+                data = json.load(f)
+            
+            # Convert JSON to readable text
+            content = self._json_to_text(data)
+            
+            page_metadata = {
+                "page_number": 1,
+                "processor": "json-extractor",
+                "json_type": "array" if isinstance(data, list) else "object",
+                "item_count": len(data) if isinstance(data, list) else len(data.keys()) if isinstance(data, dict) else 1
+            }
+            
+            page_content = PageContent(
+                page_number=1,
+                content=content,
+                metadata=page_metadata
+            )
+            
+            # Save page
+            page_file = pages_dir / "page_001.json"
+            with open(page_file, 'w', encoding='utf-8') as f:
+                json.dump({
+                    "page_number": 1,
+                    "content": content,
+                    "metadata": page_metadata
+                }, f, indent=2, ensure_ascii=False)
+            
+            return [page_content]
+            
+        except json.JSONDecodeError as e:
+            raise RuntimeError(f"Failed to parse JSON file: {e}")
+        except Exception as e:
+            raise RuntimeError(f"Failed to process JSON file: {e}")
+
+    def _json_to_text(self, data, prefix: str = "", max_depth: int = 10) -> str:
+        """Recursively convert JSON data to readable text"""
+        if max_depth <= 0:
+            return "[content truncated - max depth reached]"
+        
+        lines = []
+        
+        if isinstance(data, dict):
+            for key, value in data.items():
+                if isinstance(value, (dict, list)):
+                    lines.append(f"{prefix}{key}:")
+                    lines.append(self._json_to_text(value, prefix + "  ", max_depth - 1))
+                else:
+                    lines.append(f"{prefix}{key}: {value}")
+        elif isinstance(data, list):
+            for i, item in enumerate(data):
+                if isinstance(item, (dict, list)):
+                    lines.append(f"{prefix}Item {i + 1}:")
+                    lines.append(self._json_to_text(item, prefix + "  ", max_depth - 1))
+                else:
+                    lines.append(f"{prefix}- {item}")
+        else:
+            lines.append(f"{prefix}{data}")
+        
+        return "\n".join(lines)
 
     def _extract_pages_text(self, file_path: Path, pages_dir: Path) -> List[PageContent]:
         """Fallback text extraction for unsupported files"""

@@ -14,6 +14,7 @@ from ..services.lightrag_handoff_service import LightRagHandoffService
 from ..services.neo4j_service import Neo4jService
 from ..services.claim_extraction_service import ClaimExtractionService
 from ..services.embedding_service import EmbeddingService
+from ..services.url_content_fetcher import get_url_content_fetcher
 from ..models.models import BatchProcessingStartResponse, DocumentCleanupResponse, ProcessingStartResponse, ProcessingStatus
 
 router = APIRouter(prefix="/processing", tags=["processing"])
@@ -51,6 +52,75 @@ async def process_document_task(
     )
 
 
+def _fetch_url_content_sync(document, db: DatabaseService) -> Path:
+    """
+    Fetch content from a URL source and save it as a text file for processing.
+    
+    Returns the path to the saved content file.
+    """
+    import asyncio
+    
+    data_path = os.getenv("ASPIRE_DATA_PATH", "/app/data")
+    fetcher = get_url_content_fetcher(data_path)
+
+    async def _fetch_async():
+        return await fetcher.fetch(document.source_url)
+    
+    # Run async fetch in sync context
+    content = asyncio.run(_fetch_async())
+    
+    # Handle child URLs (e.g., from YouTube channels)
+    if content.has_children:
+        logger.info(f"URL {document.source_url} has {len(content.child_urls)} child URLs to ingest")
+        # Create new files entries for each child URL
+        for child_url in content.child_urls:
+            try:
+                # Check for duplicates
+                existing = db.find_duplicate_by_url(child_url, document.tenant_id)
+                if existing:
+                    logger.info(f"Skipping duplicate child URL: {child_url}")
+                    continue
+                
+                # Create new file entry for child URL
+                db.add_url_datasource(
+                    source_name=_build_source_name_from_url(child_url),
+                    source_url=child_url,
+                    source_type=_classify_url_source_type(fetcher, child_url),
+                    status="uploaded",
+                    tenant_id=document.tenant_id,
+                )
+                logger.info(f"Queued child URL for processing: {child_url}")
+            except Exception as e:
+                logger.warning(f"Failed to queue child URL {child_url}: {e}")
+    
+    # Save fetched content to a text file for docling processing
+    data_path = Path(os.getenv("ASPIRE_DATA_PATH", "/app/data"))
+    url_content_dir = data_path / "url_content"
+    url_content_dir.mkdir(parents=True, exist_ok=True)
+    
+    content_file = url_content_dir / f"url_{document.id}.md"
+    content_text = content.text.strip()
+    if content.has_children and not content_text:
+        child_urls = "\n".join(f"- {child_url}" for child_url in (content.child_urls or []))
+        content_text = f"Queued child URLs for processing:\n{child_urls}"
+
+    if not content_text:
+        raise RuntimeError(f"URL content extraction returned no text for {document.source_url}")
+    
+    # Write content with metadata header
+    with open(content_file, "w", encoding="utf-8") as f:
+        f.write(f"# Source: {document.source_url}\n")
+        f.write(f"# Type: {content.metadata.get('source_type', content.content_type)}\n")
+        if content.metadata.get("title"):
+            f.write(f"# Title: {content.metadata['title']}\n")
+        f.write("\n---\n\n")
+        f.write(content_text)
+    
+    logger.info(f"Saved URL content to {content_file} ({len(content_text)} chars)")
+    
+    return content_file
+
+
 def _process_document_task_sync(
     document_id: int,
     db: DatabaseService,
@@ -71,7 +141,13 @@ def _process_document_task_sync(
         if mark_processing_started:
             db.update_file_status(document_id, "processing")
 
-        resolved_file_path = db.resolve_upload_path(document)
+        # Handle URL sources - fetch content before docling processing
+        document_source_url = getattr(document, "source_url", None)
+        document_file_path = getattr(document, "file_path", None)
+        if document_source_url and not document_file_path:
+            resolved_file_path = _fetch_url_content_sync(document, db)
+        else:
+            resolved_file_path = db.resolve_upload_path(document)
         
         # Process with docling (full or fallback)
         processed_doc, pages = docling.process_document(document, resolved_file_path)
@@ -314,6 +390,21 @@ def _resolve_processed_document_directory(document_id: int, docling_document_pat
     return data_root / "processed" / "documents" / str(document_id)
 
 
+def _classify_url_source_type(fetcher, url: str) -> str:
+    handler = fetcher.get_handler(url)
+    if handler is None:
+        return "url"
+
+    return "url" if handler.handler_name == "webpage" else handler.handler_name
+
+
+def _build_source_name_from_url(url: str) -> str:
+    safe_value = url.replace("https://", "").replace("http://", "").strip("/")
+    safe_value = safe_value.replace("/", "_").replace("?", "_").replace("&", "_").replace("=", "_")
+    safe_value = safe_value or "url"
+    return safe_value[:120]
+
+
 def _delete_processed_document_directory(document_directory: Path) -> list[str]:
     if not document_directory.exists():
         return []
@@ -442,6 +533,12 @@ async def cleanup_document(
         )
         neo4j.delete_document_graph(document_id)
         removed_paths = cleanup_result.get("removed_paths", [])
+        source_path = metadata.get("source_path")
+        if file_record.get("source_url") and isinstance(source_path, str):
+            source_path_value = Path(source_path)
+            if source_path_value.exists():
+                source_path_value.unlink()
+                removed_paths.append(str(source_path_value))
         removed_paths.extend(
             _delete_processed_document_directory(
                 _resolve_processed_document_directory(document_id, file_record.get("docling_document_path"))

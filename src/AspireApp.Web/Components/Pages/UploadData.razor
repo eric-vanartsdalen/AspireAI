@@ -756,7 +756,7 @@ else
     <!-- File Upload Section -->
     <div class="phase-info">
         <h4><i class="bi bi-file-earmark-arrow-up"></i> Upload Documents</h4>
-        <p>Upload documents for processing and analysis. Max size: 10MB. Accepted formats: .pdf, .docx, .xlsx</p>
+        <p>Upload documents for processing and analysis. Max size: 10MB. Accepted formats: .pdf, .docx, .txt, .md, .json</p>
     </div>
 
     @if (!_uploadControlsReady)
@@ -769,7 +769,7 @@ else
     {
         <label class="form-label" for="fileInput">Choose File</label>
         <InputFile OnChange="HandleFileSelected"
-                   accept=".pdf,.docx,.xlsx"
+                   accept=".pdf,.docx,.txt,.md,.json"
                    class="form-control"
                    id="fileInput"
                    data-testid="upload-file-input" />

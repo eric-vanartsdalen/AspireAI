@@ -20,7 +20,7 @@ public class FileUploadController(
     private readonly IConfiguration _configuration = configuration;
     private readonly IHostApplicationLifetime _applicationLifetime = applicationLifetime;
 
-    private readonly string[] _allowedExtensions = [".pdf", ".docx", ".txt", ".md"];
+    private readonly string[] _allowedExtensions = [".pdf", ".docx", ".txt", ".md", ".json"];
     private readonly long _maxFileSize = configuration.GetValue<long?>("FileUpload:MaxFileSize") ?? 10485760;
 
     // Fix for CA1873: Only evaluate expensive arguments if logging is enabled.
@@ -259,19 +259,29 @@ public class FileUploadController(
 
             // Create a friendly name from URL
             var fileName = GenerateFileNameFromUrl(uri);
+            var sourceType = UrlSourceTypeClassifier.Classify(request.Url);
 
             // Add URL metadata to database with hash
             var fileMetadata = await _fileStorageService.AddUrlAsync(
                 fileName,
                 request.Url,
+                sourceType,
+                UrlSourceTypeClassifier.GetDefaultMimeType(sourceType),
                 "uploaded",
                 tenantId);
 
             if (_logger.IsEnabled(LogLevel.Information))
             {
-                _logger.LogInformation("Website URL added successfully: {Url}, ID: {Id}, Hash: {Hash}, Tenant: {TenantId}",
-                    request.Url, fileMetadata.Id, urlHash, tenantId);
+                _logger.LogInformation("Website URL added successfully: {Url}, ID: {Id}, Hash: {Hash}, Tenant: {TenantId}, SourceType: {SourceType}",
+                    request.Url, fileMetadata.Id, urlHash, tenantId, sourceType);
             }
+
+            var automaticProcessing = await _fileStorageService.TryStartAutomaticProcessingAsync(fileMetadata.Id, cancellationToken);
+            var message = automaticProcessing.Attempted
+                ? automaticProcessing.Started
+                    ? "Website URL added successfully. Processing started automatically."
+                    : "Website URL added successfully, but automatic processing could not be started."
+                : "Website URL added successfully.";
 
             return Ok(new
             {
@@ -282,8 +292,9 @@ public class FileUploadController(
                 id = fileMetadata.Id,
                 uploadedAt = fileMetadata.UploadedAt,
                 status = fileMetadata.Status,
+                sourceType = fileMetadata.SourceType,
                 fileHash = urlHash,
-                message = "Website URL added successfully."
+                message
             });
         }
         catch (Exception ex)

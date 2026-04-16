@@ -25,5 +25,13 @@ pytest==9.0.*
 # Agent framework for Phase 3b Critique mode (PydanticAI - swappable design)
 pydantic-ai==0.0.*
 
+# URL content extraction
+httpx==0.28.*
+beautifulsoup4==4.13.*
+trafilatura==2.*
+
+# YouTube support
+youtube-transcript-api==0.8.*
+
 # Note: docling and docling-ibm-models can cause long build times due to CUDA dependencies
 # They will be installed in the full Dockerfile with proper timeout handling
