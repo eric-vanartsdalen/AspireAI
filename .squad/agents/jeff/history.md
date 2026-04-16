@@ -1778,3 +1778,12 @@ The failing UI test checks `Assert.Equal("uploaded", uploadedFile.Status)` at li
 - Python gateway: `src/AspireApp.ApiService/Services/BrainBackendClient.cs` (request routing)
 
 **Status:** MVP locked; post-MVP priorities ordered; ready for Phase 3c investigation kickoff after P3b (2026-04-30)
+
+
+## Learnings
+
+### 2026-04-16 - UploadData web-source display semantics
+- Keep stored source taxonomy explicit: `url`, `youtube_video`, and `youtube_channel` remain distinct persisted values.
+- Treat those three source types as a shared WEB display family in the UploadData table via `UrlSourceTypeClassifier.IsWebSourceType()` plus local UI helpers in `src\\AspireApp.Web\\Components\\Pages\\UploadData.razor(.cs)`.
+- Focused regression coverage lives in `src\\AspireApp.WebTest\\Tests\\UploadDataTests.cs` and asserts WEB badge, globe icon, and URL-cell rendering for all web-backed source types.
+

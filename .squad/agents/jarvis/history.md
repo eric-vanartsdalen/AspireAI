@@ -9,6 +9,29 @@
 
 <!-- Append new learnings below. Each entry is something lasting about the project. -->
 
+### 2026-04-22 — YouTube Channel Ingestion Needs Consent-Resilient Resolution + Feed-First Expansion
+
+**Problem:**
+- Public YouTube channel URLs like `https://www.youtube.com/@csharpfritz/videos` can redirect non-browser fetches through `consent.youtube.com`, which made the channel handler parse the wrong HTML and fail with "No videos found".
+- The old handler depended only on scraping `/videos` page HTML, which is brittle against consent interstitials and modern YouTube layout changes.
+
+**Fix:**
+- Updated `YouTubeChannelHandler` to send consent-bypass cookies/headers, detect consent interstitials explicitly, and retry the `continue=` URL before parsing.
+- Resolve the canonical `UC...` channel ID from page metadata, fetch recent uploads from the public RSS feed (`/feeds/videos.xml`), then supplement from page HTML video IDs for extra resilience and deduping.
+- Preserve explicit failure semantics: unresolved channels raise `Could not resolve YouTube channel ...`; resolved-but-empty channels still raise `No videos found on YouTube channel ...`.
+
+**Result:**
+- Handle-based channel URLs expand into child video URLs reliably without an API key.
+- Live smoke validation now succeeds for `@csharpfritz`, and focused regression tests cover consent retry + unresolved-channel failure behavior.
+
+**Key Pattern:**
+- **Feed-first public channel expansion:** For YouTube channel ingestion without API keys, resolve the canonical channel ID from HTML, then use the public RSS feed for stable video discovery and keep HTML parsing as a fallback/supplement only.
+- **Consent-aware fetch path:** Detect `consent.youtube.com` responses explicitly and retry the decoded `continue` target with stable consent cookies instead of treating the interstitial HTML as channel content.
+
+**Key file paths:**
+- `src/AspireApp.PythonServices/app/services/url_handlers/youtube.py`
+- `src/AspireApp.PythonServices/tests/test_processing_pipeline_regression.py`
+
 ### 2026-04-16 — Team Sync: Follow-Up Chat History + Conversation Persistence
 
 **Context:** Jeff wired gateway history + persisted assistant metadata. Buster validated regression coverage. Cross-service contract alignment proven (54 Python + 44 .NET tests passing).
