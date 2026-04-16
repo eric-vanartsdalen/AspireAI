@@ -2,6 +2,7 @@
 
 > Shared decision log. All agents read this before starting work.
 > Scribe merges new decisions from `.squad/decisions/inbox/` after each session.
+> **Note (2026-04-21T21:00:00Z):** Merged 1 inbox decision from MVP documentation & post-MVP fix ordering session (Bob, Verbal). Key outcome: Established MVP Declaration Pattern with clear milestone markers (functional gateway-routed chat end-to-end works), documented working features + known limitations side-by-side, captured and ordered two post-MVP fixes by user impact (conversation context + evidence persistence). Phase 3 status updated from "in progress" to "MVP Achieved"; post-MVP work explicitly scoped with technical ownership (Jeff + Jarvis for context; Buster + Jeff for evidence). Documentation now reflects honest product state. Inbox cleared.
 > **Note (2026-04-15T06:58:08Z):** Merged 3 inbox decisions from failing test fix session (Buster, Jeff, Eric). Key outcome: Fixed upload/e2e test failures identified as test-side timing assumptions; Python processing moved off FastAPI event loop via `asyncio.to_thread()`; user directive "no GitHub Issues" recorded. All tests passing (8/8). Consolidated into 3 decisions: (1) User Directive — No GitHub Issues, (2) Upload Test Scaffolding Async Dispatch, (3) Python Processing Off Event Loop. Status: Tests clean, inbox cleared, decisions merged.
 > **Note (2026-04-17T23:50:00Z):** Merged 2 inbox decisions from roadmap/Tasks.md update session (Bob, Buster). Key outcome: P2-B gate closure confirmed (confidence fail-closed + Neo4j enrichment verified); P2-C unblocked (embedding infrastructure identified as blocker, not code); Phase 3 critical path locked (agent framework selection is BLOCKING GATE with 2026-04-24 decision deadline). Contradiction detection deferred to Phase 3 Critic Agent integration. No exact duplicates found. Inbox cleared.
 > **Note (2026-04-05T21:33:20Z):** Merged 18 inbox decisions from auth documentation and QA validation (Jeff, Warden, Bob, Buster). Consolidated Bob's UX revision + Buster's multi-gate approval into a single "Mock Pluggable Auth Slice" decision. No duplicates found. Inbox cleared.
@@ -20,6 +21,7 @@
 > **Note (2026-04-15T19:37:41Z):** Merged 4 inbox decisions from Critique Mode UI product layer + test coverage batch (Jeff, Buster). Key outcomes: (1) Critique-mode toggle enabled in `Chat.razor`; `disabled` attribute removed. (2) Reasoning steps render with progress details using framework-agnostic CSS classes. (3) Mode wiring to `BrainChatClient.ChatAsync` confirmed working. (4) UI/product test coverage (8 tests + 1 persistence test) now all passing (9/9 after Jeff's test harness fix). (5) Residual risk noted: no dedicated test yet exercises mode switching after loading conversation (non-blocking, for Phase 3b polish). No exact duplicates found. Inbox cleared.
 > **Note (2026-04-15T20:25:34Z):** Merged 17 inbox decisions from planning doc reconcile + test failure triage session (Verbal, Buster, Jeff, Bob, Jarvis, Warden). Key outcomes: (1) Planning docs reframed to reflect Phase 1/2 foundation completion (gateway, contracts, retrieval, chat UI all complete; not "future setup"); next honest milestone is "Phase 3 beta: prove one end-to-end Aspire chat flow with citations/confidence in Web UI". (2) Test failure triage: 6 failures → 3 root causes: upload status race (test assumption fix), Python processing timeout (infrastructure investigation), auth split-brain (endpoint wiring fix). (3) Chat-mode regression coverage gap identified (Regular → Critique → Regular); added to Phase 3b roadmap with honest persistence boundary wording. (4) Phase 3 critical path locked: agent framework selection (PydanticAI) is BLOCKING GATE with 2026-04-24 decision deadline. (5) Webtest fixture guard decision: skip gracefully when Aspire health checks fail. (6) Auth split-brain pattern diagnosed; hard-navigation proof recommended over passive UI observation. (7) Planning document roles clarified (Plan.md = active roadmap, Tasks.md = execution tracker, Roadmap.md = historical legacy). No exact duplicates found. Inbox cleared.
 > **Note (2026-04-15T21:17:30Z):** Merged 3 inbox decisions from critique-mode configuration failure fix session (Jarvis, Jeff, Buster). Key outcome: Fixed deterministic critique-mode config failure across three seams: (1) Python PydanticAI provider now uses explicit Ollama path instead of late env mutation. (2) .NET gateway/Web clients preserve downstream HTTP errors and disable unsafe POST retries. (3) Regression coverage consolidates all three seams with evidence paths. No exact duplicates found. Inbox cleared. See session log `2026-04-15T21-17-30Z-critique-mode-fix.md` and orchestration logs for details.
+> **Note (2026-04-21T21:00:00Z):** Merged 1 inbox decision from MVP documentation & post-MVP fix ordering session (Bob, Verbal). Key outcome: Established MVP Declaration Pattern with clear milestone markers (functional gateway-routed chat end-to-end works), documented working features + known limitations side-by-side, captured and ordered two post-MVP fixes by user impact (conversation context + evidence persistence). Phase 3 status updated from "in progress" to "MVP Achieved"; post-MVP work explicitly scoped with technical ownership (Jeff + Jarvis for context; Buster + Jeff for evidence). Documentation now reflects honest product state. Inbox cleared.
 
 <!-- Decisions are appended below. Each entry starts with ## -->
 
@@ -1924,6 +1926,133 @@ Approve the critique-mode UI batch. The revised stubs compile and the targeted c
 - **Jeff (.NET):** Test harness fix approved; product implementation complete
 - **Jarvis (Python):** Critique reasoning pipeline ready to feed reasoning steps into UI display
 - **Bob (Architecture):** Swappable agent framework validated in C# layer
+
+## MVP Documentation Pattern — Clear State + Ordered Next Steps — Bob — 2026-04-21
+
+**Author:** Bob (Lead / Architect)  
+**Status:** APPROVED  
+**Scope:** MVP milestone declaration, feature documentation, post-MVP fix prioritization
+
+### Decision
+
+When a product reaches an MVP milestone, update all planning documentation simultaneously to:
+1. Mark MVP achievement explicitly with clear criteria (what works end-to-end)
+2. Document working features and known limitations side-by-side
+3. Add ordered "Next Steps" section with priority ranking and technical scope
+4. Update phase status tables to reflect honest completion status
+
+### Context
+
+AspireAI reached functional MVP state (gateway-routed chat with Regular mode works end-to-end: document upload → knowledge graph → retrieval-augmented chat with citations), but documentation still reflected "Phase 3 in progress" status without clear milestone markers.
+
+Two critical product weaknesses were identified:
+1. Conversation context not passed to backend on follow-up questions
+2. Gateway evidence (citations/confidence) not persisted with conversation messages
+
+These needed to be captured as explicit, ordered next steps rather than lost in general "remaining work" lists.
+
+### Rationale
+
+**Problem:** Vague "still working" status without MVP declaration creates confusion:
+- Stakeholders cannot distinguish beta from shippable product
+- Team priorities drift because there is no clear "what's next" ordering
+- Real achievements are undersold, eroding confidence
+- Documentation-code drift compounds over time
+
+**Solution Pattern — MVP Declaration:**
+
+### 1. Mark Achievement Clearly
+
+```markdown
+## Current State: Functional MVP ✅
+
+**What's Working:**
+- Core user flow works end-to-end
+- Feature A, Feature B, Feature C operational
+
+**Known Limitations (Next Priorities):**
+1. Specific weakness with user impact
+2. Another weakness with user impact
+```
+
+### 2. Order Next Steps by Priority
+
+Not just a bullet list — numbered priorities with:
+- User impact statement
+- Technical scope (files/contracts affected)
+- Ownership assignment
+
+### 3. Update Phase Tables Honestly
+
+| Phase | Focus | Status |
+|-------|-------|--------|
+| 3 | Ship MVP Agentic Slice | ✅ **MVP Achieved** (post-MVP fixes in progress) |
+
+### Implementation (2026-04-21)
+
+**Files Updated:**
+
+- **README.md:** Added "Current State: Functional MVP ✅" section; listed working features (multi-conversation chat, gateway routing, citations, auth) and known limitations with clear problem statements
+- **roadmap/Tasks.md:** Updated status banner to "MVP ACHIEVED ✅"; added "Next Steps: Post-MVP Fixes" section with two ordered priorities
+- **roadmap/Plan.md:** Updated "Current Execution Snapshot" to declare MVP achievement; marked Phase 0 complete; updated Phase 3 status to "MVP Achieved" with post-MVP fixes in progress
+- **Session plan.md:** Updated "Current State Assessment" to reflect MVP achievement; added "Post-MVP High-Priority Fixes" section with two ordered items
+
+### Post-MVP Fixes (Ordered by User Impact)
+
+#### 1. Conversation Context Not Passed on Follow-Ups (HIGH PRIORITY)
+
+**Problem:** When a user references a prior question after uploading new documents, the LLM doesn't receive the earlier conversation history. Each question is treated in isolation.
+
+**Impact:** Users cannot build multi-turn reasoning ("What did Q2 say?" → upload Q3 → "What changed since my last question?").
+
+**Technical Scope:**
+- Update Python `/brain/chat` to accept `conversation_history: List[ChatMessage]`
+- Update C# `BrainChatClient` to send full conversation history from Blazor
+- Modify Python reasoning layer to include conversation context in augmented prompt
+- Update `BrainChatRequest` contract (backward-compatible: default to empty list)
+
+**Owner:** Jeff (C# client changes) + Jarvis (Python reasoning layer changes)
+
+#### 2. Gateway Evidence Not Persisted with Messages (HIGH PRIORITY)
+
+**Problem:** Backend brain returns citations/confidence/reasoning_steps in `BrainChatResponse`, but this metadata is not saved with conversation messages in Postgres. Reopening a saved conversation loses all evidence display.
+
+**Impact:** Citations vanish after session ends. The "brain" appears less transparent because source attribution disappears when users return to old conversations.
+
+**Technical Scope:**
+- Add `evidence_metadata` (nullable text/jsonb) column to `chat_messages` table
+- Update `ChatConversationService.AddMessageAsync` to persist evidence metadata
+- Update `Chat.razor.cs` to pass `BrainChatResponse` evidence when saving assistant messages
+- Update `ChatConversationMessageRecord` to include evidence for retrieval
+- Update `Chat.razor` to render citations from persisted evidence on conversation reload
+- Database migration script
+
+**Owner:** Jeff (entity/service/UI changes) + Buster (migration + regression tests)
+
+### Why This Pattern Matters
+
+1. **Honest Milestone Tracking:** Phase tables reflect real completion, not optimistic "in progress"
+2. **Prioritized Work:** Ordered next steps prevent priority drift
+3. **Stakeholder Clarity:** "MVP achieved" signals shippable product state
+4. **Team Alignment:** Technical scope and ownership assignments eliminate ambiguity
+5. **Documentation Hygiene:** Regular reconciliation prevents code-doc drift
+
+### Anti-Patterns to Avoid
+
+❌ **"Phase 3 still in progress"** without distinguishing MVP-complete from post-MVP polish  
+❌ **Flat bullet lists** of "remaining work" without priority ordering  
+❌ **Vague problem statements** ("improve memory") instead of user-impact descriptions  
+❌ **Missing technical scope** — priorities without implementation guidance become stale  
+❌ **Claiming MVP** without documenting known limitations side-by-side with achievements
+
+### Related
+
+- `README.md` — MVP declaration and known limitations
+- `roadmap/Tasks.md` — Post-MVP fixes with technical scope
+- `roadmap/Plan.md` — Phase 3 MVP achievement gates
+
+---
+
 # Planning Doc Roles After BRAIN Pivot
 
 **Author:** Bob (Lead / Architect)  

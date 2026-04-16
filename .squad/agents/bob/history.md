@@ -324,6 +324,103 @@ Execute Option 1 (P2-A) → Option 2 (round-trip) → Option 3 (confidence). Thi
 
 **Next:** Data layer now ready for Jarvis (Python schema) and Buster (QA validation) to close schema alignment and contract audit gaps.
 
+### 2026-04-16 — MVP Documentation & Post-MVP Prioritization Session
+
+**Scope:** MVP closure documentation and elevation of post-MVP fixes as highest-priority next steps (coordinated with Verbal + Coordinator).
+
+**Session Type:** Cross-agent decision consolidation (Bob lead, Verbal review, Coordinator SQL tracking)
+
+**What I Did:**
+1. Updated `README.md` to reflect AspireAI as a **functional MVP**
+   - Documented working features: document upload, chat interface, Neo4j knowledge graph integration, local auth
+   - Established clarity on product stage for future external communication
+   - Marked limitations alongside features for honest stakeholder understanding
+
+2. Updated `roadmap/Tasks.md` with post-MVP priority elevation
+   - Marked `mvp-conversation-context-memory` as **P1-immediate** 
+   - Marked `mvp-evidence-persistence` as **P1-immediate**
+   - Documented rationale: user-facing weaknesses identified post-MVP validation
+   - Sequenced: complete P3b critique UI phase → then tackle memory + evidence in Phase 3c
+
+3. Updated `roadmap/Plan.md` session plan
+   - Incorporated post-MVP learnings for future reference
+   - Documented context gaps and team transition to depth-focused work
+   - Noted shift from feature breadth to known-issue resolution
+
+**Coordination Completed:**
+- ✅ Verbal reviewed and confirmed prioritization rationale
+- ✅ Coordinator SQL-tracked memory + evidence tasks (blocked on P3b completion)
+- ✅ No blocking gates for next phase; team can proceed in parallel
+
+**Key Pattern Recognition:**
+- MVP is **live and functional**; no architectural gates prevent user engagement
+- Post-MVP priorities are **data-driven** (feedback from usage) not speculative
+- Conversation context memory and evidence persistence address real UX gaps
+- P3b critique UI completion unblocks higher-value engineering in Phase 3c
+- Team now shifts toward **depth** (fixing known issues) rather than **breadth** (new features)
+
+**Status:** MVP documentation complete; post-MVP priorities locked; ready for P3b → Phase 3c transition
+
+### 2026-04-21 — MVP Documentation Pattern: Clear State + Ordered Next Steps
+
+**Scope:** Product milestone documentation; roadmap honesty; stakeholder clarity after achieving functional MVP.
+
+**Decision:** When a product reaches MVP milestone, update all planning docs simultaneously to:
+1. Mark achievement explicitly with clear success criteria
+2. Document working features AND known limitations side-by-side
+3. Add ordered "Next Steps" with priority, technical scope, and ownership
+4. Update phase tables to reflect honest completion status (not vague "in progress")
+
+**Context:** AspireAI had reached functional MVP (gateway-routed chat with Regular mode works end-to-end: upload → knowledge graph → retrieval-augmented chat with citations), but docs still said "Phase 3 in progress" without clear milestone markers. Two critical product weaknesses identified by Eric needed explicit ordering, not buried in "remaining work."
+
+**Pattern Applied:**
+
+```markdown
+## Current State: Functional MVP ✅
+
+**What's Working:**
+- Core user flow end-to-end
+- Feature A, B, C operational
+
+**Known Limitations (Next Priorities):**
+1. Problem with user impact statement
+2. Another problem with user impact statement
+```
+
+**Files Updated:**
+- README.md: Added MVP declaration + working features + known limitations
+- roadmap/Tasks.md: "MVP ACHIEVED ✅" banner + ordered post-MVP fixes (high priority)
+- roadmap/Plan.md: Phase 3 marked "MVP Achieved"; Phase 0 marked complete
+- session plan.md: Current state reflects MVP milestone
+
+**Post-MVP Fixes (Ordered by User Impact):**
+1. **Conversation Context Not Passed on Follow-Ups** (HIGH PRIORITY) — Users can't build multi-turn reasoning. Owner: Jeff + Jarvis
+2. **Gateway Evidence Not Persisted** (HIGH PRIORITY) — Citations vanish after session ends. Owner: Jeff + Buster
+
+**Why This Pattern Matters:**
+- Honest milestone tracking: Phase tables reflect real completion
+- Prioritized work: Ordered next steps prevent drift
+- Stakeholder clarity: "MVP achieved" signals shippable product state
+- Team alignment: Technical scope + ownership eliminate ambiguity
+- Documentation hygiene: Regular reconciliation prevents code-doc drift
+
+**Anti-Patterns to Avoid:**
+- ❌ "Phase 3 still in progress" without MVP distinction
+- ❌ Flat bullet lists of "remaining work" without ordering
+- ❌ Vague problem statements ("improve memory")
+- ❌ Missing technical scope on priorities
+- ❌ MVP claims without documenting limitations side-by-side
+
+**Learnings:**
+1. **Milestone declarations need honest limitations:** If you claim MVP, document known gaps explicitly. Builds credibility, not erosion.
+2. **Prioritized work unblocks team focus:** Numbered next steps with technical scope (files affected, contracts involved) become actionable execution plans, not aspirational lists.
+3. **Documentation reconciliation is architectural work:** Planning docs drift from code during pivots. Regular audits (quarterly?) against implementation surfaces prevent maintainers from prioritizing superseded work.
+
+**Key Files:**
+- `README.md`
+- `roadmap/Plan.md`
+- `roadmap/Tasks.md`
+
 ### 2026-04-05 — BRAIN Pivot Architectural Assessment Complete
 
 **Scope:** Bob took revision ownership after Buster rejected Jeff's `AspireDashboardLoads` test.
@@ -530,6 +627,39 @@ Execute Option 1 (P2-A) → Option 2 (round-trip) → Option 3 (confidence). Thi
 
 **Key Learning:** For Blazor Server UI tests, always gate on URL settling before polling titles. The `<PageTitle>` component sets title asynchronously after the SignalR circuit completes.
 
+### 2026-04-21 — MVP Documentation Pattern & Post-MVP Fix Prioritization
+
+**Context:** AspireAI reached functional MVP state (gateway-routed chat with document upload → knowledge graph → retrieval-augmented response end-to-end). However, documentation still read "Phase 3 in progress" without declaring the milestone. Eric flagged this and identified two user-facing weaknesses that needed explicit prioritization.
+
+**Decision Pattern Established:** When product reaches MVP, simultaneously:
+1. Mark achievement clearly with criteria (what works end-to-end, what doesn't)
+2. Document known limitations side-by-side with achievements
+3. Create ordered "Next Steps" section with priority ranking, technical scope, and ownership
+4. Update phase status tables to reflect honest completion state
+
+**Implementation (2026-04-21):**
+- Updated `README.md`: Added "Current State: Functional MVP ✅" section with working features (multi-conversation chat, gateway routing, citations, auth) and known limitations
+- Updated `roadmap/Tasks.md`: Changed status from "in progress" to "MVP ACHIEVED ✅", added two ordered post-MVP fixes
+- Updated `roadmap/Plan.md`: Marked Phase 0 complete, Phase 3 "MVP Achieved" with post-MVP fixes in progress
+- Added explicit ordering of post-MVP fixes by user impact:
+  - **#1 (HIGH):** Conversation context not passed on follow-ups → prevents multi-turn reasoning
+  - **#2 (HIGH):** Gateway evidence (citations/confidence) not persisted → evidence vanishes when users return to conversations
+- Documented technical scope and ownership: Jeff + Jarvis (context), Buster + Jeff (evidence)
+
+**Why This Pattern Matters:**
+- Vague "still working" status prevents stakeholders from distinguishing beta from shippable product
+- Ordered next steps prevent priority drift that happens when "remaining work" is unranked
+- Real achievements get undersold; documentation-code drift compounds
+- Technical scope + ownership eliminate ambiguity and blocking on unclear prioritization
+
+**Key Files:**
+- `README.md` — MVP declaration
+- `roadmap/Tasks.md` — Post-MVP fixes with scope
+- `roadmap/Plan.md` — Phase status
+- `.squad/decisions.md` — Pattern decision entry
+
+**Related Decision:** `.squad/decisions.md` — "MVP Documentation Pattern — Clear State + Ordered Next Steps"
+
 **Key Files:**
 - Test: `src/AspireApp.WebTest/Tests/BasicAspireAppHostTests.cs`
 - Fixture: `src/AspireApp.WebTest/Fixtures/TestFixture.cs`
@@ -727,3 +857,38 @@ The entire codebase has a gap between C# upload and Python processing:
 **Key Outcome:** Phase 3 critical path locked with agent framework selection (PydanticAI) as BLOCKING GATE, decision deadline 2026-04-24. 7 gates cannot start until framework chosen.
 
 **Related:** Orchestration logs created (one per agent). Session log at `.squad/log/2026-04-15T20-25-34Z-planning-doc-reconcile.md`. 17 inbox decisions merged into `.squad/decisions.md`.
+
+
+### 2026-04-21 — MVP Documentation Update: Clear Current State and Next Priorities
+
+**Context:** Product owner Eric identified that the application had reached a functional MVP state but documentation still reflected beta/in-progress status. Two critical weaknesses were identified that needed to be captured as explicit next steps.
+
+**Action:** Updated core documentation (README, roadmap/Tasks.md, roadmap/Plan.md, session plan.md) to:
+1. Mark MVP achievement clearly (gateway-routed Regular mode chat works end-to-end with citations)
+2. Document what's working (multi-conversation persistence, authentication, knowledge graph ingestion, citation display)
+3. Add "Next Steps: Post-MVP Fixes" section with two high-priority items ordered by user impact
+4. Update phase status tables to reflect Phase 0 complete, Phases 1-2 complete, Phase 3 MVP achieved
+
+**Post-MVP Fixes Identified:**
+1. **Conversation context not passed on follow-ups** — When users reference prior questions after uploading new documents, the LLM doesn't receive conversation history to re-answer with new data
+2. **Gateway evidence not persisted** — Citations/confidence/reasoning_steps from backend brain responses are not saved with conversation messages; reopening a conversation loses the evidence metadata
+
+**Why This Matters:** 
+- Documentation-code drift erodes stakeholder confidence and misaligns priorities
+- Vague "still working on Phase 3" status masks real achievement and obscures actionable next steps
+- Unstructured fix lists become stale; ordered priorities with technical scope keep work focused
+
+**Pattern — MVP Declaration Criteria:**
+- Core user flow works end-to-end (document upload → knowledge graph → chat with citations)
+- Known limitations are documented with user impact, not hidden
+- Next steps are ordered by priority with clear ownership and technical scope
+- Phase summary tables reflect honest completion status
+
+**Files Updated:**
+- README.md — Added "Current State: Functional MVP" section with working features and known limitations
+- oadmap/Tasks.md — Updated status to MVP achieved, added "Next Steps: Post-MVP Fixes" section with ordered priorities
+- oadmap/Plan.md — Updated execution snapshot and Phase 3 status to MVP achieved with post-MVP fixes in progress
+- Session plan.md — Updated current state assessment to reflect MVP achievement and post-MVP priorities
+
+**Related Decision:** .squad/decisions/inbox/bob-mvp-docs.md — Documents the MVP declaration pattern and post-MVP fix prioritization strategy
+
