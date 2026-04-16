@@ -129,7 +129,173 @@ public sealed class UploadDataTests : IDisposable
 
                 Assert.NotNull(urlCell);
                 Assert.Contains(sourceUrl, urlCell!.TextContent);
+
+                var refreshButton = row.QuerySelector(".refresh-web-source-button");
+                Assert.NotNull(refreshButton);
+                Assert.False(refreshButton!.HasAttribute("disabled"));
+                Assert.Contains("Refresh", refreshButton!.TextContent);
             });
+        }
+        finally
+        {
+            DeleteDirectoryIfPresent(dataDirectory);
+        }
+    }
+
+    [Theory]
+    [InlineData("url", "error", false)]
+    [InlineData("youtube_video", "processed", false)]
+    [InlineData("youtube_channel", "processing", true)]
+    public async Task UploadData_SetsRefreshActionState_ForWebBackedStatuses(string sourceType, string status, bool expectedDisabled)
+    {
+        await using var context = CreateDbContext();
+        var tenantId = "tenant-allowed";
+        var currentUser = SeedTenantMembership(context, tenantId);
+        var dataDirectory = CreateDataDirectory();
+
+        try
+        {
+            context.Datasources.Add(new web::AspireApp.Web.Data.FileMetadata
+            {
+                FileName = "refreshable-web-source",
+                OriginalFileName = "refreshable-web-source",
+                FilePath = string.Empty,
+                FileHash = "HASH-STATUS",
+                SourceType = sourceType,
+                SourceUrl = "https://contoso.example/docs",
+                Status = status,
+                TenantId = tenantId
+            });
+            await context.SaveChangesAsync(XunitTestContext.Current.CancellationToken);
+
+            var cut = await RenderUploadDataAsync(context, currentUser, dataDirectory);
+
+            cut.WaitForAssertion(() =>
+            {
+                var refreshButton = cut.Find(".refresh-web-source-button");
+                Assert.Equal(expectedDisabled, refreshButton.HasAttribute("disabled"));
+            });
+        }
+        finally
+        {
+            DeleteDirectoryIfPresent(dataDirectory);
+        }
+    }
+
+    [Fact]
+    public async Task UploadData_RendersRefreshAction_OnlyForWebBackedSources()
+    {
+        await using var context = CreateDbContext();
+        var tenantId = "tenant-allowed";
+        var currentUser = SeedTenantMembership(context, tenantId);
+        var dataDirectory = CreateDataDirectory();
+
+        try
+        {
+            context.Datasources.AddRange(
+                new web::AspireApp.Web.Data.FileMetadata
+                {
+                    FileName = "web-source",
+                    OriginalFileName = "web-source",
+                    FilePath = string.Empty,
+                    FileHash = "HASH-WEB",
+                    SourceType = "url",
+                    SourceUrl = "https://contoso.example/docs",
+                    Status = "uploaded",
+                    UploadedAt = DateTime.UtcNow,
+                    TenantId = tenantId
+                },
+                new web::AspireApp.Web.Data.FileMetadata
+                {
+                    FileName = "notes.txt",
+                    OriginalFileName = "notes.txt",
+                    FilePath = dataDirectory,
+                    FileHash = "HASH-FILE",
+                    SourceType = "upload",
+                    Status = "uploaded",
+                    UploadedAt = DateTime.UtcNow.AddMinutes(-1),
+                    TenantId = tenantId
+                });
+            await context.SaveChangesAsync(XunitTestContext.Current.CancellationToken);
+
+            var cut = await RenderUploadDataAsync(context, currentUser, dataDirectory);
+
+            cut.WaitForAssertion(() =>
+            {
+                Assert.Single(cut.FindAll(".refresh-web-source-button"));
+                Assert.Equal(2, cut.FindAll("tbody tr button.btn-danger").Count);
+            });
+        }
+        finally
+        {
+            DeleteDirectoryIfPresent(dataDirectory);
+        }
+    }
+
+    [Fact]
+    public async Task RefreshWebSource_CleansProcessedArtifacts_AndQueuesProcessing()
+    {
+        await using var context = CreateDbContext();
+        var tenantId = "tenant-allowed";
+        var currentUser = SeedTenantMembership(context, tenantId);
+        var dataDirectory = CreateDataDirectory();
+
+        try
+        {
+            var processingCoordinator = new FakeDocumentProcessingCoordinator();
+            var webSource = new web::AspireApp.Web.Data.FileMetadata
+            {
+                FileName = "youtube_video_refresh",
+                OriginalFileName = "youtube_video_refresh",
+                FilePath = string.Empty,
+                FileHash = "HASH-WEB",
+                SourceType = "youtube_video",
+                SourceUrl = "https://youtu.be/dQw4w9WgXcQ",
+                Status = "processed",
+                UploadedAt = DateTime.UtcNow,
+                ProcessingStartedAt = DateTime.UtcNow.AddMinutes(-5),
+                ProcessingCompletedAt = DateTime.UtcNow.AddMinutes(-1),
+                ProcessingError = "stale",
+                DoclingDocumentPath = "processed\\documents\\42\\output.md",
+                TotalPages = 3,
+                Neo4jDocumentNodeId = "neo4j-42",
+                TenantId = tenantId
+            };
+
+            context.Datasources.Add(webSource);
+            await context.SaveChangesAsync(XunitTestContext.Current.CancellationToken);
+
+            context.DatasourcePages.Add(new web::AspireApp.Web.Data.DocumentPage
+            {
+                FileId = webSource.Id,
+                PageNumber = 1,
+                Content = "Old extracted content"
+            });
+            await context.SaveChangesAsync(XunitTestContext.Current.CancellationToken);
+
+            var cut = await RenderUploadDataAsync(context, currentUser, dataDirectory, processingCoordinator);
+
+            await cut.InvokeAsync(() => cut.Find(".refresh-web-source-button").Click());
+
+            cut.WaitForAssertion(() =>
+            {
+                Assert.Contains(webSource.Id, processingCoordinator.CleanedDocumentIds);
+                Assert.Contains(webSource.Id, processingCoordinator.QueuedDocumentIds);
+            });
+
+            context.ChangeTracker.Clear();
+
+            var refreshed = await context.Datasources.SingleAsync(
+                datasource => datasource.Id == webSource.Id,
+                XunitTestContext.Current.CancellationToken);
+            Assert.Equal("uploaded", refreshed.Status);
+            Assert.Null(refreshed.ProcessingStartedAt);
+            Assert.Null(refreshed.ProcessingCompletedAt);
+            Assert.Null(refreshed.ProcessingError);
+            Assert.Null(refreshed.DoclingDocumentPath);
+            Assert.Null(refreshed.TotalPages);
+            Assert.Null(refreshed.Neo4jDocumentNodeId);
+            Assert.Empty(await context.DatasourcePages.ToListAsync(XunitTestContext.Current.CancellationToken));
         }
         finally
         {
@@ -281,6 +447,8 @@ public sealed class UploadDataTests : IDisposable
     {
         public List<int> QueuedDocumentIds { get; } = [];
 
+        public List<int> CleanedDocumentIds { get; } = [];
+
         public Task<AutomaticProcessingDispatchResult> TryStartProcessingAsync(int documentId, CancellationToken cancellationToken = default)
         {
             QueuedDocumentIds.Add(documentId);
@@ -289,6 +457,7 @@ public sealed class UploadDataTests : IDisposable
 
         public Task CleanupDocumentAsync(int documentId, CancellationToken cancellationToken = default)
         {
+            CleanedDocumentIds.Add(documentId);
             return Task.CompletedTask;
         }
     }

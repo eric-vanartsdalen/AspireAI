@@ -20,6 +20,7 @@ public partial class UploadData : ComponentBase, IAsyncDisposable, IDisposable
     protected bool _isUploading = false;
     private int _uploadProgress = 0;
     private readonly List<string> _uploadErrors = [];
+    private readonly HashSet<int> _refreshingSourceIds = [];
     private bool _uploadControlsReady;
     
     // Duplicate detection tracking
@@ -372,6 +373,73 @@ public partial class UploadData : ComponentBase, IAsyncDisposable, IDisposable
             }
             _uploadMessage = $"Error deleting file: {ex.Message}";
             _messageClass = "error";
+        }
+    }
+
+    protected async Task RefreshWebSource(FileMetadata file)
+    {
+        if (!IsWebSource(file.SourceType) || !_refreshingSourceIds.Add(file.Id))
+        {
+            return;
+        }
+
+        try
+        {
+            _uploadErrors.Clear();
+            _isDuplicate = false;
+            _duplicateFileInfo = null;
+            _showDuplicateToast = false;
+            _uploadMessage = $"Refreshing '{file.FileName}'...";
+            _messageClass = "info";
+            await InvokeAsync(StateHasChanged);
+
+            var refreshResult = await FileStorageService.RefreshWebSourceAsync(file.Id, TenantContext.CurrentTenantId);
+
+            if (!refreshResult.Attempted)
+            {
+                _uploadMessage = $"Refresh reset '{file.FileName}', but automatic processing is currently unavailable.";
+                _messageClass = "warning";
+            }
+            else if (refreshResult.Started)
+            {
+                _uploadMessage = $"Refresh requested for '{file.FileName}'. URL processing started automatically.";
+                _messageClass = "success";
+            }
+            else
+            {
+                _uploadMessage = $"Refresh prepared for '{file.FileName}', but automatic processing could not be started.";
+                _messageClass = "warning";
+
+                if (!string.IsNullOrWhiteSpace(refreshResult.Detail))
+                {
+                    _uploadErrors.Add(refreshResult.Detail);
+                }
+            }
+
+            await LoadUploadedFiles();
+        }
+        catch (InvalidOperationException ex)
+        {
+            _uploadErrors.Clear();
+            _uploadMessage = ex.Message;
+            _messageClass = "warning";
+        }
+        catch (Exception ex)
+        {
+            if (Logger.IsEnabled(LogLevel.Error))
+            {
+                Logger.LogError(ex, "Error refreshing URL source {FileId}", file.Id);
+            }
+
+            _uploadErrors.Clear();
+            _uploadErrors.Add(ex.Message);
+            _uploadMessage = $"Error refreshing URL source: {ex.Message}";
+            _messageClass = "error";
+        }
+        finally
+        {
+            _refreshingSourceIds.Remove(file.Id);
+            await InvokeAsync(StateHasChanged);
         }
     }
 
@@ -824,6 +892,9 @@ public partial class UploadData : ComponentBase, IAsyncDisposable, IDisposable
 
     private static string GetSourceValueClass(string? sourceType) =>
         IsWebSource(sourceType) ? "url-cell" : "file-size-cell";
+
+    private bool IsRefreshingSource(int fileId) =>
+        _refreshingSourceIds.Contains(fileId);
 
     private static string GetSourceIconTitle(string? sourceType) =>
         sourceType?.Trim().ToLowerInvariant() switch

@@ -941,9 +941,34 @@ else
                                 </td>
                                 <td class="upload-date-cell">@file.UploadedAt.ToLocalTime().ToString("MMM dd, yyyy HH:mm")</td>
 								<td>
-                                    <button class="btn btn-danger btn-sm" @onclick="() => DeleteFile(file.FileId)">
-                                        <i class="bi bi-trash"></i> Delete
-                                    </button>
+                                    <div class="file-actions">
+                                        @if (IsWebSource(file.SourceType))
+                                        {
+                                            <button class="btn btn-primary btn-sm refresh-web-source-button"
+                                                    type="button"
+                                                    @onclick="() => RefreshWebSource(file)"
+                                                    disabled="@(file.IsProcessing || IsRefreshingSource(file.FileId))">
+                                                @if (IsRefreshingSource(file.FileId))
+                                                {
+                                                    <span class="loading-indicator">
+                                                        <span class="spinner-border" aria-hidden="true"></span>
+                                                        Refreshing...
+                                                    </span>
+                                                }
+                                                else
+                                                {
+                                                    <i class="bi bi-arrow-clockwise"></i> <span>Refresh</span>
+                                                }
+                                            </button>
+                                        }
+
+                                        <button class="btn btn-danger btn-sm"
+                                                type="button"
+                                                @onclick="() => DeleteFile(file.FileId)"
+                                                disabled="@IsRefreshingSource(file.FileId)">
+                                            <i class="bi bi-trash"></i> Delete
+                                        </button>
+                                    </div>
                                 </td>
                             </tr>
                         }
