@@ -16,12 +16,12 @@ BRAIN is a domain-agnostic agentic knowledge assistant. It ingests diverse sourc
 
 ## Current Execution Snapshot
 
-- **MVP ACHIEVED ✅** (2026-04-21): Gateway-routed chat with Regular mode works end-to-end (document upload → knowledge graph → retrieval-augmented chat with citations). Multi-conversation persistence and authentication are operational. Critique mode is implemented but experimental.
-- **Done on this branch:** Legacy phases 0–3, BRAIN Phase 1 (shared contracts), BRAIN Phase 2 (gateway ingest/query, retrieval foundations, vector population/search), and a Phase 3a/3b chat slice (regular + critique routes, gateway-routed chat, Web UI confidence/citations, and critique reasoning display).
-- **Post-MVP Fixes (High Priority):** (1) Conversation context not passed to backend on follow-up questions — LLM doesn't receive prior conversation history for multi-turn reasoning. (2) Gateway evidence not persisted with messages — citations/confidence lost when reopening saved conversations.
-- **Still active (Phase 3 gaps):** Session memory integration, contradiction/proactive monitoring beyond critique pipeline, proactive suggestions UI, MEai cleanup, chat-mode transition regression coverage.
-- **Administrative drift:** Phase 0 setup is complete; README now reflects BRAIN MVP status and gateway role.
-- **Next:** Close the two post-MVP fixes (conversation context + evidence persistence), then Phase 4 evaluation/hardening.
+- **MVP ACHIEVED ✅** (2026-04-21): Gateway-routed chat with Regular mode works end-to-end (document upload → knowledge graph → retrieval-augmented chat with citations). Multi-conversation persistence and authentication are operational. Critique mode is implemented and framework-integrated (PydanticAI).
+- **Done on this branch:** Legacy phases 0–3, BRAIN Phases 1–3 (shared contracts, gateway ingest/query, retrieval foundations, Regular + Critique chat routes, Web UI with confidence/citations, PydanticAI pipeline integration).
+- **Post-MVP Fixes (Top Priorities):** (1) Conversation context not passed to backend on follow-up questions — LLM doesn't receive prior conversation history for multi-turn reasoning. (2) Gateway evidence not persisted with messages — citations/confidence lost when reopening saved conversations. **These are blocking production rollout.**
+- **Remaining Phase 3 gaps (Lower priority):** Session memory integration, contradiction/proactive monitoring beyond critique pipeline, proactive suggestions UI, MEai cleanup, chat-mode transition regression coverage.
+- **Administrative:** Phase 0 setup is complete; README now reflects BRAIN MVP status and Postgres operational storage.
+- **Next:** Close the two post-MVP fixes (conversation context + evidence persistence) before Phase 4 hardening.
 
 ---
 
@@ -34,8 +34,9 @@ BRAIN is a domain-agnostic agentic knowledge assistant. It ingests diverse sourc
 | 0 | Reframe Product | ✅ Complete |
 | 1 | Core Contracts | ✅ Complete |
 | 2 | Ingestion + Knowledge Baseline | ✅ Complete |
-| 3 | Ship MVP Agentic Slice | ✅ **MVP Achieved** (post-MVP fixes in progress) |
-| 4 | Evaluate + Harden | 🔜 Planned |
+| 3a | Regular Mode (RAG Chat) | ✅ **MVP Achieved** |
+| 3b | Critique Mode (Agentic Chat) | ✅ Framework & Pipeline Complete |
+| 4 | Evaluate + Harden | 🔜 Post-MVP fixes in progress |
 | 5 | Prove Reusability | 🔮 Future |
 | 6 | Scale Deliberately | 🔮 Future |
 
@@ -68,7 +69,7 @@ Work completed before the BRAIN pivot. These are foundations that survive:
 ### Deliverables
 
 - [x] Pivot work is already on `task/P0-brain-pivot`; no additional branch-setup work is required for this phase
-- [ ] Update README.md to reflect the BRAIN vision (the current README still uses pre-pivot AspireAI framing)
+- [x] Update README.md to reflect the BRAIN vision and current MVP state
 - [x] Create `contracts/` directory structure for shared BRAIN data contracts
 - [x] Create `app/brain/` Python package structure (ingestion, validation, knowledge, reasoning)
 - [x] Repurpose `AspireApp.ApiService` — weather stub removed, BRAIN API Gateway endpoints scaffolded and wired
@@ -84,7 +85,7 @@ Work completed before the BRAIN pivot. These are foundations that survive:
 | P0-C | README reflects BRAIN vision |
 | P0-D | `dotnet build` succeeds; Aspire dashboard shows renamed services |
 
-**Review result:** P0-A and P0-B are satisfied on this branch. P0-C remains open. P0-D is partially evidenced here (`dotnet build` succeeds); dashboard naming was not revalidated in this review.
+**Review result:** All gates satisfied on this branch. P0 is complete.
 
 ---
 
