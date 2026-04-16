@@ -3,6 +3,7 @@
 > Shared decision log. All agents read this before starting work.
 > Scribe merges new decisions from `.squad/decisions/inbox/` after each session.
 > **Note (2026-04-21T21:00:00Z):** Merged 1 inbox decision from MVP documentation & post-MVP fix ordering session (Bob, Verbal). Key outcome: Established MVP Declaration Pattern with clear milestone markers (functional gateway-routed chat end-to-end works), documented working features + known limitations side-by-side, captured and ordered two post-MVP fixes by user impact (conversation context + evidence persistence). Phase 3 status updated from "in progress" to "MVP Achieved"; post-MVP work explicitly scoped with technical ownership (Jeff + Jarvis for context; Buster + Jeff for evidence). Documentation now reflects honest product state. Inbox cleared.
+> **Note (2026-04-16T07:35:37Z):** Merged 2 inbox decisions from conversation context + evidence persistence implementation session (Jarvis, Jeff, Buster). Key outcomes: (1) `conversation_history` backward-compatible field added to BRAIN chat contract, normalized to `[]` at Python boundary. (2) Assistant response metadata (evidence/confidence/reasoning) now persisted on `chat_messages.assistant_response_json` and rehydrated on conversation reopen. (3) Follow-up questions preserve prior turns through retrieval + generation. (4) Critique-mode reasoning carries history through planning/retrieval/synthesis/critique phases. (5) 54 Python tests + 44 .NET tests passing; cross-service contract alignment proven. (6) Carry-forward: E2E browser proof (Playwright/Aspire) deferred to Phase 3b polish. Inbox cleared.
 > **Note (2026-04-15T06:58:08Z):** Merged 3 inbox decisions from failing test fix session (Buster, Jeff, Eric). Key outcome: Fixed upload/e2e test failures identified as test-side timing assumptions; Python processing moved off FastAPI event loop via `asyncio.to_thread()`; user directive "no GitHub Issues" recorded. All tests passing (8/8). Consolidated into 3 decisions: (1) User Directive — No GitHub Issues, (2) Upload Test Scaffolding Async Dispatch, (3) Python Processing Off Event Loop. Status: Tests clean, inbox cleared, decisions merged.
 > **Note (2026-04-17T23:50:00Z):** Merged 2 inbox decisions from roadmap/Tasks.md update session (Bob, Buster). Key outcome: P2-B gate closure confirmed (confidence fail-closed + Neo4j enrichment verified); P2-C unblocked (embedding infrastructure identified as blocker, not code); Phase 3 critical path locked (agent framework selection is BLOCKING GATE with 2026-04-24 decision deadline). Contradiction detection deferred to Phase 3 Critic Agent integration. No exact duplicates found. Inbox cleared.
 > **Note (2026-04-05T21:33:20Z):** Merged 18 inbox decisions from auth documentation and QA validation (Jeff, Warden, Bob, Buster). Consolidated Bob's UX revision + Buster's multi-gate approval into a single "Mock Pluggable Auth Slice" decision. No duplicates found. Inbox cleared.
@@ -2957,3 +2958,128 @@ The observed failure pattern was not a transient outage. It was a deterministic 
 - Regression suite validates all three boundaries and prevents cross-seam breaks
 - Saved conversation persistence behavior is explicitly tested alongside mode wiring
 - Configuration-driven failures surface accurately and immediately in Blazor UI
+
+---
+
+## Backward-Compatible `conversation_history` Field on BRAIN Chat Contract — Jarvis — 2026-04-16
+
+**Author:** Jarvis (Python / Data Dev)  
+**Status:** IMPLEMENTED  
+**Scope:** Python retrieval + generation, .NET gateway contract alignment, follow-up question context preservation
+
+### Decision
+
+Add `conversation_history` as an optional list field to `BrainChatRequest`. Shape it as `List<{ role: "user"|"assistant", content: string }>` for wire clarity. Normalize `null` or missing values to `[]` at the Python contract boundary before any retrieval or generation logic touches the value.
+
+### Why
+
+Follow-up questions need prior turns available to both retrieval and generation. The gateway may emit `conversation_history: null` to preserve backward compatibility with older callers that don't send history. Python must accept both cases cleanly.
+
+### Implementation
+
+1. **Contract Boundary (Python):**
+   - `BrainChatRequest.conversation_history` defined as `Optional[List[ConversationMessage]]` 
+   - On entry to retrieval/generation, normalize: `history = request.conversation_history or []`
+
+2. **Retrieval Pipeline:**
+   - Blend recent history into the LLM retrieval query before knowledge search
+   - Follow-up questions stay grounded even when new documents shift retrieval candidates
+
+3. **Generation Pipeline:**
+   - Ollama chat generation replays prior `user` and `assistant` turns before the current prompt
+   - Ensures response consistency with conversation arc
+
+4. **Critique Mode:**
+   - Planning phase uses history for question decomposition
+   - Retrieval, synthesis, and critique phases reuse compact history block
+   - All reasoning stays consistent with prior turns
+
+### Files Modified
+
+- `src/AspireApp.PythonServices/app/contracts/models.py` — Added `conversation_history` field + normalization
+- `src/AspireApp.PythonServices/app/routers/brain.py` — History-aware retrieval
+- `src/AspireApp.PythonServices/app/brain/reasoning/critique_pipeline.py` — History-aware prompts
+- `src/AspireApp.PythonServices/app/services/llm_chat_service.py` — Multi-turn Ollama payload construction
+- `src/AspireApp.PythonServices/tests/test_brain_chat.py` — Follow-up coverage (54 tests)
+- `src/AspireApp.ApiService/Contracts/BrainContractModels.cs` — Gateway contract alignment
+
+### Validation
+
+- ✅ 54 Python tests passing — Follow-up patterns, history normalization, critique reasoning with history
+- ✅ .NET contract round-trip tests passing — Serialization/deserialization across wire
+- ✅ Backward compatibility proven — Null/missing history handled cleanly
+
+### Consequences
+
+- Follow-up questions preserve prior turns through retrieval + generation
+- Older callers that don't send history continue to work unchanged
+- Gateway can forward `conversation_history: null` or omit the field safely
+- Critique mode carries history through all reasoning phases
+
+---
+
+## Persist Assistant Response Metadata + Rehydrate on Conversation Reload — Jeff — 2026-04-16
+
+**Author:** Jeff (.NET Dev)  
+**Status:** IMPLEMENTED  
+**Scope:** Web chat persistence, PostgreSQL schema, evidence/confidence metadata round-trip
+
+### Decision
+
+Extend PostgreSQL `chat_messages` table to include `assistant_response_json` column storing the full assistant response (evidence, confidence, reasoning). On conversation reopen, rehydrate this metadata from the database instead of relying on the transient `_messageEvidence` cache. Wire saved-turn history into gateway chat calls so follow-up questions preserve prior context.
+
+### Why
+
+- Evidence and reasoning are part of the product response contract; losing them on reload made saved conversations feel incomplete and misleading
+- Assistant metadata must survive the conversation boundary (save + reload cycle) for user experience integrity
+- Follow-up questions after a new document upload need prior conversation context, not just the latest `conversation_id`
+- The operational PostgreSQL store already owns chat persistence, so storing assistant response JSON beside the message keeps the fix surgical
+
+### Implementation
+
+1. **Database Schema:**
+   - Add `assistant_response_json` nullable TEXT column to `chat_messages` table
+   - Bootstrap logic creates column on first startup if missing
+
+2. **Chat Persistence Service:**
+   - Extract evidence/confidence/reasoning from Blazor response object
+   - Serialize to JSON and store alongside the message
+
+3. **Blazor Chat Page:**
+   - Load metadata from `chat_messages.assistant_response_json` on conversation reopen
+   - Populate `_messageEvidence` cache from rehydrated metadata instead of relying on in-memory state
+   - Render evidence badges, confidence indicators, and reasoning steps from persisted data
+
+4. **Gateway Chat Integration:**
+   - `BrainChatClient` now carries recent saved turns as `conversation_history` when calling backend
+   - Follow-up questions preserve context even when new documents are uploaded between messages
+
+### Files Modified
+
+- `src\AspireApp.Web\Services\BrainChatClient.cs` — History carriage logic
+- `src\AspireApp.Web\Components\Pages\Chat.razor.cs` — Metadata rehydration + persistence
+- `src\AspireApp.Web\Services\ChatConversationService.cs` — Metadata extraction + storage
+- `src\AspireApp.Web\Services\ChatConversationStoreBootstrapper.cs` — Schema migration
+- `src\AspireApp.Web\Data\ChatConversationEntities.cs` — Entity updates
+- `src\AspireApp.WebTest\Tests\BrainGatewayPhase2Tests.cs` — Gateway + history validation
+- `src\AspireApp.WebTest\Tests\ChatConversationServiceTests.cs` — Metadata persistence coverage
+- `src\AspireApp.WebTest\Tests\ChatCritiqueModeTests.cs` — Critique mode persistence + reload
+
+### Validation
+
+- ✅ 44 .NET tests passing — Gateway history carriage, metadata storage, conversation reload scenarios, critique mode state preservation
+- ✅ `dotnet build .\AspireApp.sln --no-restore` — Build success
+- ✅ Cross-service contract alignment proven
+
+### Consequences
+
+- Conversations now retain full context: prior turns inform follow-ups, evidence/confidence/reasoning survive reload
+- PostgreSQL schema self-updates on first startup
+- Blazor metadata cache rehydration happens transparently on conversation reopen
+- Critique mode state (regular/critique toggle) persists and reloads correctly
+
+### Carry-Forward
+
+- E2E browser proof (Playwright/Aspire orchestration): save → hard reload → reopen thread → verify citations/confidence visible
+- Deferred to Phase 3b polish due to Playwright Chromium installation documentation gap
+

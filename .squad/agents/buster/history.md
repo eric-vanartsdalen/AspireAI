@@ -30,6 +30,40 @@
 
 <!-- Append new learnings below. Each entry is something lasting about the project. -->
 
+### 2026-04-16 — Team Sync: Regression Coverage for Conversation Context + Evidence Persistence
+
+**Context:** Jarvis implemented `conversation_history` support. Jeff wired gateway history + metadata persistence. Cross-service alignment proven.
+
+**What I Did:**
+- Added regression coverage proving follow-up requests carry prior turns into backend chat calls
+- Validated that evidence/confidence/reasoning metadata survives persistence and re-renders on conversation reopen
+- Closed focused test slices: gateway history carriage (9/9), metadata round-trip (44/44 .NET), critique mode state persistence (44/44)
+- Verified cross-service contract alignment (Python/C# history shapes match)
+- Identified carry-forward QA gap: E2E browser proof (Playwright/Aspire) for save → hard reload → reopen → citations visible
+
+**Coverage Status:**
+- ✅ Unit-level follow-up context proven (54 Python tests)
+- ✅ Service-level persistence proven (44 .NET tests)
+- ✅ Contract round-trip proven (cross-service serialization)
+- ⏳ E2E browser proof pending (Playwright/Aspire orchestration test)
+
+**Key Patterns Validated:**
+- **Follow-up context:** Prior turns successfully travel through retrieval + generation
+- **Metadata survival:** Evidence/confidence/reasoning persisted and rehydrated on reload
+- **Backward compatibility:** Null history normalized cleanly; older callers unaffected
+- **Chat mode persistence:** Regular ↔ Critique toggle state survives reload
+
+**Carry-Forward Gap:**
+- Honest assessment: All plumbing proven in isolation. Missing: real Playwright browser test that uploads doc → asks question → saves → hard reload → reopen → verify citations/confidence visible
+- Deferred to Phase 3b polish (Playwright Chromium installation not documented in dev prerequisites)
+
+**Key file paths validated:**
+- `src\AspireApp.WebTest\Tests\BrainGatewayPhase2Tests.cs`
+- `src\AspireApp.WebTest\Tests\ChatConversationServiceTests.cs`
+- `src\AspireApp.WebTest\Tests\ChatCritiqueModeTests.cs`
+- `src\AspireApp.PythonServices\tests\test_brain_chat.py`
+- `src\AspireApp.PythonServices\tests\test_critique_pipeline.py`
+
 ### 2026-04-15 — Critique mode failures need provider-level and no-retry regression coverage
 
 **Task:** Reproduce the critique-mode 502/api-key failure, validate Jeff/Jarvis fixes, and close the most obvious regression gaps.
@@ -1922,3 +1956,29 @@ High — Three independent test failures all exhibit the same LightRAG stuck-in-
 - Regression tests: `src/AspireApp.WebTest/Tests/ChatCritiqueModeTests.cs` (new post-MVP suite)
 
 **Status:** MVP locked; P3b ready for final QA; post-MVP evidence validation queued 2026-04-30
+
+---
+
+### 2026-04-22 — Conversation Memory + Assistant Metadata Regression Coverage Landed
+
+**Task:** Lock down the two post-MVP conversation fixes: follow-up context propagation and persisted evidence/confidence reload.
+
+**Key findings:**
+- The cross-service request seam now treats prior turns as `conversation_history` (`{ role, content }`) and the Blazor chat page intentionally strips the just-entered prompt before calling the gateway, so retrieval/generation get prior context without duplicating the current question.
+- Saved assistant metadata belongs on the chat message row itself (`assistant_response_json` on `chat_messages`), then the UI must rehydrate that JSON back into `BrainChatResponse` when a conversation is reopened; an in-memory `_messageEvidence` cache alone is not enough.
+- The cheapest regression stack for these fixes is: Python contract/router tests, .NET contract/gateway tests, `ChatConversationServiceTests` for persistence, and bUnit `ChatCritiqueModeTests` for reload rendering. Full browser proof is still a follow-up, not the first gate.
+
+**User preference / validation posture:**
+- Keep validation focused. For this slice, targeted WebTest + Python regression suites are the right gate instead of broad repo reruns.
+
+**Key file paths:**
+- `src\AspireApp.Web\Services\BrainChatClient.cs`
+- `src\AspireApp.Web\Services\ChatConversationService.cs`
+- `src\AspireApp.Web\Components\Pages\Chat.razor.cs`
+- `src\AspireApp.Web\Services\ChatConversationStoreBootstrapper.cs`
+- `src\AspireApp.WebTest\Tests\ChatCritiqueModeTests.cs`
+- `src\AspireApp.WebTest\Tests\ChatConversationServiceTests.cs`
+- `src\AspireApp.WebTest\Tests\BrainGatewayPhase2Tests.cs`
+- `src\AspireApp.PythonServices\app\routers\brain.py`
+- `src\AspireApp.PythonServices\app\services\llm_chat_service.py`
+- `src\AspireApp.PythonServices\tests\test_brain_chat.py`

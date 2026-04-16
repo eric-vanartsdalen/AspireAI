@@ -9,6 +9,62 @@
 
 <!-- Append new learnings below. Each entry is something lasting about the project. -->
 
+### 2026-04-16 — Team Sync: Follow-Up Chat History + Conversation Persistence
+
+**Context:** Jeff wired gateway history + persisted assistant metadata. Buster validated regression coverage. Cross-service contract alignment proven (54 Python + 44 .NET tests passing).
+
+**What I Implemented:**
+- Added backward-compatible `conversation_history` to BRAIN chat contract (normalized `null` to `[]` at Python boundary)
+- Updated Python retrieval to blend history into queries before knowledge search
+- Extended Ollama generation to replay prior user/assistant turns
+- Updated critique-mode reasoning to carry compact history through planning/retrieval/synthesis/critique phases
+- 54 targeted Python tests covering follow-up patterns, history normalization, and critique reasoning
+
+**Key Patterns Established:**
+- **Backward-compatible history fields:** Normalize `null`/missing payloads to `[]` at contract boundary
+- **History-aware retrieval:** Build queries from recent turns + current question
+- **Critique mode + history:** Carry history through all reasoning phases to keep response consistency
+
+**Result:**
+- Follow-up questions preserve context even when new documents shift retrieval candidates
+- Older callers that omit history still work cleanly
+- Cross-service contract tests prove alignment
+
+**Key file paths:**
+- `src/AspireApp.PythonServices/app/contracts/models.py`
+- `src/AspireApp.PythonServices/app/routers/brain.py`
+- `src/AspireApp.PythonServices/app/brain/reasoning/critique_pipeline.py`
+- `src/AspireApp.PythonServices/app/services/llm_chat_service.py`
+- `src/AspireApp.PythonServices/tests/test_brain_chat.py`
+
+### 2026-04-16 — Follow-Up Chat History Must Travel With BRAIN Requests
+
+**Problem:**
+- Follow-up `/brain/chat` questions lost context after new documents were uploaded because Python retrieval and generation only saw the latest user query.
+- The API gateway can serialize optional request fields as `null`, so a new history field had to accept both omitted and null payloads without breaking older callers.
+
+**Fix:**
+- Extended `BrainChatRequest` with `conversation_history` entries shaped as `{ role, content }` and normalized `null` to an empty list on the Python side.
+- Updated regular chat retrieval to blend recent history into the retrieval query and updated Ollama chat generation to replay prior user/assistant turns before the new question.
+- Updated critique-mode planning/retrieval/synthesis prompts to carry the same compact history block so follow-up reasoning stays grounded.
+
+**Result:**
+- Follow-up questions can reuse prior chat context even when the latest uploaded document shifts retrieval candidates.
+- Older callers that omit history, or gateway callers that forward `conversation_history: null`, still validate cleanly.
+- Python and gateway contract tests now cover the shared wire shape.
+
+**Key Pattern:**
+- **Backward-compatible history fields:** When adding cross-service chat history, normalize `null`/missing payloads to `[]` at the contract boundary before the pipeline touches them.
+- **History-aware retrieval:** For follow-up questions, build the retrieval query from recent turns plus the current question instead of embedding only the latest utterance.
+
+**Key file paths:**
+- `src/AspireApp.PythonServices/app/contracts/models.py` (request normalization for `conversation_history`)
+- `src/AspireApp.PythonServices/app/routers/brain.py` (history-aware retrieval + regular chat path)
+- `src/AspireApp.PythonServices/app/brain/reasoning/critique_pipeline.py` (history-aware critique prompts)
+- `src/AspireApp.PythonServices/app/services/llm_chat_service.py` (multi-turn Ollama payload construction)
+- `src/AspireApp.PythonServices/tests/test_brain_chat.py` and `tests/test_critique_pipeline.py` (follow-up coverage)
+- `src/AspireApp.ApiService/Contracts/BrainContractModels.cs` (gateway contract alignment)
+
 ### 2026-04-15 — LightRAG Retrieval Multi-Shape Compatibility + Filename-Parsed Provenance
 
 **Problem:**

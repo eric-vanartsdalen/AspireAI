@@ -34,7 +34,41 @@
 
 ## Learnings
 
-### 2025-01-XX: Critique Mode UI Layer Implementation
+### 2026-04-16 — Team Sync: Chat Gateway History + Metadata Persistence
+
+**Context:** Jarvis added `conversation_history` to BRAIN contract. Buster validated regression coverage. 54 Python + 44 .NET tests passing.
+
+**What I Implemented:**
+- Wired recent saved-turn history into gateway chat calls via `BrainChatClient`
+- Extended PostgreSQL chat schema to persist assistant response metadata as `assistant_response_json`
+- Updated bootstrap logic to ensure chat table schema includes new metadata column
+- Rehydrated assistant metadata in Blazor chat page from persisted messages instead of `_messageEvidence` cache
+- Updated `ChatConversationService` to extract evidence/confidence/reasoning on save
+- 44 targeted .NET tests covering gateway history carriage, metadata persistence, and metadata rehydration
+
+**Key Patterns Established:**
+- **Metadata persistence:** Store full assistant response (evidence/confidence/reasoning) alongside chat message
+- **Rehydration on reload:** Load metadata from DB instead of relying on transient in-memory state
+- **Backward-compatible history:** `conversation_history` is optional; null values normalized by Python
+
+**Result:**
+- Conversations now retain full context: prior turns inform follow-ups, evidence/confidence/reasoning survive reload
+- Follow-up questions preserve context even when new documents uploaded between messages
+- Critique mode state (regular/critique toggle) persists and reloads correctly
+- `dotnet build .\AspireApp.sln --no-restore` ✅
+
+**Key file paths:**
+- `src\AspireApp.Web\Services\BrainChatClient.cs`
+- `src\AspireApp.Web\Components\Pages\Chat.razor.cs`
+- `src\AspireApp.Web\Services\ChatConversationService.cs`
+- `src\AspireApp.Web\Services\ChatConversationStoreBootstrapper.cs`
+- `src\AspireApp.WebTest\Tests\BrainGatewayPhase2Tests.cs`
+- `src\AspireApp.WebTest\Tests\ChatConversationServiceTests.cs`
+- `src\AspireApp.WebTest\Tests\ChatCritiqueModeTests.cs`
+
+**Carry-forward gap:** E2E browser proof (Playwright/Aspire): save → hard reload → reopen → citations/confidence visible. Deferred to Phase 3b polish.
+
+### 2026-04-15 — Critique Mode UI Layer Implementation
 
 **What I Did:**
 - Enabled the Critique toggle in `Chat.razor` by removing the `disabled` attribute and class
@@ -65,6 +99,31 @@ Build verified successfully. Tests were running but took longer than expected du
 ## Learnings
 
 <!-- Append new learnings below. Each entry is something lasting about the project. -->
+
+### 2026-04-21 — Saved chat conversations must persist assistant response metadata and send recent history back through the gateway
+
+**Status:** Implemented and validated for the post-MVP conversation fixes.
+
+**Key insight:**
+- `src\AspireApp.Web\Services\ChatConversationService.cs` should persist assistant-only `BrainChatResponse` metadata on each `chat_messages` row, then rehydrate that payload into `ChatConversationMessageRecord` so citations, confidence, and reasoning survive a conversation reload.
+- `src\AspireApp.Web\Components\Pages\Chat.razor.cs` should rebuild `_messageEvidence` from persisted assistant messages when a conversation is reopened instead of relying only on in-memory state from the live request.
+- `src\AspireApp.Web\Components\Pages\Chat.razor.cs` should send recent prior turns back through `src\AspireApp.Web\Services\BrainChatClient.cs` as `conversation_history` when asking follow-up questions, excluding the just-entered prompt so the gateway gets the thread context without duplicating the current query.
+- The PostgreSQL chat bootstrapper must backfill new chat-message columns explicitly; `EnsureCreated()` will not add `assistant_response_json` to an already-existing operational store.
+
+**Validation:**
+- `dotnet test src\AspireApp.WebTest\AspireApp.WebTest.csproj --filter "FullyQualifiedName~BrainGatewayPhase2Tests|FullyQualifiedName~BrainContractRoundTripTests|FullyQualifiedName~ChatConversationServiceTests|FullyQualifiedName~ChatCritiqueModeTests|FullyQualifiedName~ChatFocusTests" --logger "console;verbosity=minimal"`
+- `dotnet build AspireApp.sln --no-restore`
+
+**Key paths:**
+- `src\AspireApp.Web\Components\Pages\Chat.razor.cs`
+- `src\AspireApp.Web\Services\BrainChatClient.cs`
+- `src\AspireApp.Web\Services\ChatConversationService.cs`
+- `src\AspireApp.Web\Services\ChatConversationStoreBootstrapper.cs`
+- `src\AspireApp.Web\Data\ChatConversationEntities.cs`
+- `src\AspireApp.Web\Shared\UploadDbContext.cs`
+- `src\AspireApp.WebTest\Tests\ChatConversationServiceTests.cs`
+- `src\AspireApp.WebTest\Tests\ChatCritiqueModeTests.cs`
+- `src\AspireApp.WebTest\Tests\BrainGatewayPhase2Tests.cs`
 
 ### 2026-04-18 — BRAIN gateway chat failures should preserve downstream ProblemDetails and never retry unsafe POSTs
 
