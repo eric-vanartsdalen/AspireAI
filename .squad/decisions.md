@@ -3084,3 +3084,67 @@ Extend PostgreSQL `chat_messages` table to include `assistant_response_json` col
 - E2E browser proof (Playwright/Aspire orchestration): save → hard reload → reopen thread → verify citations/confidence visible
 - Deferred to Phase 3b polish due to Playwright Chromium installation documentation gap
 
+---
+
+# Direct Protected-Route Sign-In for Upload UI Tests — Buster, Jeff — 2026-04-16
+
+**Authors:** Buster (QA/Tester), Jeff (.NET Dev)  
+**Status:** IMPLEMENTED  
+**Scope:** Upload-focused Playwright test navigation architecture and failure diagnosis
+
+## Context
+
+`BasicAspireAppHostTests.DeleteUploadedTestFile` was reported failing with:
+```
+Navigation target 'Upload Documents' did not become clickable within 30000ms
+```
+
+Adjacent tests (`FlowEndToEnd`, `AuthUxFoundationTests.SignedInUserCanReachProtectedAppAreas`) showed the same pattern: dependency on off-canvas sidebar link visibility after sign-in, which could flake due to animation/viewport timing.
+
+## Root Cause (Buster Diagnosis)
+
+The test failures were **Playwright test-seam brittleness**, not product regression:
+1. Test clicked sidebar hamburger to open off-canvas nav
+2. Waited for "Upload Documents" link to become viewport-clickable (animation + rendering dependent)
+3. Sidebar animation/viewport timing variance → timeout flake
+4. Adjacent tests proved: upload surface works, protected routes accessible, upload/delete behavior correct
+
+The failing seam was infrastructure-specific; the product navigation UI was functioning correctly.
+
+## Decision
+
+**For upload-focused browser tests, use direct protected-route entry instead of sidebar nav dependency:**
+
+1. After mock sign-in (`/auth/mock/signin?returnUrl=/upload`), test receives auth cookie and is redirected to `/upload`
+2. Wait for upload-surface markers (`#tenant-select`, `[data-testid='upload-file-input']`) to confirm page loaded
+3. Eliminate sidebar animation and viewport timing from upload-behavior tests
+4. Cleaner separation of concerns: upload tests ≠ navigation infrastructure tests
+
+## Why This Approach
+
+- **Product surface validity:** Adjacent tests already proved upload surface and protected routes work
+- **Test intent clarity:** Tests that care about upload/delete behavior shouldn't depend on sidebar nav stability
+- **Stability gain:** Hard redirects to protected routes are deterministic; sidebar animation is not
+- **Reusability:** Pattern applies to all protected-route browser tests (chat, tenants, weather, etc.)
+
+## Affected Files & Implementation
+
+- `src\AspireApp.WebTest\Tests\BasicAspireAppHostTests.cs` — `DeleteUploadedTestFile`, `FlowEndToEnd`
+- `src\AspireApp.WebTest\Tests\AuthUxFoundationTests.cs` — `SignedInUserCanReachProtectedAppAreas`
+- `src\AspireApp.WebTest\Tests\AuthenticatedUploadUxTests.cs` — Upload-focused test suite
+
+**Changes:**
+- Replace sidebar-click pattern with `page.GotoAsync("/upload")` or mock-signin `returnUrl` redirect
+- Update wait conditions from nav-link visibility to page-surface markers
+- Consolidate sign-in helper to use direct-entry pattern
+
+## Validation Results
+
+✓ `DeleteUploadedTestFile` — passing  
+✓ `FlowEndToEnd` — passing  
+✓ `AuthUxFoundationTests.SignedInUserCanReachProtectedAppAreas` — passing
+
+## Carry-Forward Notes
+
+- Pre-existing 90s timeout in `BrainQueryReturnsConfidenceEnrichedResults` remains (unrelated to navigation seam, flagged for future investigation)
+- Broader test infrastructure now uses explicit-seam pattern for all protected-route entry

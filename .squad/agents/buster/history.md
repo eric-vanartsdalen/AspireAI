@@ -48,6 +48,14 @@
 - `src\AspireApp.WebTest\Tests\BasicAspireAppHostTests.cs`
 - `src\AspireApp.WebTest\Tests\AuthenticatedUploadUxTests.cs`
 - `src\AspireApp.WebTest\Tests\AuthUxFoundationTests.cs`
+
+**Pattern:**  
+- When Playwright test failures occur, always classify as "test seam" or "product bug" before fixing
+- Use adjacent passing tests as control validation (proof that infrastructure works)
+- Sidebar nav visibility is environment-dependent (animation, viewport). Use hard redirects for upload/chat/tenant tests
+- Direct protected-route entry (`returnUrl=/upload`, `page.GotoAsync("/upload")`) is more stable than sidebar click + link-visibility wait
+
+**Decision merged:** `.squad/decisions.md` — "Direct Protected-Route Sign-In for Upload UI Tests"
 - `src\AspireApp.Web\Components\Layout\NavMenu.razor`
 - `src\AspireApp.Web\Components\Layout\MainLayout.razor`
 

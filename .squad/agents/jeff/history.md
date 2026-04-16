@@ -46,8 +46,33 @@
 - Updated `ChatConversationService` to extract evidence/confidence/reasoning on save
 - 44 targeted .NET tests covering gateway history carriage, metadata persistence, and metadata rehydration
 
+**What I Implemented:**
+- Wired recent saved-turn history into gateway chat calls via `BrainChatClient`
+- Extended PostgreSQL chat schema to persist assistant response metadata as `assistant_response_json`
+- Updated bootstrap logic to ensure chat table schema includes new metadata column
+- Rehydrated assistant metadata in Blazor chat page from persisted messages instead of `_messageEvidence` cache
+- Updated `ChatConversationService` to extract evidence/confidence/reasoning on save
+- 44 targeted .NET tests covering gateway history carriage, metadata persistence, and metadata rehydration
+
 **Key Patterns Established:**
 - **Metadata persistence:** Store full assistant response (evidence/confidence/reasoning) alongside chat message
+
+### 2026-04-16 — Upload Navigation Test Architecture Hardening
+
+**Context:** Buster flagged `BasicAspireAppHostTests.DeleteUploadedTestFile` as test-seam brittle, not product regression. Confirmed with three passing reruns and validated adjacent protected-route tests.
+
+**What I Implemented:**
+- Updated `BasicAspireAppHostTests` to use direct mock-signin `returnUrl=/upload` instead of sidebar nav click
+- Replaced nav-link-visibility wait with upload-surface markers (`#tenant-select`, `[data-testid='upload-file-input']`)
+- Applied pattern consistently to `DeleteUploadedTestFile`, `FlowEndToEnd`
+- Validation: All three test groups passing + adjacent `AuthUxFoundationTests.SignedInUserCanReachProtectedAppAreas` passing
+
+**Key Patterns Established:**
+- **Protected-route entry seam:** Use `page.GotoAsync("/route")` or mock-signin `returnUrl` redirect, not sidebar nav clicks
+- **Upload/chat/tenant tests:** Should use hard-route entry to eliminate animation/timing variance from test assumptions
+- **Test seam classification:** Always validate product surface with adjacent tests before blaming product bugs
+
+**Decision merged:** `.squad/decisions.md` — "Direct Protected-Route Sign-In for Upload UI Tests" (2026-04-16)
 - **Rehydration on reload:** Load metadata from DB instead of relying on transient in-memory state
 - **Backward-compatible history:** `conversation_history` is optional; null values normalized by Python
 
