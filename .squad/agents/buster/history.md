@@ -1473,6 +1473,28 @@ The behavior being tested (legacy schema detection with detailed diagnostics) st
 **Cross-Agent Coordination:**
 - Warden approved fix direction (security gates intact)
 - Jeff implemented 3 app-level fixes (hydration, tenant fallback, upload readiness)
+
+### 2026-04-16 — UploadData refresh-action regression contract
+
+**Task:** Tighten `UploadData` bUnit coverage for the URL-backed refresh button flow.
+
+**Key findings:**
+- `UploadData` already routes refreshes through `RefreshWebSource()` and `FileStorageService.RefreshWebSourceAsync()`; the missing QA value was proving the UI only exposes that seam for URL-backed rows.
+- URL-backed rows render an enabled refresh button for retryable states and a disabled refresh button while processing is already active.
+- Refreshing a processed YouTube row must clear persisted processing artifacts, remove stale page rows, call coordinator cleanup, and requeue processing.
+
+**Validation:**
+- `dotnet test .\src\AspireApp.WebTest\AspireApp.WebTest.csproj --filter FullyQualifiedName~UploadDataTests` ✅
+- `dotnet test .\src\AspireApp.WebTest\AspireApp.WebTest.csproj --filter "FullyQualifiedName~UploadDataTests|FullyQualifiedName~FileUploadControllerTests" --no-build` ✅
+
+**Key file paths:**
+- `src\AspireApp.WebTest\Tests\UploadDataTests.cs`
+- `src\AspireApp.Web\Components\Pages\UploadData.razor`
+- `src\AspireApp.Web\Components\Pages\UploadData.razor.cs`
+- `src\AspireApp.Web\Shared\FileStorageService.cs`
+
+**Pattern:**
+- For URL/YouTube datasource actions, pair render-state checks (visible vs. disabled) with one bUnit action test that proves persisted cleanup + requeue side effects.
 - All 13 tests passing; security audit complete
 - Session logged: .squad/log/2026-04-11T17-53-25-auth-test-fixes.md
 

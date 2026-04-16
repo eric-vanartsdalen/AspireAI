@@ -2,6 +2,7 @@
 
 > Shared decision log. All agents read this before starting work.
 > Scribe merges new decisions from `.squad/decisions/inbox/` after each session.
+> **Note (2026-04-16T16-58-29Z):** Merged 8 inbox decisions from URL Refresh + Extensible Ingestion Implementation session (Jeff, Buster, Jarvis, Bob). Key outcomes: (1) URL Refresh Action for UploadData rows (visible for URL/YouTube, hidden for file rows, disabled during processing). (2) Extensible upload surfaces and source type taxonomy (file types expanded to .json; YouTube URLs classified for future processing). (3) Extensible URL ingestion architecture (handler-based framework for pluggable content sources). (4) Multi-format ingestion regression test plan (phased approach minimizing external dependencies). (5) Child URL auto-processing contract (URLs created from parent expansion immediately processed, not left in uploaded). (6) Child URL reuses main processing pipeline (single document-processing path for all ingestion types). Key decision: Keep source taxonomy explicit in storage while treating web-backed sources uniformly in UI (WEB semantics). All focused tests passing. No exact duplicates found; consolidated related decisions. Inbox cleared.
 > **Note (2026-04-16T10-11-47Z):** Merged 1 inbox decision from upload navigation test hardening session (Buster, Jeff). Key outcome: Diagnosed `DeleteUploadedTestFile` failure as Playwright/sidebar-animation brittleness, not product regression. Hardened test seam to use direct protected-route entry via mock sign-in with `returnUrl=%2Fupload` and upload-surface markers instead of sidebar nav dependency. Result: Upload tests now stable and properly scoped (upload behavior ≠ navigation infrastructure). Inbox cleared.
 > **Note (2026-04-21T21:00:00Z):** Merged 1 inbox decision from MVP documentation & post-MVP fix ordering session (Bob, Verbal). Key outcome: Established MVP Declaration Pattern with clear milestone markers (functional gateway-routed chat end-to-end works), documented working features + known limitations side-by-side, captured and ordered two post-MVP fixes by user impact (conversation context + evidence persistence). Phase 3 status updated from "in progress" to "MVP Achieved"; post-MVP work explicitly scoped with technical ownership (Jeff + Jarvis for context; Buster + Jeff for evidence). Documentation now reflects honest product state. Inbox cleared.
 > **Note (2026-04-16T07:35:37Z):** Merged 2 inbox decisions from conversation context + evidence persistence implementation session (Jarvis, Jeff, Buster). Key outcomes: (1) `conversation_history` backward-compatible field added to BRAIN chat contract, normalized to `[]` at Python boundary. (2) Assistant response metadata (evidence/confidence/reasoning) now persisted on `chat_messages.assistant_response_json` and rehydrated on conversation reopen. (3) Follow-up questions preserve prior turns through retrieval + generation. (4) Critique-mode reasoning carries history through planning/retrieval/synthesis/critique phases. (5) 54 Python tests + 44 .NET tests passing; cross-service contract alignment proven. (6) Carry-forward: E2E browser proof (Playwright/Aspire) deferred to Phase 3b polish. Inbox cleared.
@@ -3305,3 +3306,118 @@ Public YouTube channel URLs like `https://www.youtube.com/@csharpfritz/videos` w
 
 ---
 
+
+---
+
+## URL Refresh Reuses Existing Processing Flow — Jeff — 2026-04-16
+
+**Author:** Jeff (.NET Dev)  
+**Date:** 2026-04-16  
+**Status:** IMPLEMENTED  
+**Scope:** UploadData web-source refresh action
+
+### Decision
+
+For URL-backed datasource rows, the Web UI refresh action should:
+1. Call the existing cleanup flow when prior processing artifacts exist
+2. Reset the datasource row back to `uploaded`
+3. Call the existing `processing/process-document/{id}` endpoint
+
+Do not add a separate backend "refresh" API for this slice.
+
+### Why
+
+- The Python service already owns cleanup and processing start semantics
+- The Web app already owns the persisted datasource row and can reset local lifecycle fields safely before re-queuing work
+- Reusing those seams keeps refresh behavior aligned with existing upload/add-URL behavior and avoids a second orchestration contract for the same work
+
+### Implementation
+
+- `src/AspireApp.Web/Components/Pages/UploadData.razor` — Refresh button visible only for web-backed rows
+- `src/AspireApp.Web/Shared/FileStorageService.cs` — RefreshUrlItemAsync method reuses cleanup + reset + requeue
+- `src/AspireApp.WebTest/Tests/UploadDataTests.cs` — Regression coverage for button visibility, disabled state, and artifact cleanup
+
+### Validation
+
+- ✅ Focused UploadData tests passing
+- ✅ dotnet build succeeds
+- ✅ No breaking changes to existing file-row behavior
+
+---
+
+## URL Refresh UI Contract — Buster — 2026-04-16
+
+**Author:** Buster (QA/Tester)  
+**Date:** 2026-04-16  
+**Status:** IMPLEMENTED  
+**Scope:** UploadData refresh button behavior and regression gates
+
+### Decision
+
+Treat the UploadData refresh button as a URL-backed retry action, not a generic datasource action.
+
+- URL-backed rows (`url`, `youtube_video`, `youtube_channel`) must render the refresh button
+- Uploaded-file rows must not render it
+- Active `processing` rows may keep the button visible, but it must be disabled to block duplicate starts
+- Regression coverage must prove that refreshing a previously processed URL-backed row clears stale processing artifacts and requeues processing
+
+### Rationale
+
+The dangerous regressions here are not cosmetic. QA needs to catch three failures immediately:
+1. File rows accidentally exposing refresh
+2. Processing rows allowing a second start
+3. Stale processed rows keeping old artifacts while pretending a refresh succeeded
+
+### Validation
+
+- ✅ All UploadData regression tests passing (7/7)
+- ✅ Button visibility coverage (URL/YouTube rows show, file rows hidden)
+- ✅ Disabled state during processing verified
+- ✅ Artifact cleanup and requeue proven
+
+---
+
+## Child URL Auto-Processing Must Advance Past Uploaded — Buster — 2026-04-16
+
+**Author:** Buster (QA/Tester)  
+**Date:** 2026-04-16  
+**Status:** IMPLEMENTED  
+**Scope:** Child URL processing lifecycle in multi-source ingestion
+
+### Decision
+
+When `processing.py` expands a parent URL source into child URLs (e.g., YouTube channel into video URLs), QA treats it as a regression unless each child `files` row is both persisted and immediately advanced into `processing` with background work dispatched. Leaving child URLs at inserted `uploaded` state is not acceptable.
+
+### Rationale
+
+The bug report was explicit: child YouTube URLs created from channel processing stayed in Uploaded forever. The stable contract is now "row created → status flips to processing → dispatch attempted."
+
+### Validation
+
+- ✅ `processing_pipeline_regression.py` tests child URL advancement
+- ✅ Child rows verified advancing from `processing` on completion
+
+---
+
+## Child URL Ingestion Reuses Main Processing Pipeline — Jarvis — 2026-04-22
+
+**Author:** Jarvis (Python / Data Dev)  
+**Date:** 2026-04-22  
+**Status:** IMPLEMENTED  
+**Scope:** Child URL processing for multi-source ingestion
+
+### Decision
+
+Reuse `_process_document_task_sync` for child URL records created during parent URL expansion instead of a separate child-thread launcher. Treat existing child rows with status `uploaded` or `error` as retryable and resume them instead of skipping as duplicates. Only skip duplicates already `processing` or `processed`.
+
+### Why
+
+- Single document-processing path for uploads, URLs, and child URLs
+- Failure handling stays explicit on the child record without introducing a second queue/trigger mechanism
+- Channel reprocessing can recover previously stranded child rows
+
+### Validation
+
+- ✅ Child URLs processed through standard pipeline
+- ✅ Retryable rows (uploaded/error) resumed correctly
+- ✅ Duplicate skipping preserves processing/processed rows

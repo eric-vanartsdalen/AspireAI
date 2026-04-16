@@ -25,6 +25,16 @@ At the start of a new attempt, clear any fields produced by the previous run:
 
 Tie that cleanup to the same transition that sets `status = 'processing'` so retries behave deterministically.
 
+### Explicit URL Refresh Should Reuse Cleanup + Requeue
+
+For URL-backed rows that need a manual refresh, keep the flow explicit:
+
+1. clean up prior external artifacts,
+2. reset the persisted row back to `uploaded`,
+3. then reuse the normal processing start endpoint.
+
+In AspireAI this lets the Web UI refresh stale web pages or YouTube-backed rows without inventing a second backend refresh contract.
+
 ### Treat `error` Rows as Retryable Work
 
 Batch processing should pull both `uploaded` and `error` rows when looking for work. Failed files are still part of the canonical pipeline; they just need a clean new attempt.

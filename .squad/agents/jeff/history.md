@@ -1787,3 +1787,8 @@ The failing UI test checks `Assert.Equal("uploaded", uploadedFile.Status)` at li
 - Treat those three source types as a shared WEB display family in the UploadData table via `UrlSourceTypeClassifier.IsWebSourceType()` plus local UI helpers in `src\\AspireApp.Web\\Components\\Pages\\UploadData.razor(.cs)`.
 - Focused regression coverage lives in `src\\AspireApp.WebTest\\Tests\\UploadDataTests.cs` and asserts WEB badge, globe icon, and URL-cell rendering for all web-backed source types.
 
+### 2026-04-16 - UploadData URL refresh should reuse cleanup + existing processing start
+- URL-backed rows in `src\\AspireApp.Web\\Components\\Pages\\UploadData.razor(.cs)` now expose a `Refresh` action, but uploaded file rows keep their existing delete-only behavior.
+- The refresh path lives in `src\\AspireApp.Web\\Shared\\FileStorageService.cs`: for URL-backed rows it reuses `cleanup-document`, resets persisted processing artifacts/state back to `uploaded`, and then reuses the existing `processing/process-document/{id}` trigger instead of adding a second backend API.
+- Regression coverage in `src\\AspireApp.WebTest\\Tests\\UploadDataTests.cs` now protects both the URL-only button rendering seam and the cleanup/reset/requeue behavior for processed web sources.
+
