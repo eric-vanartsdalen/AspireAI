@@ -756,7 +756,7 @@ else
     <!-- File Upload Section -->
     <div class="phase-info">
         <h4><i class="bi bi-file-earmark-arrow-up"></i> Upload Documents</h4>
-        <p>Upload documents for processing and analysis. Max size: 10MB. Accepted formats: .pdf, .docx, .xlsx</p>
+        <p>Upload documents for processing and analysis. Max size: 10MB. Accepted formats: .pdf, .docx, .txt, .md, .json</p>
     </div>
 
     @if (!_uploadControlsReady)
@@ -769,7 +769,7 @@ else
     {
         <label class="form-label" for="fileInput">Choose File</label>
         <InputFile OnChange="HandleFileSelected"
-                   accept=".pdf,.docx,.xlsx"
+                   accept=".pdf,.docx,.txt,.md,.json"
                    class="form-control"
                    id="fileInput"
                    data-testid="upload-file-input" />
@@ -891,24 +891,24 @@ else
                         {
                             <tr style="width:max()">
                                 <td class="file-name-cell">
-                                    <span class="source-type-badge @(file.SourceType == "url" ? "source-type-url" : "source-type-upload")">
-                                        @(file.SourceType == "url" ? "WEB" : "FILE")
+                                    <span class="source-type-badge @GetSourceBadgeClass(file.SourceType)">
+                                        @GetSourceBadgeLabel(file.SourceType)
                                     </span>
                                     @file.FileName
                                     <span class="file-name-full">@file.FileName</span>
                                 </td>
                                 <td class="status-cell">
-                                    @if (file.SourceType == "url")
+                                    @if (IsWebSource(file.SourceType))
                                     {
-                                        <i class="bi bi-globe" title="Website/Web Resource"></i>
+                                        <i class="bi bi-globe" title="@GetSourceIconTitle(file.SourceType)"></i>
                                     }
                                     else
                                     {
                                         <i class="bi bi-file-earmark" title="Uploaded File"></i>
                                     }
                                 </td>
-                                <td class="@(file.SourceType == "url" ? "url-cell" : "file-size-cell")">
-                                    @if (file.SourceType == "url")
+                                <td class="@GetSourceValueClass(file.SourceType)">
+                                    @if (IsWebSource(file.SourceType))
                                     {
                                         @if (!string.IsNullOrEmpty(file.SourceUrl))
                                         {
@@ -941,9 +941,34 @@ else
                                 </td>
                                 <td class="upload-date-cell">@file.UploadedAt.ToLocalTime().ToString("MMM dd, yyyy HH:mm")</td>
 								<td>
-                                    <button class="btn btn-danger btn-sm" @onclick="() => DeleteFile(file.FileId)">
-                                        <i class="bi bi-trash"></i> Delete
-                                    </button>
+                                    <div class="file-actions">
+                                        @if (IsWebSource(file.SourceType))
+                                        {
+                                            <button class="btn btn-primary btn-sm refresh-web-source-button"
+                                                    type="button"
+                                                    @onclick="() => RefreshWebSource(file)"
+                                                    disabled="@(file.IsProcessing || IsRefreshingSource(file.FileId))">
+                                                @if (IsRefreshingSource(file.FileId))
+                                                {
+                                                    <span class="loading-indicator">
+                                                        <span class="spinner-border" aria-hidden="true"></span>
+                                                        Refreshing...
+                                                    </span>
+                                                }
+                                                else
+                                                {
+                                                    <i class="bi bi-arrow-clockwise"></i> <span>Refresh</span>
+                                                }
+                                            </button>
+                                        }
+
+                                        <button class="btn btn-danger btn-sm"
+                                                type="button"
+                                                @onclick="() => DeleteFile(file.FileId)"
+                                                disabled="@IsRefreshingSource(file.FileId)">
+                                            <i class="bi bi-trash"></i> Delete
+                                        </button>
+                                    </div>
                                 </td>
                             </tr>
                         }

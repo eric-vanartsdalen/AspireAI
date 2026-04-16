@@ -22,6 +22,8 @@ class Phase2IngestionTests(unittest.TestCase):
         self.assertEqual(0.9, resolve_source_confidence(source_type="textbook"))
         self.assertEqual(0.7, resolve_source_confidence(source_type="upload"))
         self.assertEqual(0.5, resolve_source_confidence(source_type="url"))
+        self.assertEqual(0.4, resolve_source_confidence(source_type="youtube_video"))
+        self.assertEqual(0.5, resolve_source_confidence(source_type="youtube_channel"))
         self.assertEqual(0.3, resolve_source_confidence(source_type="user_note"))
 
     def test_canonical_document_builds_from_document_and_pages(self):

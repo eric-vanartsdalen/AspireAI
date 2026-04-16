@@ -10,12 +10,15 @@ from docling.backend.pypdfium2_backend import PyPdfiumDocumentBackend
 
 from ..models.models import Document, ProcessedDocument, PageContent
 from .docling_export_service import export_docling_outputs, sanitize_file_stem
+from .docling_service_fallback import DoclingService as FallbackDoclingService
 
 
 class DoclingService:
     def __init__(self, data_path: str = "/app/data"):
         self.data_path = Path(data_path)
         self.processed_path = self.data_path / "processed"
+        self._fallback_service = FallbackDoclingService(data_path)
+        self._fallback_service.use_docling = False
         
         # Ensure directories exist
         self.processed_path.mkdir(parents=True, exist_ok=True)
@@ -31,7 +34,10 @@ class DoclingService:
             
             if not file_path.exists():
                 raise FileNotFoundError(f"Document file not found: {file_path}")
-            
+
+            if file_path.suffix.lower() in {".txt", ".md", ".json", ".doc", ".docx"}:
+                return self._fallback_service.process_document(document, file_path)
+             
             # Convert the document
             doc_result = self.converter.convert(str(file_path))
             docling_doc = doc_result.document

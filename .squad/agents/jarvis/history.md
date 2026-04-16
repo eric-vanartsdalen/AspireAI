@@ -9,6 +9,51 @@
 
 <!-- Append new learnings below. Each entry is something lasting about the project. -->
 
+### 2026-04-22 — Child URL Expansion Must Reuse the Main Processing Pipeline
+
+**Problem:**
+- Expanding a parent URL source (for example, a YouTube channel) can create child URL rows in `files`, but an ad-hoc child thread launcher is not a durable ingestion seam and made child processing behavior hard to reason about.
+- Retryable duplicate child URLs (`uploaded` / `error`) also need to resume through the same document pipeline instead of being skipped forever as “duplicates”.
+
+**Fix:**
+- Updated `app/routers/processing.py` so channel expansion collects child document IDs, reuses existing retryable child rows, and then runs those children through the same `_process_document_task_sync` path used by normal document processing.
+- Child failures stay explicit on the child row (`error`), while parent channel processing continues independently.
+
+**Result:**
+- Child YouTube video rows no longer depend on a second queueing mechanism; they are kicked directly into the established processing pipeline.
+- Reprocessing a channel can now resume previously stuck child rows when their status is still retryable.
+
+**Key Pattern:**
+- **Pipeline reuse over side threads:** When a parent ingestion step materializes child documents, collect their IDs and invoke the same processing path the rest of the system uses instead of inventing a parallel trigger mechanism.
+- **Retryable duplicate reuse:** Duplicate child URLs should only be skipped when already `processing` or `processed`; `uploaded` and `error` rows should be resumed.
+
+**Key file paths:**
+- `src/AspireApp.PythonServices/app/routers/processing.py`
+- `src/AspireApp.PythonServices/tests/test_processing_pipeline_regression.py`
+
+### 2026-04-22 — YouTube Channel Ingestion Needs Consent-Resilient Resolution + Feed-First Expansion
+
+**Problem:**
+- Public YouTube channel URLs like `https://www.youtube.com/@csharpfritz/videos` can redirect non-browser fetches through `consent.youtube.com`, which made the channel handler parse the wrong HTML and fail with "No videos found".
+- The old handler depended only on scraping `/videos` page HTML, which is brittle against consent interstitials and modern YouTube layout changes.
+
+**Fix:**
+- Updated `YouTubeChannelHandler` to send consent-bypass cookies/headers, detect consent interstitials explicitly, and retry the `continue=` URL before parsing.
+- Resolve the canonical `UC...` channel ID from page metadata, fetch recent uploads from the public RSS feed (`/feeds/videos.xml`), then supplement from page HTML video IDs for extra resilience and deduping.
+- Preserve explicit failure semantics: unresolved channels raise `Could not resolve YouTube channel ...`; resolved-but-empty channels still raise `No videos found on YouTube channel ...`.
+
+**Result:**
+- Handle-based channel URLs expand into child video URLs reliably without an API key.
+- Live smoke validation now succeeds for `@csharpfritz`, and focused regression tests cover consent retry + unresolved-channel failure behavior.
+
+**Key Pattern:**
+- **Feed-first public channel expansion:** For YouTube channel ingestion without API keys, resolve the canonical channel ID from HTML, then use the public RSS feed for stable video discovery and keep HTML parsing as a fallback/supplement only.
+- **Consent-aware fetch path:** Detect `consent.youtube.com` responses explicitly and retry the decoded `continue` target with stable consent cookies instead of treating the interstitial HTML as channel content.
+
+**Key file paths:**
+- `src/AspireApp.PythonServices/app/services/url_handlers/youtube.py`
+- `src/AspireApp.PythonServices/tests/test_processing_pipeline_regression.py`
+
 ### 2026-04-16 — Team Sync: Follow-Up Chat History + Conversation Persistence
 
 **Context:** Jeff wired gateway history + persisted assistant metadata. Buster validated regression coverage. Cross-service contract alignment proven (54 Python + 44 .NET tests passing).
@@ -1002,3 +1047,75 @@ eo4j_service to LightRagRetriever for enrichment when LightRAG lacks scores
 
 **Status:** MVP locked; post-MVP priorities ordered; Neo4j schema investigation begins 2026-04-30
 
+
+## Learnings
+
+### 2025-01-19: URL Ingestion Architecture Design
+
+**Context:** User requested support for txt/md/docx/json uploads plus URL ingestion (web pages, YouTube videos/channels).
+
+**Architecture Decision:**
+- Designed pluggable handler architecture using Protocol pattern
+- Decouples content acquisition (fetch) from extraction (parse) from persistence
+- Handlers: FileUploadHandler, WebPageHandler, YouTubeVideoHandler, YouTubeChannelHandler, JsonHandler
+
+**Key File Paths:**
+- Design doc: src/AspireApp.PythonServices/docs/INGESTION_HANDLER_DESIGN.md
+- Decision log: .squad/decisions/inbox/jarvis-url-ingestion-architecture.md
+- Current ingestion flow: pp/routers/processing.py::process_document_task()
+- Fallback extractors: pp/services/docling_service_fallback.py (_extract_pages_pdf, _extract_pages_docx, _extract_pages_text)
+- Database entry point: pp/services/database_service.py::create_file_record() (supports source_url, source_type fields)
+- C# upload gate: src/AspireApp.Web/Controllers/FileUploadController.cs::_allowedExtensions
+
+**Current State Analysis:**
+- ✅ PDF/DOCX supported via Docling or PyPDF2/python-docx fallback
+- ⚠️ TXT/MD blocked in C# controller but fallback exists in Python
+- ❌ JSON not implemented (no structured handler)
+- ❌ URL ingestion missing (no fetch/download logic)
+
+**User Preferences:**
+- Wants extensible design for future sources (RSS, podcasts, APIs)
+- Concerned about YouTube API reliability and quota limits
+- Needs clear decision points for YouTube API key requirement
+
+**Dependency Risks:**
+- youtube-transcript-api — relies on undocumented YouTube API (may break)
+- google-api-python-client — requires API key for channel expansion
+- eautifulsoup4 — stable, low risk
+- Large JSON files could cause memory issues (need chunking strategy)
+
+**Patterns:**
+- Protocol-based handlers enable testability (mock fetch, real parse)
+- Registry pattern for handler dispatch (can_handle → get_handler)
+- Source confidence scores vary by type (YouTube: 0.4, JSON: 0.8, upload: 0.7)
+- Temp file strategy: /app/data/temp/ for fetched content, cleanup after processing
+
+**Next Steps:**
+- Phase 1: JSON support (update C# allowed extensions, implement JsonHandler)
+- Phase 2: WebPageHandler with BeautifulSoup
+- Phase 3: YouTube handlers (conditional on API key decision)
+- Update C# contracts in BrainContractModels.cs for URL ingestion requests
+
+
+### 2026-04-16 — YouTube transcript dependency recovery
+
+**Context:** The lightweight Python container failed during `pip install -r requirements.txt` because `youtube-transcript-api==0.8.*` no longer resolves on PyPI.
+
+**Architecture Decision:**
+- Standardize the Python service on `youtube-transcript-api==1.2.*`, the current installable release line.
+- Keep the YouTube transcript handler tolerant of both API shapes while the branch converges: use the v1 instance `.list(...)` path when available, otherwise fall back to the legacy class-level `list_transcripts(...)` call.
+- Normalize fetched transcript results so both dict-style segments and v1 transcript snippet objects flow into the same text assembly step.
+
+**Key File Paths:**
+- Dependency pin: `src/AspireApp.PythonServices/requirements.txt`
+- Compatibility shim: `src/AspireApp.PythonServices/app/services/url_handlers/youtube.py`
+- Broken build path validated after fix: `src/AspireApp.PythonServices/Dockerfile.lightweight`
+
+**Patterns:**
+- For third-party dependency bumps, verify the package exists on PyPI before editing pins.
+- If a package API moved during the version bump, add a small compatibility seam at the ingestion boundary instead of spreading version checks through the pipeline.
+- Validate the actual container install path that failed, not just a local import.
+
+**User Preferences:**
+- Keep the fix surgical.
+- Prove the dependency-install path works again with minimal, concrete validation.

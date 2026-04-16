@@ -178,35 +178,27 @@ public class FileStorageService(
     /// <summary>
     /// Updates file status
     /// </summary>
-    public async Task<bool> UpdateFileStatusAsync(int fileId, string status)
+    public async Task<bool> UpdateFileStatusAsync(int fileId, string status, CancellationToken cancellationToken = default)
     {
         try
         {
             await EnsureInitializedAsync();
 
-            var file = await _context.Datasources.FindAsync(fileId);
+            var file = await _context.Datasources.SingleOrDefaultAsync(
+                candidate => candidate.Id == fileId,
+                cancellationToken);
             if (file == null)
             {
                 return false;
             }
 
-            file.Status = status;
+            ApplyFileStatus(file, status);
 
-            // Update timestamp fields based on status
-            if (status == "processing")
-            {
-                file.ProcessingStartedAt = DateTime.UtcNow;
-            }
-            else if (status == "processed" || status == "error")
-            {
-                file.ProcessingCompletedAt = DateTime.UtcNow;
-            }
-
-            await _context.SaveChangesAsync();
+            await _context.SaveChangesAsync(cancellationToken);
 
             if (_logger.IsEnabled(LogLevel.Information))
             {
-                _logger.LogInformation("Updated file status: {FileId}, Status: {Status}", fileId, status);
+                _logger.LogInformation("Updated file status: {FileId}, Status: {Status}", fileId, file.Status);
             }
             return true;
         }
@@ -218,6 +210,48 @@ public class FileStorageService(
             }
             throw;
         }
+    }
+
+    public async Task<AutomaticProcessingDispatchResult> RefreshWebSourceAsync(
+        int fileId,
+        string? tenantId = null,
+        CancellationToken cancellationToken = default)
+    {
+        await EnsureInitializedAsync();
+
+        var file = await BuildTenantScopedQuery(fileId, tenantId).SingleOrDefaultAsync(cancellationToken);
+        if (file is null)
+        {
+            throw new InvalidOperationException("The selected URL source could not be found.");
+        }
+
+        if (!UrlSourceTypeClassifier.IsWebSourceType(file.SourceType))
+        {
+            throw new InvalidOperationException("Refresh is only available for URL-backed sources.");
+        }
+
+        if (string.Equals(file.Status, "processing", StringComparison.OrdinalIgnoreCase))
+        {
+            throw new InvalidOperationException("This URL source is already processing.");
+        }
+
+        if (_documentProcessingCoordinator is not null && RequiresExternalCleanup(file))
+        {
+            await _documentProcessingCoordinator.CleanupDocumentAsync(file.Id, cancellationToken);
+        }
+
+        ApplyFileStatus(file, "uploaded");
+        await _context.SaveChangesAsync(cancellationToken);
+
+        if (_logger.IsEnabled(LogLevel.Information))
+        {
+            _logger.LogInformation(
+                "Reset URL-backed datasource {FileId} ({SourceType}) to uploaded before refresh",
+                file.Id,
+                file.SourceType);
+        }
+
+        return await TryStartAutomaticProcessingAsync(file.Id, cancellationToken);
     }
 
     /// <summary>
@@ -340,11 +374,11 @@ public class FileStorageService(
                     _logger.LogInformation("Deleted file from data directory: {FilePath}", filePath);
                 }
             }
-            else if (file.SourceType == "url")
+            else if (!string.IsNullOrWhiteSpace(file.SourceUrl))
             {
                 if (_logger.IsEnabled(LogLevel.Information))
                 {
-                    _logger.LogInformation("Deleted URL datasource: {Url}", file.SourceUrl);
+                    _logger.LogInformation("Deleted URL datasource: {SourceType} {Url}", file.SourceType, file.SourceUrl);
                 }
             }
             else
@@ -398,7 +432,13 @@ public class FileStorageService(
     /// <summary>
     /// Adds a URL datasource entry with hash generation for consistent duplicate detection
     /// </summary>
-    public async Task<FileMetadata> AddUrlAsync(string sourceName, string sourceUrl, string status = "uploaded", string tenantId = "default")
+    public async Task<FileMetadata> AddUrlAsync(
+        string sourceName,
+        string sourceUrl,
+        string sourceType = UrlSourceTypeClassifier.GenericUrl,
+        string? mimeType = null,
+        string status = "uploaded",
+        string tenantId = "default")
     {
         try
         {
@@ -417,9 +457,9 @@ public class FileStorageService(
                 UploadedAt = DateTime.UtcNow,
                 Status = status,
                 FileHash = urlHash, // Store URL hash for duplicate detection
-                SourceType = "url",
+                SourceType = sourceType,
                 SourceUrl = sourceUrl,
-                MimeType = "text/html", // Default to HTML for web pages
+                MimeType = mimeType ?? UrlSourceTypeClassifier.GetDefaultMimeType(sourceType),
                 TenantId = tenantId
             };
 
@@ -456,16 +496,70 @@ public class FileStorageService(
 
     private static bool RequiresExternalCleanup(FileMetadata file)
     {
-        if (!string.Equals(file.SourceType, "upload", StringComparison.OrdinalIgnoreCase))
-        {
-            return false;
-        }
-
         return string.Equals(file.Status, "processing", StringComparison.OrdinalIgnoreCase)
             || string.Equals(file.Status, "processed", StringComparison.OrdinalIgnoreCase)
             || string.Equals(file.Status, "error", StringComparison.OrdinalIgnoreCase)
             || !string.IsNullOrWhiteSpace(file.DoclingDocumentPath)
             || !string.IsNullOrWhiteSpace(file.Neo4jDocumentNodeId);
     }
+
+    private IQueryable<FileMetadata> BuildTenantScopedQuery(int fileId, string? tenantId)
+    {
+        var query = _context.Datasources.Where(file => file.Id == fileId);
+
+        if (!string.IsNullOrWhiteSpace(tenantId))
+        {
+            query = query.Where(file => file.TenantId == tenantId);
+        }
+
+        return query;
+    }
+
+    private void ApplyFileStatus(FileMetadata file, string status)
+    {
+        var normalizedStatus = NormalizeStatus(status);
+        file.Status = normalizedStatus;
+
+        switch (normalizedStatus)
+        {
+            case "processing":
+                file.ProcessingStartedAt = DateTime.UtcNow;
+                ClearProcessingArtifacts(file, clearStartedAt: false);
+                break;
+
+            case "processed":
+                file.ProcessingCompletedAt = DateTime.UtcNow;
+                file.ProcessingError = null;
+                break;
+
+            case "error":
+                file.ProcessingCompletedAt = DateTime.UtcNow;
+                break;
+
+            case "uploaded":
+                ClearProcessingArtifacts(file, clearStartedAt: true);
+                break;
+        }
+    }
+
+    private void ClearProcessingArtifacts(FileMetadata file, bool clearStartedAt)
+    {
+        if (clearStartedAt)
+        {
+            file.ProcessingStartedAt = null;
+        }
+
+        file.ProcessingCompletedAt = null;
+        file.ProcessingError = null;
+        file.DoclingDocumentPath = null;
+        file.TotalPages = null;
+        file.Neo4jDocumentNodeId = null;
+
+        var existingPages = _context.DatasourcePages.Where(page => page.FileId == file.Id);
+        _context.DatasourcePages.RemoveRange(existingPages);
+    }
+
+    private static string NormalizeStatus(string status) =>
+        status.Trim().ToLowerInvariant();
 
 }

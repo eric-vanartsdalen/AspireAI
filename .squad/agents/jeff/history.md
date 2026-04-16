@@ -93,6 +93,54 @@
 
 **Carry-forward gap:** E2E browser proof (Playwright/Aspire): save → hard reload → reopen → citations/confidence visible. Deferred to Phase 3b polish.
 
+### 2026-04-21 — Upload Extension Points Analysis
+
+**Context:** Eric requested support for txt, md, docx, json uploads plus URL ingestion and YouTube/channel handling, with extensible design.
+
+**What I Analyzed:**
+- Existing upload infrastructure (FileUploadController, UploadData.razor, FileStorageService)
+- Backend already allowed `.pdf`, `.docx`, `.txt`, `.md` — just needed `.json` added
+- UI `accept` attribute out of sync (showed `.xlsx`, missing `.txt`, `.md`)
+- URL upload endpoint exists but treats all URLs as generic `source_type = "url"`
+- Sample test data available for all requested formats in `AspireApp.WebTest\DataExample\`
+
+**Key Findings:**
+1. **File Type Gap:** Backend validation ready for 4/5 types; UI messaging mismatched
+2. **URL Classification Seam:** No distinction between generic web pages, YouTube videos, or channels
+3. **Extensibility Pattern:** `FileMetadata.SourceType` field exists but underutilized — perfect for source taxonomy
+4. **Python Handoff Clear:** Docling processes files; URL/YouTube handling deferred to Jarvis
+
+**Recommended Implementation Order:**
+1. **Phase 1 (Low Risk):** Sync file type validation across backend + UI, add `.json`
+2. **Phase 2 (Medium Risk):** Create `UrlSourceTypeClassifier` to detect YouTube URLs, update `AddUrlAsync`
+3. **Phase 3 (Jarvis Handoff):** Python JSON parser, YouTube transcript fetcher
+
+**Extensibility Seams Created:**
+- `UrlSourceTypeClassifier` pattern for future source types (podcasts, GitHub repos, etc.)
+- `FileMetadata.SourceType` taxonomy (`url`, `youtube-video`, `youtube-channel`, future: `podcast-feed`)
+- Classifier is pure static helper — easy to test and extend
+
+**Key File Paths:**
+- `src\AspireApp.Web\Controllers\FileUploadController.cs` — Line 23 (_allowedExtensions), line 264 (AddUrlAsync call)
+- `src\AspireApp.Web\Components\Pages\UploadData.razor` — Lines 759, 772 (UI messaging + accept)
+- `src\AspireApp.Web\Shared\FileStorageService.cs` — Line 401 (AddUrlAsync signature)
+- `src\AspireApp.Web\Services\UrlSourceTypeClassifier.cs` — New file (YouTube detection)
+- `src\AspireApp.WebTest\Tests\FileUploadControllerTests.cs` — New tests for .json + YouTube classification
+
+**Learnings:**
+- Always check UI constraints match backend validation (accept attributes, display messages)
+- Source type taxonomy scales better than boolean flags (`isYouTube` → `youtube-video`/`youtube-channel`/etc.)
+- Static classifier helpers separate concerns cleanly (DI-free, pure logic, easy testing)
+- Test data drives design validation — having real samples (`GettysburgAddress.txt`, `city-locations-pops.json`) proves the flow end-to-end
+
+**Analysis document:** `.squad/agents/jeff/extensible-upload-analysis.md`
+
+**Open questions for Eric:**
+1. `.xlsx` support needed? (UI mentioned but backend blocks)
+2. Process YouTube URLs now or store for Phase 4?
+3. Treat JSON as structured data import or text extraction?
+4. Show different icons for youtube-video vs youtube-channel in UI?
+
 ### 2026-04-15 — Critique Mode UI Layer Implementation
 
 **What I Did:**
@@ -1730,3 +1778,17 @@ The failing UI test checks `Assert.Equal("uploaded", uploadedFile.Status)` at li
 - Python gateway: `src/AspireApp.ApiService/Services/BrainBackendClient.cs` (request routing)
 
 **Status:** MVP locked; post-MVP priorities ordered; ready for Phase 3c investigation kickoff after P3b (2026-04-30)
+
+
+## Learnings
+
+### 2026-04-16 - UploadData web-source display semantics
+- Keep stored source taxonomy explicit: `url`, `youtube_video`, and `youtube_channel` remain distinct persisted values.
+- Treat those three source types as a shared WEB display family in the UploadData table via `UrlSourceTypeClassifier.IsWebSourceType()` plus local UI helpers in `src\\AspireApp.Web\\Components\\Pages\\UploadData.razor(.cs)`.
+- Focused regression coverage lives in `src\\AspireApp.WebTest\\Tests\\UploadDataTests.cs` and asserts WEB badge, globe icon, and URL-cell rendering for all web-backed source types.
+
+### 2026-04-16 - UploadData URL refresh should reuse cleanup + existing processing start
+- URL-backed rows in `src\\AspireApp.Web\\Components\\Pages\\UploadData.razor(.cs)` now expose a `Refresh` action, but uploaded file rows keep their existing delete-only behavior.
+- The refresh path lives in `src\\AspireApp.Web\\Shared\\FileStorageService.cs`: for URL-backed rows it reuses `cleanup-document`, resets persisted processing artifacts/state back to `uploaded`, and then reuses the existing `processing/process-document/{id}` trigger instead of adding a second backend API.
+- Regression coverage in `src\\AspireApp.WebTest\\Tests\\UploadDataTests.cs` now protects both the URL-only button rendering seam and the cleanup/reset/requeue behavior for processed web sources.
+

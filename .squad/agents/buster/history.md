@@ -199,6 +199,48 @@
 - `src/AspireApp.PythonServices/tests/test_vector_infrastructure.py` (new file: 11 tests)
 - `roadmap/Tasks.md` (lines 170-178: P2-C status update)
 
+### 2026-04-22 — Ingestion & Upload Regression Test Plan for Multi-Format & URL Ingestion
+
+**Task:** Analyze current test coverage and create a plan for adding regression tests for txt/md/docx/json uploads and URL ingestion (plain web pages, YouTube transcripts, YouTube channel expansion).
+
+**Key findings:**
+- **Current coverage is PDF-focused:** `AuthenticatedUploadUxTests.cs` (Playwright E2E), `FileUploadControllerTests.cs` (controller unit tests), `OperationalUploadStoreTests.cs` (Postgres persistence). No tests for plaintext formats or URL ingestion.
+- **Fallback processors exist but are untested:** `docling_service_fallback.py` has `_extract_pages_text()`, `_extract_pages_docx()`, `_extract_pages_pdf()` but only PDF processing has regression coverage.
+- **URL ingestion has no tests:** `FileUploadController.UploadUrl` exists (line 194) with duplicate detection via hash, but no regression tests prove URL metadata persistence, duplicate rejection, or malformed URL handling.
+- **External dependency risk not isolated:** No mocking layer for YouTube API calls (`yt-dlp`) or web scraping (`httpx`). Live integration tests would be flaky.
+
+**Recommended Test Execution Order:**
+1. **Phase 1 (Cheapest):** Python unit tests for txt/md/docx/json processing with mocked dependencies (2 days)
+2. **Phase 2 (Medium):** C# controller tests for new MIME types and URL validation (3 days)
+3. **Phase 3 (Integration):** Contract round-trip tests for txt/md/docx content (C# → Python → Postgres) (4 days)
+4. **Phase 4 (External):** URL ingestion integration tests with mocked `httpx`/`yt-dlp` (6 days)
+5. **Phase 5 (E2E - Optional):** Playwright upload flow for new file types (8 days, defer unless critical)
+
+**Cheapest Trustworthy Validation Layers:**
+- **Plain text/markdown:** Python unit test (`_extract_pages_text()` fallback processor) — deterministic, no Aspire required
+- **DOCX:** Python unit test with mocked `python-docx` library — avoids real file parsing edge cases
+- **Web pages:** Python unit test with mocked `httpx.AsyncClient.get()` — isolates external HTTP dependency
+- **YouTube transcripts:** Python unit test with mocked `yt-dlp.YoutubeDL.extract_info()` — avoids YouTube API quota/rate limits
+- **YouTube channel expansion:** Python unit test with mocked `yt-dlp` returning 3-video channel (not 100+) — prevents quota exhaustion
+
+**Flaky/External Dependency Risks:**
+- **YouTube API:** Videos deleted, transcripts disabled, API quota exhausted, rate limiting → **Mitigation:** Mock all `yt-dlp` calls in default test suite; add opt-in integration tests (`pytest -m integration`) for real YouTube
+- **Web scraping:** Sites change HTML, add rate limiting, block scrapers → **Mitigation:** Mock `httpx` responses; add integration test against one stable URL (e.g., `httpbin.org/html`)
+- **DOCX parsing:** `python-docx` fails on corrupted files, complex formatting → **Mitigation:** Mock library in unit tests; add error handling for extraction failures
+- **JSON semantic ambiguity:** Unclear if JSON should be plaintext or parsed semantically → **Mitigation:** Block implementation until product owner clarifies requirements
+
+**Key file paths:**
+- `src/AspireApp.PythonServices/app/services/docling_service_fallback.py` (lines 337-350: `_extract_pages_text()`, line 305: `_extract_pages_docx()`)
+- `src/AspireApp.Web/Controllers/FileUploadController.cs` (line 194: `UploadUrl`, line 230: `CalculateUrlHash`, line 238: duplicate detection)
+- `src/AspireApp.WebTest/Tests/FileUploadControllerTests.cs` (line 70: uses `notes.txt` mock but no processing validation)
+- `src/AspireApp.WebTest/DataExample/dotnet-readme.md` (unused test fixture, good candidate for markdown ingestion test)
+
+**Decisions to Document:**
+- Ingestion test strategy: Phase 1-4 execution order, Python mocking patterns, YouTube/web scraping isolation
+- Recommend deferring E2E Playwright tests until product owner identifies critical UX gaps (high maintenance cost vs. contract round-trip tests)
+
+**Deliverable:** Created `.squad/agents/buster/ingestion-test-plan.md` — 26KB detailed plan with test templates, mock patterns, error scenarios, time estimates (15 days without E2E, 23 days with E2E)
+
 ### 2026-04-14 — P2-B Live Proof: Confidence Validation via Aspire Integration Test
 
 **Task:** Create live validation proof for the next Knowledge Layer slice (P2-B confidence-enrichment).
@@ -1431,6 +1473,28 @@ The behavior being tested (legacy schema detection with detailed diagnostics) st
 **Cross-Agent Coordination:**
 - Warden approved fix direction (security gates intact)
 - Jeff implemented 3 app-level fixes (hydration, tenant fallback, upload readiness)
+
+### 2026-04-16 — UploadData refresh-action regression contract
+
+**Task:** Tighten `UploadData` bUnit coverage for the URL-backed refresh button flow.
+
+**Key findings:**
+- `UploadData` already routes refreshes through `RefreshWebSource()` and `FileStorageService.RefreshWebSourceAsync()`; the missing QA value was proving the UI only exposes that seam for URL-backed rows.
+- URL-backed rows render an enabled refresh button for retryable states and a disabled refresh button while processing is already active.
+- Refreshing a processed YouTube row must clear persisted processing artifacts, remove stale page rows, call coordinator cleanup, and requeue processing.
+
+**Validation:**
+- `dotnet test .\src\AspireApp.WebTest\AspireApp.WebTest.csproj --filter FullyQualifiedName~UploadDataTests` ✅
+- `dotnet test .\src\AspireApp.WebTest\AspireApp.WebTest.csproj --filter "FullyQualifiedName~UploadDataTests|FullyQualifiedName~FileUploadControllerTests" --no-build` ✅
+
+**Key file paths:**
+- `src\AspireApp.WebTest\Tests\UploadDataTests.cs`
+- `src\AspireApp.Web\Components\Pages\UploadData.razor`
+- `src\AspireApp.Web\Components\Pages\UploadData.razor.cs`
+- `src\AspireApp.Web\Shared\FileStorageService.cs`
+
+**Pattern:**
+- For URL/YouTube datasource actions, pair render-state checks (visible vs. disabled) with one bUnit action test that proves persisted cleanup + requeue side effects.
 - All 13 tests passing; security audit complete
 - Session logged: .squad/log/2026-04-11T17-53-25-auth-test-fixes.md
 
@@ -2011,3 +2075,20 @@ High — Three independent test failures all exhibit the same LightRAG stuck-in-
 - `src\AspireApp.PythonServices\app\routers\brain.py`
 - `src\AspireApp.PythonServices\app\services\llm_chat_service.py`
 - `src\AspireApp.PythonServices\tests\test_brain_chat.py`
+
+### 2026-04-16 — Child URL Auto-Processing Regression Coverage
+
+**Task:** Audit the queue/trigger gap where YouTube child video URLs created during channel processing stayed in `Uploaded` instead of entering processing automatically.
+
+**What QA locked down:**
+- `src\AspireApp.PythonServices\app\routers\processing.py` now treats channel-expanded child URLs as immediately queued work: create the URL datasource row, move it to `processing`, and dispatch processing with the same pipeline collaborators instead of leaving it waiting for a second trigger.
+- `src\AspireApp.PythonServices\tests\test_processing_pipeline_regression.py` now asserts the child rows are kicked into `processing` and that background dispatch is attempted for each child ID created during channel expansion.
+- Focus stayed narrow on the regression seam; no broadening into unrelated ingestion behavior.
+
+**Verification:**
+- `python -m pytest tests\test_processing_pipeline_regression.py -q` from `src\AspireApp.PythonServices` passed (9/9).
+
+**Key File Paths:**
+- `src\AspireApp.PythonServices\app\routers\processing.py`
+- `src\AspireApp.PythonServices\tests\test_processing_pipeline_regression.py`
+- `src\AspireApp.PythonServices\app\services\database_service.py`

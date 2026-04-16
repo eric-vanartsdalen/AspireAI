@@ -1,7 +1,8 @@
-﻿# Decisions
+# Decisions
 
 > Shared decision log. All agents read this before starting work.
 > Scribe merges new decisions from `.squad/decisions/inbox/` after each session.
+> **Note (2026-04-16T16-58-29Z):** Merged 8 inbox decisions from URL Refresh + Extensible Ingestion Implementation session (Jeff, Buster, Jarvis, Bob). Key outcomes: (1) URL Refresh Action for UploadData rows (visible for URL/YouTube, hidden for file rows, disabled during processing). (2) Extensible upload surfaces and source type taxonomy (file types expanded to .json; YouTube URLs classified for future processing). (3) Extensible URL ingestion architecture (handler-based framework for pluggable content sources). (4) Multi-format ingestion regression test plan (phased approach minimizing external dependencies). (5) Child URL auto-processing contract (URLs created from parent expansion immediately processed, not left in uploaded). (6) Child URL reuses main processing pipeline (single document-processing path for all ingestion types). Key decision: Keep source taxonomy explicit in storage while treating web-backed sources uniformly in UI (WEB semantics). All focused tests passing. No exact duplicates found; consolidated related decisions. Inbox cleared.
 > **Note (2026-04-16T10-11-47Z):** Merged 1 inbox decision from upload navigation test hardening session (Buster, Jeff). Key outcome: Diagnosed `DeleteUploadedTestFile` failure as Playwright/sidebar-animation brittleness, not product regression. Hardened test seam to use direct protected-route entry via mock sign-in with `returnUrl=%2Fupload` and upload-surface markers instead of sidebar nav dependency. Result: Upload tests now stable and properly scoped (upload behavior ≠ navigation infrastructure). Inbox cleared.
 > **Note (2026-04-21T21:00:00Z):** Merged 1 inbox decision from MVP documentation & post-MVP fix ordering session (Bob, Verbal). Key outcome: Established MVP Declaration Pattern with clear milestone markers (functional gateway-routed chat end-to-end works), documented working features + known limitations side-by-side, captured and ordered two post-MVP fixes by user impact (conversation context + evidence persistence). Phase 3 status updated from "in progress" to "MVP Achieved"; post-MVP work explicitly scoped with technical ownership (Jeff + Jarvis for context; Buster + Jeff for evidence). Documentation now reflects honest product state. Inbox cleared.
 > **Note (2026-04-16T07:35:37Z):** Merged 2 inbox decisions from conversation context + evidence persistence implementation session (Jarvis, Jeff, Buster). Key outcomes: (1) `conversation_history` backward-compatible field added to BRAIN chat contract, normalized to `[]` at Python boundary. (2) Assistant response metadata (evidence/confidence/reasoning) now persisted on `chat_messages.assistant_response_json` and rehydrated on conversation reopen. (3) Follow-up questions preserve prior turns through retrieval + generation. (4) Critique-mode reasoning carries history through planning/retrieval/synthesis/critique phases. (5) 54 Python tests + 44 .NET tests passing; cross-service contract alignment proven. (6) Carry-forward: E2E browser proof (Playwright/Aspire) deferred to Phase 3b polish. Inbox cleared.
@@ -24,6 +25,7 @@
 > **Note (2026-04-15T20:25:34Z):** Merged 17 inbox decisions from planning doc reconcile + test failure triage session (Verbal, Buster, Jeff, Bob, Jarvis, Warden). Key outcomes: (1) Planning docs reframed to reflect Phase 1/2 foundation completion (gateway, contracts, retrieval, chat UI all complete; not "future setup"); next honest milestone is "Phase 3 beta: prove one end-to-end Aspire chat flow with citations/confidence in Web UI". (2) Test failure triage: 6 failures → 3 root causes: upload status race (test assumption fix), Python processing timeout (infrastructure investigation), auth split-brain (endpoint wiring fix). (3) Chat-mode regression coverage gap identified (Regular → Critique → Regular); added to Phase 3b roadmap with honest persistence boundary wording. (4) Phase 3 critical path locked: agent framework selection (PydanticAI) is BLOCKING GATE with 2026-04-24 decision deadline. (5) Webtest fixture guard decision: skip gracefully when Aspire health checks fail. (6) Auth split-brain pattern diagnosed; hard-navigation proof recommended over passive UI observation. (7) Planning document roles clarified (Plan.md = active roadmap, Tasks.md = execution tracker, Roadmap.md = historical legacy). No exact duplicates found. Inbox cleared.
 > **Note (2026-04-15T21:17:30Z):** Merged 3 inbox decisions from critique-mode configuration failure fix session (Jarvis, Jeff, Buster). Key outcome: Fixed deterministic critique-mode config failure across three seams: (1) Python PydanticAI provider now uses explicit Ollama path instead of late env mutation. (2) .NET gateway/Web clients preserve downstream HTTP errors and disable unsafe POST retries. (3) Regression coverage consolidates all three seams with evidence paths. No exact duplicates found. Inbox cleared. See session log `2026-04-15T21-17-30Z-critique-mode-fix.md` and orchestration logs for details.
 > **Note (2026-04-21T21:00:00Z):** Merged 1 inbox decision from MVP documentation & post-MVP fix ordering session (Bob, Verbal). Key outcome: Established MVP Declaration Pattern with clear milestone markers (functional gateway-routed chat end-to-end works), documented working features + known limitations side-by-side, captured and ordered two post-MVP fixes by user impact (conversation context + evidence persistence). Phase 3 status updated from "in progress" to "MVP Achieved"; post-MVP work explicitly scoped with technical ownership (Jeff + Jarvis for context; Buster + Jeff for evidence). Documentation now reflects honest product state. Inbox cleared.
+> **Note (2026-04-16T15:34:22Z):** Merged 2 inbox decisions from YouTube followup fixes session (Jeff, Jarvis). Key outcomes: (1) Web source labeling refined — UploadData table now treats `url`, `youtube_video`, `youtube_channel` uniformly in UI (WEB semantics) while preserving explicit taxonomic storage. UrlSourceTypeClassifier provides shared taxonomy helper. (2) YouTube channel ingestion made consent-resilient — Channel URLs now survive consent redirects via stable headers, explicit interstitial detection, canonical ID resolution from page metadata, and RSS feed as primary discovery source with HTML supplement. Both focused test suites passing (bUnit + Python regression + live smoke). Inbox cleared.
 
 <!-- Decisions are appended below. Each entry starts with ## -->
 
@@ -3148,3 +3150,274 @@ The failing seam was infrastructure-specific; the product navigation UI was func
 
 - Pre-existing 90s timeout in `BrainQueryReturnsConfidenceEnrichedResults` remains (unrelated to navigation seam, flagged for future investigation)
 - Broader test infrastructure now uses explicit-seam pattern for all protected-route entry
+
+
+## YouTube Transcript Dependency Pin and Compatibility Seam — Jarvis — 2026-04-16
+
+# YouTube transcript dependency pin and compatibility seam
+
+- **Date:** 2026-04-16
+- **Owner:** Jarvis
+- **Status:** Accepted
+
+## Context
+The lightweight Python container failed before startup because `youtube-transcript-api==0.8.*` no longer exists on PyPI. The service also had code written against the older class-method API.
+
+## Decision
+- Pin `youtube-transcript-api` to `1.2.*` in `src/AspireApp.PythonServices/requirements.txt`.
+- Keep `app/services/url_handlers/youtube.py` compatible with the current instance-based API (`YouTubeTranscriptApi().list(...)`) while preserving a legacy fallback.
+- Normalize fetched transcript payloads so both raw dict segments and newer snippet objects are accepted by the same assembly path.
+
+## Why
+This keeps the startup fix surgical: the broken dependency pin is corrected, and the directly coupled runtime compatibility issue is handled in one place at the YouTube ingestion boundary.
+
+## Validation
+- `python -m pip install --dry-run -r src/AspireApp.PythonServices/requirements.txt`
+- `docker build --no-cache -f src\AspireApp.PythonServices\Dockerfile.lightweight -t aspireapp-python-lightweight-validate src\AspireApp.PythonServices`
+
+
+
+## Web-backed source types share WEB UI semantics — Jeff — 2026-04-16
+
+**Author:** Jeff (.NET Dev)  
+**Status:** IMPLEMENTED  
+**Scope:** UploadData table UI rendering, source type taxonomy, web-backed document semantics
+
+### Context
+
+The UploadData documents table previously treated only `source_type == "url"` as web-backed rows. After URL classification expanded to include `youtube_video` and `youtube_channel`, those rows still rendered as uploaded-file semantics (showing file size, file status) despite being URL-backed sources.
+
+### Decision
+
+Keep persisted source taxonomy explicit (`url`, `youtube_video`, `youtube_channel`) and update UI semantics instead of collapsing stored values into a single `url` type. The UploadData table should treat all three values as WEB items for badge text, iconography, URL-vs-size cell rendering, and metadata display.
+
+### Rationale
+
+- **Explicit storage:** Maintains taxonomic clarity for future extensibility (e.g., additional web-backed types)
+- **Semantic rendering:** UI layer drives from source classification, not from schema collapse
+- **Minimal surface:** Shared classification helper (`UrlSourceTypeClassifier.IsWebSourceType()`) centralizes the logic
+
+### Implementation
+
+- Added `UrlSourceTypeClassifier.IsWebSourceType()` public static method to identify URL, YouTube video, and YouTube channel types
+- Updated `UploadData.razor` / `UploadData.razor.cs` to check `IsWebSourceType()` instead of `SourceType == "url"`
+- Updated badge rendering to display "WEB" for all web-backed types
+- Updated URL cell rendering to show URL instead of file size for web-backed rows
+
+### Files Changed
+
+- `src/AspireApp.Web/Services/UrlSourceTypeClassifier.cs` — Added `IsWebSourceType()`
+- `src/AspireApp.Web/Components/Pages/UploadData.razor`
+- `src/AspireApp.Web/Components/Pages/UploadData.razor.cs`
+
+### Test Coverage
+
+- `src/AspireApp.WebTest/Tests/UploadDataTests.cs` — Focused bUnit regression coverage
+  - Web badge rendered for all web-backed types ✅
+  - URL cell displays link for web rows ✅
+  - Size cell hidden for web rows ✅
+  - Stored source types preserved (no schema collapse) ✅
+
+### Consequences
+
+- Future web-backed source types can be added to the classifier without changing UI logic
+- All web-backed rows now render uniformly in the table
+- Source taxonomy remains explicit for backend processing and future extensions
+
+---
+
+## YouTube Channel Ingestion: Consent-Resilient, Feed-First Expansion — Jarvis — 2026-04-16
+
+**Author:** Jarvis (Python / Data Dev)  
+**Status:** IMPLEMENTED  
+**Scope:** YouTube URL ingestion pipeline, channel expansion, public feed integration
+
+### Context
+
+Public YouTube channel URLs like `https://www.youtube.com/@csharpfritz/videos` were failing in the Python ingestion pipeline. Non-browser HTTP fetches triggered consent interstitials (redirect to `consent.youtube.com`), and the existing handler tried to parse the consent page as channel content, resulting in false "No videos found" failures.
+
+### Decision
+
+**Keep the no-API-key design, but make channel expansion consent-resilient and feed-first:**
+
+- Send stable consent cookies/headers on public YouTube requests
+- Detect consent interstitial responses and retry the decoded `continue=` target instead of parsing consent HTML
+- Resolve the canonical `UC...` channel ID from page metadata
+- Use YouTube's public RSS feed (`/feeds/videos.xml?channel_id=...`) as the primary video discovery source
+- Supplement from page HTML video IDs for broader coverage and deduplication
+- Preserve explicit failure semantics:
+  - `Could not resolve YouTube channel ...` when channel identity cannot be resolved
+  - `No videos found on YouTube channel ...` only when resolution succeeded but no videos are discoverable
+
+### Rationale
+
+- **RSS feed stability:** Much more stable than parsing modern channel page HTML
+- **Canonical ID resolution:** Resolving the channel ID from the page, then combining feed + HTML results, gives robust coverage while staying compatible with handle URLs and future page-shape changes
+- **No-key constraint:** Maintains original design assumption (no YouTube API key required)
+- **Explicit errors:** Users get accurate error signals to distinguish "channel not found" from "empty channel"
+
+### Implementation
+
+1. **Consent handling** (`url_content_fetcher.py`):
+   - Send stable consent cookies on YouTube requests
+   - Detect `consent.youtube.com` redirects; extract and decode the `continue=` target
+   - Retry the decoded URL instead of parsing consent HTML
+
+2. **Channel ID resolution** (`youtube.py`):
+   - Parse initial channel page metadata to extract canonical `UC...` ID
+   - Validate ID format before proceeding
+
+3. **Video discovery** (`youtube.py`):
+   - Primary path: Query public RSS feed with `channel_id=...`
+   - Fallback: Parse page HTML for video IDs when RSS returns empty
+   - Deduplicate results
+
+4. **Error semantics**:
+   - Clear distinction between resolution failure and empty-channel result
+
+### Files Changed
+
+- `src/AspireApp.PythonServices/app/services/url_handlers/youtube.py` — Consent handling, ID resolution, feed-first discovery
+- `src/AspireApp.PythonServices/app/services/url_content_fetcher.py` — Consent interstitial detection and retry
+- `src/AspireApp.PythonServices/app/routers/processing.py` — Error message wording
+
+### Test Coverage
+
+- `src/AspireApp.PythonServices/tests/test_processing_pipeline_regression.py` — Focused regression suite
+  - Consent redirect handling ✅
+  - Canonical channel ID resolution ✅
+  - RSS feed video discovery ✅
+  - HTML fallback coverage ✅
+  - Deduplication validation ✅
+  - Live smoke check passing ✅
+
+### Consequences
+
+- YouTube channel expansion now survives consent redirects and page layout changes
+- Explicit error distinction helps users debug "channel not found" vs. empty channels
+- No breaking changes to existing URL/video ingestion paths
+- Future YouTube format changes only require updates to metadata parsing or feed query parameters, not wholesale handler rewrite
+
+### Relationship to Other Decisions
+
+- **Related:** "Web-backed source types share WEB UI semantics" (2026-04-16) — This YouTube work enables the UI to display YouTube channels uniformly as WEB-backed rows
+- **Upstream:** URL classification and ingestion framework (no changes to broader pipeline)
+- **No Impact:** OAuth, auth, tenant isolation, .NET services
+
+---
+
+
+---
+
+## URL Refresh Reuses Existing Processing Flow — Jeff — 2026-04-16
+
+**Author:** Jeff (.NET Dev)  
+**Date:** 2026-04-16  
+**Status:** IMPLEMENTED  
+**Scope:** UploadData web-source refresh action
+
+### Decision
+
+For URL-backed datasource rows, the Web UI refresh action should:
+1. Call the existing cleanup flow when prior processing artifacts exist
+2. Reset the datasource row back to `uploaded`
+3. Call the existing `processing/process-document/{id}` endpoint
+
+Do not add a separate backend "refresh" API for this slice.
+
+### Why
+
+- The Python service already owns cleanup and processing start semantics
+- The Web app already owns the persisted datasource row and can reset local lifecycle fields safely before re-queuing work
+- Reusing those seams keeps refresh behavior aligned with existing upload/add-URL behavior and avoids a second orchestration contract for the same work
+
+### Implementation
+
+- `src/AspireApp.Web/Components/Pages/UploadData.razor` — Refresh button visible only for web-backed rows
+- `src/AspireApp.Web/Shared/FileStorageService.cs` — RefreshUrlItemAsync method reuses cleanup + reset + requeue
+- `src/AspireApp.WebTest/Tests/UploadDataTests.cs` — Regression coverage for button visibility, disabled state, and artifact cleanup
+
+### Validation
+
+- ✅ Focused UploadData tests passing
+- ✅ dotnet build succeeds
+- ✅ No breaking changes to existing file-row behavior
+
+---
+
+## URL Refresh UI Contract — Buster — 2026-04-16
+
+**Author:** Buster (QA/Tester)  
+**Date:** 2026-04-16  
+**Status:** IMPLEMENTED  
+**Scope:** UploadData refresh button behavior and regression gates
+
+### Decision
+
+Treat the UploadData refresh button as a URL-backed retry action, not a generic datasource action.
+
+- URL-backed rows (`url`, `youtube_video`, `youtube_channel`) must render the refresh button
+- Uploaded-file rows must not render it
+- Active `processing` rows may keep the button visible, but it must be disabled to block duplicate starts
+- Regression coverage must prove that refreshing a previously processed URL-backed row clears stale processing artifacts and requeues processing
+
+### Rationale
+
+The dangerous regressions here are not cosmetic. QA needs to catch three failures immediately:
+1. File rows accidentally exposing refresh
+2. Processing rows allowing a second start
+3. Stale processed rows keeping old artifacts while pretending a refresh succeeded
+
+### Validation
+
+- ✅ All UploadData regression tests passing (7/7)
+- ✅ Button visibility coverage (URL/YouTube rows show, file rows hidden)
+- ✅ Disabled state during processing verified
+- ✅ Artifact cleanup and requeue proven
+
+---
+
+## Child URL Auto-Processing Must Advance Past Uploaded — Buster — 2026-04-16
+
+**Author:** Buster (QA/Tester)  
+**Date:** 2026-04-16  
+**Status:** IMPLEMENTED  
+**Scope:** Child URL processing lifecycle in multi-source ingestion
+
+### Decision
+
+When `processing.py` expands a parent URL source into child URLs (e.g., YouTube channel into video URLs), QA treats it as a regression unless each child `files` row is both persisted and immediately advanced into `processing` with background work dispatched. Leaving child URLs at inserted `uploaded` state is not acceptable.
+
+### Rationale
+
+The bug report was explicit: child YouTube URLs created from channel processing stayed in Uploaded forever. The stable contract is now "row created → status flips to processing → dispatch attempted."
+
+### Validation
+
+- ✅ `processing_pipeline_regression.py` tests child URL advancement
+- ✅ Child rows verified advancing from `processing` on completion
+
+---
+
+## Child URL Ingestion Reuses Main Processing Pipeline — Jarvis — 2026-04-22
+
+**Author:** Jarvis (Python / Data Dev)  
+**Date:** 2026-04-22  
+**Status:** IMPLEMENTED  
+**Scope:** Child URL processing for multi-source ingestion
+
+### Decision
+
+Reuse `_process_document_task_sync` for child URL records created during parent URL expansion instead of a separate child-thread launcher. Treat existing child rows with status `uploaded` or `error` as retryable and resume them instead of skipping as duplicates. Only skip duplicates already `processing` or `processed`.
+
+### Why
+
+- Single document-processing path for uploads, URLs, and child URLs
+- Failure handling stays explicit on the child record without introducing a second queue/trigger mechanism
+- Channel reprocessing can recover previously stranded child rows
+
+### Validation
+
+- ✅ Child URLs processed through standard pipeline
+- ✅ Retryable rows (uploaded/error) resumed correctly
+- ✅ Duplicate skipping preserves processing/processed rows

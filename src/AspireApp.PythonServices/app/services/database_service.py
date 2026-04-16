@@ -1058,3 +1058,95 @@ class DatabaseService:
 
     def get_active_services(self) -> List[Dict[str, Any]]:
         return [{"name": "python-service", "type": "FastAPI", "status": "active"}]
+
+    def find_duplicate_by_url(self, source_url: str, tenant_id: str = "default") -> Optional[Dict[str, Any]]:
+        """Check if a URL already exists in the datasources for the given tenant."""
+        try:
+            with self._pool.get_connection() as conn:
+                cursor = conn.cursor()
+                cursor.execute(
+                    """
+                    SELECT id, file_name, original_file_name, file_path, file_hash,
+                           file_size, mime_type, uploaded_at, status,
+                           processing_started_at, processing_completed_at, processing_error,
+                           docling_document_path, total_pages, neo4j_document_node_id,
+                           tenant_id, source_type, source_confidence, source_url
+                    FROM files
+                    WHERE source_url = %s AND tenant_id = %s
+                    LIMIT 1
+                    """,
+                    (source_url, tenant_id),
+                )
+                row = cursor.fetchone()
+                return self._row_to_file_dict(row) if row else None
+        except Exception as exc:
+            logger.error("Error checking for duplicate URL %s: %s", source_url, exc)
+            return None
+
+    def add_url_datasource(
+        self,
+        source_name: str,
+        source_url: str,
+        source_type: str = "url",
+        mime_type: Optional[str] = None,
+        status: str = "uploaded",
+        tenant_id: str = "default",
+    ) -> int:
+        """Add a URL datasource entry to the files table."""
+        import hashlib
+        
+        # Generate hash for the URL for consistent duplicate detection
+        url_hash = hashlib.sha256(source_url.strip().lower().encode()).hexdigest().upper()
+        normalized_source_type = normalize_source_type(source_type)
+        normalized_source_confidence = resolve_source_confidence(
+            source_type=normalized_source_type,
+            mime_type=mime_type,
+            file_name=source_name,
+        )
+        resolved_mime_type = mime_type or (
+            "text/plain" if normalized_source_type in {"youtube_video", "youtube_channel"} else "text/html"
+        )
+        
+        try:
+            with self._pool.get_connection() as conn:
+                cursor = conn.cursor()
+                cursor.execute(
+                    """
+                    INSERT INTO files (
+                        file_name, original_file_name, file_path, file_hash,
+                        file_size, mime_type, uploaded_at, status, tenant_id,
+                        source_type, source_confidence, source_url
+                    ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                    RETURNING id
+                    """,
+                    (
+                        source_name,           # file_name
+                        source_name,           # original_file_name
+                        "",                    # file_path (empty for URLs)
+                        url_hash,              # file_hash
+                        0,                     # file_size
+                        resolved_mime_type,    # mime_type
+                        datetime.now(UTC),     # uploaded_at
+                        self._normalize_file_status(status),
+                        tenant_id,
+                        normalized_source_type,
+                        normalized_source_confidence,
+                        source_url,            # source_url
+                    ),
+                )
+                result = cursor.fetchone()
+                file_id = result[0] if result else None
+                
+                if file_id is None:
+                    raise RuntimeError("Failed to insert URL datasource - no ID returned")
+                
+                logger.info(
+                    "Added URL datasource: name=%s, url=%s, tenant=%s, id=%s",
+                    source_name, source_url, tenant_id, file_id
+                )
+                return file_id
+                
+        except Exception as exc:
+            logger.error("Error adding URL datasource %s: %s", source_url, exc)
+            raise
+

@@ -1,4 +1,5 @@
 using AspireApp.Web.Data;
+using AspireApp.Web.Services;
 using AspireApp.Web.Shared;
 using Microsoft.AspNetCore.Components;
 using Microsoft.AspNetCore.Components.Forms;
@@ -19,6 +20,7 @@ public partial class UploadData : ComponentBase, IAsyncDisposable, IDisposable
     protected bool _isUploading = false;
     private int _uploadProgress = 0;
     private readonly List<string> _uploadErrors = [];
+    private readonly HashSet<int> _refreshingSourceIds = [];
     private bool _uploadControlsReady;
     
     // Duplicate detection tracking
@@ -28,7 +30,7 @@ public partial class UploadData : ComponentBase, IAsyncDisposable, IDisposable
 
     // Website URL upload property
     private string _websiteUrl = string.Empty;
-    private static readonly string[] AllowedExtensions = [".pdf", ".docx", ".txt", ".md"];
+    private static readonly string[] AllowedExtensions = [".pdf", ".docx", ".txt", ".md", ".json"];
 
     [Inject]
     public IConfiguration Configuration { get; set; } = default!;
@@ -371,6 +373,73 @@ public partial class UploadData : ComponentBase, IAsyncDisposable, IDisposable
             }
             _uploadMessage = $"Error deleting file: {ex.Message}";
             _messageClass = "error";
+        }
+    }
+
+    protected async Task RefreshWebSource(FileMetadata file)
+    {
+        if (!IsWebSource(file.SourceType) || !_refreshingSourceIds.Add(file.Id))
+        {
+            return;
+        }
+
+        try
+        {
+            _uploadErrors.Clear();
+            _isDuplicate = false;
+            _duplicateFileInfo = null;
+            _showDuplicateToast = false;
+            _uploadMessage = $"Refreshing '{file.FileName}'...";
+            _messageClass = "info";
+            await InvokeAsync(StateHasChanged);
+
+            var refreshResult = await FileStorageService.RefreshWebSourceAsync(file.Id, TenantContext.CurrentTenantId);
+
+            if (!refreshResult.Attempted)
+            {
+                _uploadMessage = $"Refresh reset '{file.FileName}', but automatic processing is currently unavailable.";
+                _messageClass = "warning";
+            }
+            else if (refreshResult.Started)
+            {
+                _uploadMessage = $"Refresh requested for '{file.FileName}'. URL processing started automatically.";
+                _messageClass = "success";
+            }
+            else
+            {
+                _uploadMessage = $"Refresh prepared for '{file.FileName}', but automatic processing could not be started.";
+                _messageClass = "warning";
+
+                if (!string.IsNullOrWhiteSpace(refreshResult.Detail))
+                {
+                    _uploadErrors.Add(refreshResult.Detail);
+                }
+            }
+
+            await LoadUploadedFiles();
+        }
+        catch (InvalidOperationException ex)
+        {
+            _uploadErrors.Clear();
+            _uploadMessage = ex.Message;
+            _messageClass = "warning";
+        }
+        catch (Exception ex)
+        {
+            if (Logger.IsEnabled(LogLevel.Error))
+            {
+                Logger.LogError(ex, "Error refreshing URL source {FileId}", file.Id);
+            }
+
+            _uploadErrors.Clear();
+            _uploadErrors.Add(ex.Message);
+            _uploadMessage = $"Error refreshing URL source: {ex.Message}";
+            _messageClass = "error";
+        }
+        finally
+        {
+            _refreshingSourceIds.Remove(file.Id);
+            await InvokeAsync(StateHasChanged);
         }
     }
 
@@ -720,11 +789,21 @@ public partial class UploadData : ComponentBase, IAsyncDisposable, IDisposable
         }
 
         var fileName = GenerateFileNameFromUrl(uri);
+        var sourceType = UrlSourceTypeClassifier.Classify(websiteUrl);
         var fileMetadata = await FileStorageService.AddUrlAsync(
             fileName,
             websiteUrl,
+            sourceType,
+            UrlSourceTypeClassifier.GetDefaultMimeType(sourceType),
             "uploaded",
             TenantContext.CurrentTenantId);
+
+        var automaticProcessing = await FileStorageService.TryStartAutomaticProcessingAsync(fileMetadata.Id);
+        var message = automaticProcessing.Attempted
+            ? automaticProcessing.Started
+                ? "Website URL added successfully. Processing started automatically."
+                : "Website URL added successfully, but automatic processing could not be started."
+            : "Website URL added successfully.";
 
         return new UrlUploadResult
         {
@@ -732,7 +811,7 @@ public partial class UploadData : ComponentBase, IAsyncDisposable, IDisposable
             IsDuplicate = false,
             Url = websiteUrl,
             FileName = fileName,
-            Message = "Website URL added successfully.",
+            Message = message,
             ExistingFileId = fileMetadata.Id
         };
     }
@@ -801,6 +880,30 @@ public partial class UploadData : ComponentBase, IAsyncDisposable, IDisposable
             _ => "status-pending"
         };
     }
+
+    private static bool IsWebSource(string? sourceType) =>
+        UrlSourceTypeClassifier.IsWebSourceType(sourceType);
+
+    private static string GetSourceBadgeClass(string? sourceType) =>
+        IsWebSource(sourceType) ? "source-type-url" : "source-type-upload";
+
+    private static string GetSourceBadgeLabel(string? sourceType) =>
+        IsWebSource(sourceType) ? "WEB" : "FILE";
+
+    private static string GetSourceValueClass(string? sourceType) =>
+        IsWebSource(sourceType) ? "url-cell" : "file-size-cell";
+
+    private bool IsRefreshingSource(int fileId) =>
+        _refreshingSourceIds.Contains(fileId);
+
+    private static string GetSourceIconTitle(string? sourceType) =>
+        sourceType?.Trim().ToLowerInvariant() switch
+        {
+            UrlSourceTypeClassifier.YouTubeVideo => "YouTube Video",
+            UrlSourceTypeClassifier.YouTubeChannel => "YouTube Channel",
+            UrlSourceTypeClassifier.GenericUrl => "Website/Web Resource",
+            _ => "Uploaded File"
+        };
 
     public class FileUploadResult
     {
