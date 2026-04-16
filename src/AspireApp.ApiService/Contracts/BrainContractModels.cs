@@ -19,8 +19,13 @@ public sealed record BrainChatRequest(
     [property: JsonPropertyName("query")] string Query,
     [property: JsonPropertyName("mode")] ChatMode Mode = ChatMode.Regular,
     [property: JsonPropertyName("conversation_id")] string? ConversationId = null,
-    [property: JsonPropertyName("top_k")] int TopK = 5)
+    [property: JsonPropertyName("top_k")] int TopK = 5,
+    [property: JsonPropertyName("conversation_history")] IReadOnlyList<ConversationMessage>? ConversationHistory = null)
     : BrainContractEnvelope(TenantId, CorrelationId);
+
+public sealed record ConversationMessage(
+    [property: JsonPropertyName("role")] string Role,
+    [property: JsonPropertyName("content")] string Content);
 
 public record CanonicalDocument(
     string TenantId,

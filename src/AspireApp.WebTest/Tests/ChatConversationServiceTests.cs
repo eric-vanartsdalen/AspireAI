@@ -2,6 +2,9 @@ extern alias web;
 
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging.Abstractions;
+using BrainChatEvidence = web::AspireApp.Web.Services.BrainChatEvidence;
+using BrainChatReasoningStep = web::AspireApp.Web.Services.BrainChatReasoningStep;
+using BrainChatResponse = web::AspireApp.Web.Services.BrainChatResponse;
 using ChatConversation = web::AspireApp.Web.Data.ChatConversation;
 using ChatConversationMessage = web::AspireApp.Web.Data.ChatConversationMessage;
 using ChatConversationModes = web::AspireApp.Web.Services.ChatConversationModes;
@@ -66,6 +69,61 @@ public sealed class ChatConversationServiceTests
         var conversation = await context.ChatConversations.SingleAsync(TestContext.Current.CancellationToken);
         Assert.Equal(ChatConversationTitleSources.Generated, conversation.TitleSource);
         Assert.Equal("Neo4j index tuning plan", conversation.Title);
+    }
+
+    [Fact]
+    public async Task AddMessageAsync_PersistsAssistantMetadata_AndReloadsIt()
+    {
+        await using var context = CreateDbContext();
+        var service = CreateService(context);
+
+        var started = await service.StartConversationAsync(
+            "demo-taylor-jones",
+            "tenant-alpha",
+            "Summarize the current document state.",
+            cancellationToken: TestContext.Current.CancellationToken);
+
+        var response = new BrainChatResponse(
+            Answer: "The document covers Neo4j indexing guidance.",
+            Confidence: 0.87,
+            Evidence:
+            [
+                new BrainChatEvidence("Index on frequently filtered properties.", 0.82, "document:7/page:2")
+            ],
+            ReasoningSteps:
+            [
+                new BrainChatReasoningStep("retrieval", "Matched the indexing section.", "brain-knowledge-retriever", "1 result")
+            ],
+            ProactiveSuggestions: []);
+
+        var updated = await service.AddMessageAsync(
+            started.ConversationId,
+            "demo-taylor-jones",
+            ChatConversationRoles.Assistant,
+            response.Answer,
+            TestContext.Current.CancellationToken,
+            response);
+
+        Assert.NotNull(updated);
+
+        var storedAssistantMessage = await context.ChatConversationMessages
+            .SingleAsync(
+                message => message.ConversationId == started.ConversationId &&
+                           message.Role == ChatConversationRoles.Assistant,
+                TestContext.Current.CancellationToken);
+
+        Assert.False(string.IsNullOrWhiteSpace(storedAssistantMessage.AssistantResponseJson));
+
+        var reloaded = await service.GetConversationAsync(
+            started.ConversationId,
+            "demo-taylor-jones",
+            TestContext.Current.CancellationToken);
+
+        var assistantMessage = Assert.Single(reloaded!.Messages, message => message.Role == ChatConversationRoles.Assistant);
+        Assert.NotNull(assistantMessage.AssistantResponse);
+        Assert.Equal(0.87, assistantMessage.AssistantResponse!.Confidence);
+        Assert.Single(assistantMessage.AssistantResponse.Evidence);
+        Assert.Single(assistantMessage.AssistantResponse.ReasoningSteps);
     }
 
     [Fact]

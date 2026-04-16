@@ -3,7 +3,7 @@ from __future__ import annotations
 from enum import Enum
 from typing import Any
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 
 class ChatMode(str, Enum):
@@ -111,13 +111,27 @@ class ReasoningStep(BrainContractModel):
     result: str
 
 
+class ConversationMessage(BrainContractModel):
+    """Single prior chat turn supplied to preserve follow-up context."""
+
+    role: str = Field(min_length=1)
+    content: str = Field(min_length=1)
+
+
 class BrainChatRequest(EnvelopeMixin):
     """Chat request routed through the BRAIN gateway."""
 
     query: str
     mode: ChatMode = ChatMode.REGULAR
     conversation_id: str | None = None
+    conversation_history: list[ConversationMessage] = Field(default_factory=list)
     top_k: int = Field(default=5, ge=1)
+
+    @field_validator("conversation_history", mode="before")
+    @classmethod
+    def _normalize_conversation_history(cls, value: Any) -> Any:
+        """Accept missing/null history from older callers while normalizing to a list."""
+        return [] if value is None else value
 
 
 class ReasonResponse(EnvelopeMixin):

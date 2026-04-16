@@ -5,6 +5,7 @@ using BrainChatResponse = web::AspireApp.Web.Services.BrainChatResponse;
 using BrainChatEvidence = web::AspireApp.Web.Services.BrainChatEvidence;
 using BrainChatReasoningStep = web::AspireApp.Web.Services.BrainChatReasoningStep;
 using BrainChatException = web::AspireApp.Web.Services.BrainChatException;
+using ConversationMessage = web::AspireApp.Web.Services.ConversationMessage;
 using System.Net;
 using System.Security.Claims;
 using System.Threading.Tasks;
@@ -125,6 +126,44 @@ public sealed class ChatCritiqueModeTests
             Assert.NotNull(chatClient.LastRequest);
             Assert.Equal(ChatConversationModes.Critique, chatClient.LastRequest.Value.Mode);
             Assert.Equal("Test critique query", chatClient.LastRequest.Value.Query);
+        }, TimeSpan.FromSeconds(5));
+    }
+
+    [Fact]
+    public async Task FollowUpQuestion_InSavedConversation_PassesPriorConversationHistoryToClient()
+    {
+        var conversationService = new StubChatConversationServiceWithFollowUpHistory();
+        var chatClient = new RecordingBrainChatClient();
+        using var testContext = CreateTestContext(conversationService, chatClient);
+
+        var cut = testContext.Render<Chat>();
+
+        await cut.InvokeAsync(() =>
+        {
+            var conversationButton = cut.Find("[data-testid='chat-conversation-select']");
+            conversationButton.Click();
+        });
+
+        await cut.InvokeAsync(async () =>
+        {
+            var input = cut.Find("[data-testid='chat-message-input']");
+            input.Input("What about the newly uploaded document?");
+
+            var button = cut.Find("[data-testid='chat-send']");
+            await button.ClickAsync(new Microsoft.AspNetCore.Components.Web.MouseEventArgs());
+        });
+
+        cut.WaitForAssertion(() =>
+        {
+            Assert.NotNull(chatClient.LastRequest);
+            Assert.Equal("What about the newly uploaded document?", chatClient.LastRequest.Value.Query);
+
+            var history = Assert.IsAssignableFrom<IReadOnlyList<ConversationMessage>>(chatClient.LastRequest.Value.ConversationHistory!);
+            Assert.Equal(2, history.Count);
+            Assert.Equal(ChatConversationRoles.User, history[0].Role);
+            Assert.Equal("Original prompt", history[0].Content);
+            Assert.Equal(ChatConversationRoles.Assistant, history[1].Role);
+            Assert.DoesNotContain(history, message => message.Content.Contains("newly uploaded document", StringComparison.OrdinalIgnoreCase));
         }, TimeSpan.FromSeconds(5));
     }
 
@@ -386,6 +425,36 @@ public sealed class ChatCritiqueModeTests
     }
 
     [Fact]
+    public async Task ExistingConversation_RendersPersistedAssistantMetadata_WhenReloaded()
+    {
+        var conversationService = new StubChatConversationServiceWithPersistedAssistantMetadata();
+        using var testContext = CreateTestContext(conversationService, new RecordingBrainChatClient());
+
+        var cut = testContext.Render<Chat>();
+
+        await cut.InvokeAsync(() =>
+        {
+            var conversationButton = cut.Find("[data-testid='chat-conversation-select']");
+            conversationButton.Click();
+        });
+
+        cut.WaitForAssertion(() =>
+        {
+            var evidencePanel = cut.Find("[data-testid='chat-evidence-panel']");
+            Assert.Contains("confidence", evidencePanel.TextContent, StringComparison.OrdinalIgnoreCase);
+
+            var evidenceSources = cut.FindAll("[data-testid='chat-evidence-source']");
+            Assert.Single(evidenceSources);
+            Assert.Contains("document:7/page:3", evidenceSources[0].TextContent, StringComparison.OrdinalIgnoreCase);
+
+            var reasoningSteps = cut.FindAll("[data-testid='chat-reasoning-step']");
+            Assert.Single(reasoningSteps);
+            Assert.Contains("retrieval", reasoningSteps[0].TextContent, StringComparison.OrdinalIgnoreCase);
+            Assert.Contains("Matched the saved upload context.", reasoningSteps[0].TextContent, StringComparison.OrdinalIgnoreCase);
+        }, TimeSpan.FromSeconds(5));
+    }
+
+    [Fact]
     public async Task SelectingSavedConversation_UpdatesModeAcrossCritiqueAndRegularThreads()
     {
         var conversationService = new StubChatConversationServiceWithMixedModes();
@@ -555,7 +624,7 @@ public sealed class ChatCritiqueModeTests
 
     private sealed class RecordingBrainChatClient : IBrainChatClient
     {
-        public (string Query, string Mode, string? TenantId, string? ConversationId, int TopK)? LastRequest { get; private set; }
+        public (string Query, string Mode, string? TenantId, string? ConversationId, int TopK, IReadOnlyList<ConversationMessage>? ConversationHistory)? LastRequest { get; private set; }
         public BrainChatResponse? ResponseToReturn { get; set; }
         public BrainChatException? ExceptionToThrow { get; set; }
 
@@ -565,9 +634,10 @@ public sealed class ChatCritiqueModeTests
             string? tenantId,
             string? conversationId,
             int topK = 5,
+            IReadOnlyList<ConversationMessage>? conversationHistory = null,
             CancellationToken cancellationToken = default)
         {
-            LastRequest = (query, mode, tenantId, conversationId, topK);
+            LastRequest = (query, mode, tenantId, conversationId, topK, conversationHistory);
 
             if (ExceptionToThrow is not null)
             {
@@ -725,7 +795,8 @@ public sealed class ChatCritiqueModeTests
             string ownerUserId,
             string role,
             string content,
-            CancellationToken cancellationToken = default)
+            CancellationToken cancellationToken = default,
+            BrainChatResponse? assistantResponse = null)
         {
             cancellationToken.ThrowIfCancellationRequested();
 
@@ -856,7 +927,8 @@ public sealed class ChatCritiqueModeTests
             string ownerUserId,
             string role,
             string content,
-            CancellationToken cancellationToken = default)
+            CancellationToken cancellationToken = default,
+            BrainChatResponse? assistantResponse = null)
         {
             cancellationToken.ThrowIfCancellationRequested();
 
@@ -874,6 +946,236 @@ public sealed class ChatCritiqueModeTests
             };
 
             return Task.FromResult<ChatConversationSummary?>(_activeSummary);
+        }
+
+        public Task<ChatConversationSummary?> RenameConversationAsync(
+            Guid conversationId,
+            string ownerUserId,
+            string title,
+            CancellationToken cancellationToken = default)
+        {
+            throw new NotSupportedException();
+        }
+
+        public Task<ChatConversationSummary?> UpdateChatModeAsync(
+            Guid conversationId,
+            string ownerUserId,
+            string chatMode,
+            CancellationToken cancellationToken = default)
+        {
+            throw new NotSupportedException();
+        }
+
+        public Task<bool> DeleteConversationAsync(
+            Guid conversationId,
+            string ownerUserId,
+            CancellationToken cancellationToken = default)
+        {
+            throw new NotSupportedException();
+        }
+    }
+
+    private sealed class StubChatConversationServiceWithFollowUpHistory : IChatConversationService
+    {
+        private static readonly Guid ConversationId = Guid.Parse("99999999-9999-9999-9999-999999999999");
+        private static readonly DateTime Timestamp = new(2026, 4, 22, 13, 0, 0, DateTimeKind.Utc);
+
+        public Task<IReadOnlyList<ChatConversationSummary>> ListConversationsAsync(
+            string ownerUserId,
+            CancellationToken cancellationToken = default)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            return Task.FromResult<IReadOnlyList<ChatConversationSummary>>(
+            [
+                new ChatConversationSummary(
+                    ConversationId,
+                    "Follow-up ready conversation",
+                    "The previous assistant answer",
+                    "tenant-alpha",
+                    ChatConversationModes.Regular,
+                    2,
+                    false,
+                    Timestamp,
+                    Timestamp)
+            ]);
+        }
+
+        public Task<ChatConversationDetail?> GetConversationAsync(
+            Guid conversationId,
+            string ownerUserId,
+            CancellationToken cancellationToken = default)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            return Task.FromResult<ChatConversationDetail?>(
+                new ChatConversationDetail(
+                    conversationId,
+                    "Follow-up ready conversation",
+                    "tenant-alpha",
+                    ChatConversationModes.Regular,
+                    false,
+                    Timestamp,
+                    Timestamp,
+                    [
+                        new ChatConversationMessageRecord(
+                            Guid.Parse("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"),
+                            ChatConversationRoles.User,
+                            "Original prompt",
+                            1,
+                            Timestamp),
+                        new ChatConversationMessageRecord(
+                            Guid.Parse("bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb"),
+                            ChatConversationRoles.Assistant,
+                            "Original assistant answer",
+                            2,
+                            Timestamp.AddSeconds(1))
+                    ]));
+        }
+
+        public Task<ChatConversationSummary> StartConversationAsync(
+            string ownerUserId,
+            string? tenantId,
+            string userMessage,
+            string chatMode = "regular",
+            CancellationToken cancellationToken = default)
+        {
+            throw new NotSupportedException();
+        }
+
+        public Task<ChatConversationSummary?> AddMessageAsync(
+            Guid conversationId,
+            string ownerUserId,
+            string role,
+            string content,
+            CancellationToken cancellationToken = default,
+            BrainChatResponse? assistantResponse = null)
+        {
+            return Task.FromResult<ChatConversationSummary?>(
+                new ChatConversationSummary(
+                    ConversationId,
+                    "Follow-up ready conversation",
+                    content,
+                    "tenant-alpha",
+                    ChatConversationModes.Regular,
+                    3,
+                    false,
+                    Timestamp,
+                    Timestamp.AddSeconds(2)));
+        }
+
+        public Task<ChatConversationSummary?> RenameConversationAsync(
+            Guid conversationId,
+            string ownerUserId,
+            string title,
+            CancellationToken cancellationToken = default)
+        {
+            throw new NotSupportedException();
+        }
+
+        public Task<ChatConversationSummary?> UpdateChatModeAsync(
+            Guid conversationId,
+            string ownerUserId,
+            string chatMode,
+            CancellationToken cancellationToken = default)
+        {
+            throw new NotSupportedException();
+        }
+
+        public Task<bool> DeleteConversationAsync(
+            Guid conversationId,
+            string ownerUserId,
+            CancellationToken cancellationToken = default)
+        {
+            throw new NotSupportedException();
+        }
+    }
+
+    private sealed class StubChatConversationServiceWithPersistedAssistantMetadata : IChatConversationService
+    {
+        private static readonly Guid ConversationId = Guid.Parse("12121212-1212-1212-1212-121212121212");
+        private static readonly DateTime Timestamp = new(2026, 4, 22, 14, 0, 0, DateTimeKind.Utc);
+
+        public Task<IReadOnlyList<ChatConversationSummary>> ListConversationsAsync(
+            string ownerUserId,
+            CancellationToken cancellationToken = default)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            return Task.FromResult<IReadOnlyList<ChatConversationSummary>>(
+            [
+                new ChatConversationSummary(
+                    ConversationId,
+                    "Saved metadata conversation",
+                    "Saved assistant answer",
+                    "tenant-alpha",
+                    ChatConversationModes.Critique,
+                    2,
+                    false,
+                    Timestamp,
+                    Timestamp)
+            ]);
+        }
+
+        public Task<ChatConversationDetail?> GetConversationAsync(
+            Guid conversationId,
+            string ownerUserId,
+            CancellationToken cancellationToken = default)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            return Task.FromResult<ChatConversationDetail?>(
+                new ChatConversationDetail(
+                    conversationId,
+                    "Saved metadata conversation",
+                    "tenant-alpha",
+                    ChatConversationModes.Critique,
+                    false,
+                    Timestamp,
+                    Timestamp,
+                    [
+                        new ChatConversationMessageRecord(
+                            Guid.Parse("13131313-1313-1313-1313-131313131313"),
+                            ChatConversationRoles.User,
+                            "What changed after the upload?",
+                            1,
+                            Timestamp),
+                        new ChatConversationMessageRecord(
+                            Guid.Parse("14141414-1414-1414-1414-141414141414"),
+                            ChatConversationRoles.Assistant,
+                            "The uploaded document adds Neo4j indexing guidance.",
+                            2,
+                            Timestamp.AddSeconds(1),
+                            new BrainChatResponse(
+                                Answer: "The uploaded document adds Neo4j indexing guidance.",
+                                Confidence: 0.88,
+                                Evidence:
+                                [
+                                    new BrainChatEvidence("Neo4j indexes should match the filtered properties.", 0.84, "document:7/page:3")
+                                ],
+                                ReasoningSteps:
+                                [
+                                    new BrainChatReasoningStep("retrieval", "Matched the saved upload context.", "brain-knowledge-retriever", "1 result")
+                                ],
+                                ProactiveSuggestions: []))
+                    ]));
+        }
+
+        public Task<ChatConversationSummary> StartConversationAsync(
+            string ownerUserId,
+            string? tenantId,
+            string userMessage,
+            string chatMode = "regular",
+            CancellationToken cancellationToken = default)
+        {
+            throw new NotSupportedException();
+        }
+
+        public Task<ChatConversationSummary?> AddMessageAsync(
+            Guid conversationId,
+            string ownerUserId,
+            string role,
+            string content,
+            CancellationToken cancellationToken = default,
+            BrainChatResponse? assistantResponse = null)
+        {
+            throw new NotSupportedException();
         }
 
         public Task<ChatConversationSummary?> RenameConversationAsync(
@@ -1001,7 +1303,8 @@ public sealed class ChatCritiqueModeTests
             string ownerUserId,
             string role,
             string content,
-            CancellationToken cancellationToken = default)
+            CancellationToken cancellationToken = default,
+            BrainChatResponse? assistantResponse = null)
         {
             throw new NotSupportedException();
         }

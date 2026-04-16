@@ -19,8 +19,10 @@ if str(TEST_ROOT) not in sys.path:
 
 from app.contracts import (
     BrainQueryRequest,
+    BrainChatRequest,
     CanonicalDocument,
     Claim,
+    ConversationMessage,
     Contradiction,
     EnvelopeMixin,
     Evidence,
@@ -179,6 +181,45 @@ class Phase1ContractTests(unittest.TestCase):
         self.assertEqual("corr-query", payload["correlation_id"])
         self.assertEqual("Aspire", payload["query"])
         self.assertEqual(4, payload["top_k"])
+
+    def test_brain_chat_request_accepts_optional_conversation_history(self):
+        request = BrainChatRequest(
+            tenant_id="tenant-chat",
+            correlation_id="corr-chat",
+            query="What about the new upload?",
+            conversation_history=[
+                ConversationMessage(role="user", content="Summarize the insurance policy."),
+                ConversationMessage(role="assistant", content="It covers hospitalization and outpatient visits."),
+            ],
+        )
+
+        payload = json.loads(request.model_dump_json())
+
+        self.assertEqual("tenant-chat", payload["tenant_id"])
+        self.assertEqual("What about the new upload?", payload["query"])
+        self.assertEqual(2, len(payload["conversation_history"]))
+        self.assertEqual("user", payload["conversation_history"][0]["role"])
+
+    def test_brain_chat_request_defaults_history_for_backward_compatibility(self):
+        request = BrainChatRequest(
+            tenant_id="tenant-chat",
+            correlation_id="corr-chat",
+            query="What changed?",
+        )
+
+        self.assertEqual([], request.conversation_history)
+
+    def test_brain_chat_request_accepts_null_history_from_gateway(self):
+        request = BrainChatRequest.model_validate(
+            {
+                "tenant_id": "tenant-chat",
+                "correlation_id": "corr-chat",
+                "query": "What changed?",
+                "conversation_history": None,
+            }
+        )
+
+        self.assertEqual([], request.conversation_history)
 
     def test_contract_exports_and_retriever_interface_are_available(self):
         self.assertTrue(issubclass(CanonicalDocument, EnvelopeMixin))

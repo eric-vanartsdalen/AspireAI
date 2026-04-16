@@ -12,6 +12,7 @@ public interface IBrainChatClient
         string? tenantId,
         string? conversationId,
         int topK = 5,
+        IReadOnlyList<ConversationMessage>? conversationHistory = null,
         CancellationToken cancellationToken = default);
 }
 
@@ -21,7 +22,12 @@ public sealed record BrainChatGatewayRequest(
     [property: JsonPropertyName("query")] string Query,
     [property: JsonPropertyName("mode")] string Mode,
     [property: JsonPropertyName("conversation_id")] string? ConversationId = null,
-    [property: JsonPropertyName("top_k")] int TopK = 5);
+    [property: JsonPropertyName("top_k")] int TopK = 5,
+    [property: JsonPropertyName("conversation_history")] IReadOnlyList<ConversationMessage>? ConversationHistory = null);
+
+public sealed record ConversationMessage(
+    [property: JsonPropertyName("role")] string Role,
+    [property: JsonPropertyName("content")] string Content);
 
 public sealed record BrainChatResponse(
     [property: JsonPropertyName("answer")] string Answer,
@@ -54,6 +60,7 @@ public sealed class BrainChatClient(HttpClient httpClient, ILogger<BrainChatClie
         string? tenantId,
         string? conversationId,
         int topK = 5,
+        IReadOnlyList<ConversationMessage>? conversationHistory = null,
         CancellationToken cancellationToken = default)
     {
         var correlationId = Guid.NewGuid().ToString("N");
@@ -63,7 +70,8 @@ public sealed class BrainChatClient(HttpClient httpClient, ILogger<BrainChatClie
             Query: query,
             Mode: mode,
             ConversationId: conversationId,
-            TopK: topK);
+            TopK: topK,
+            ConversationHistory: conversationHistory ?? []);
 
         logger.LogInformation(
             "BRAIN chat request: mode={Mode}, correlation={CorrelationId}",

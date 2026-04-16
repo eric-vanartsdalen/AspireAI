@@ -258,7 +258,7 @@ public sealed class BrainGatewayPhase2Tests
                     "Critique this answer",
                     ApiContracts.ChatMode.Critique,
                     null,
-                    5),
+                    TopK: 5),
                 cancellationToken));
 
         Assert.Equal(StatusCodes.Status503ServiceUnavailable, exception.StatusCode);
@@ -266,6 +266,61 @@ public sealed class BrainGatewayPhase2Tests
         Assert.Contains("agent provider not configured", exception.Message, StringComparison.OrdinalIgnoreCase);
         Assert.Single(handler.Requests);
         Assert.Equal("http://python-service/brain/chat", handler.Requests[0].RequestUri?.ToString());
+    }
+
+    [Fact]
+    public async Task ChatAsync_PassesConversationHistory_ToPythonBrainRoute()
+    {
+        var cancellationToken = TestContext.Current.CancellationToken;
+
+        using var handler = new StubHttpMessageHandler(
+        [
+            new HttpResponseMessage(HttpStatusCode.OK)
+            {
+                Content = JsonContent.Create(new ApiContracts.ReasonResponse(
+                    "tenant-a",
+                    "corr-history",
+                    "Follow-up answer",
+                    0.8,
+                    [],
+                    [],
+                    []))
+            }
+        ]);
+
+        using var httpClient = new HttpClient(handler)
+        {
+            BaseAddress = new Uri("http://python-service/")
+        };
+
+        var backendClient = new ApiServices.PythonBrainBackendClient(
+            httpClient,
+            NullLogger<ApiServices.PythonBrainBackendClient>.Instance);
+
+        _ = await backendClient.ChatAsync(
+            new ApiContracts.BrainChatRequest(
+                "tenant-a",
+                "corr-history",
+                "What changed after the new upload?",
+                ApiContracts.ChatMode.Regular,
+                "conv-42",
+                TopK: 5,
+                ConversationHistory:
+                [
+                    new ApiContracts.ConversationMessage("user", "Explain the original document."),
+                    new ApiContracts.ConversationMessage("assistant", "The original document focused on Neo4j indexes.")
+                ]),
+            cancellationToken);
+
+        Assert.Single(handler.Requests);
+        var requestBody = await handler.Requests[0].Content!.ReadAsStringAsync(cancellationToken);
+        using var payload = JsonDocument.Parse(requestBody);
+
+        Assert.Equal("What changed after the new upload?", payload.RootElement.GetProperty("query").GetString());
+        var history = payload.RootElement.GetProperty("conversation_history");
+        Assert.Equal(2, history.GetArrayLength());
+        Assert.Equal("user", history[0].GetProperty("role").GetString());
+        Assert.Equal("assistant", history[1].GetProperty("role").GetString());
     }
 
     [Fact]
@@ -316,6 +371,62 @@ public sealed class BrainGatewayPhase2Tests
             exception.Message);
         Assert.Single(handler.Requests);
         Assert.Equal("http://brain-gateway/brain/chat", handler.Requests[0].RequestUri?.ToString());
+    }
+
+    [Fact]
+    public async Task BrainChatClient_IncludesConversationHistoryInGatewayPayload()
+    {
+        var cancellationToken = TestContext.Current.CancellationToken;
+
+        using var handler = new StubHttpMessageHandler(
+        [
+            new HttpResponseMessage(HttpStatusCode.OK)
+            {
+                Content = JsonContent.Create(new WebServices.BrainChatResponse(
+                    "Follow-up answer",
+                    0.82,
+                    [],
+                    [],
+                    []))
+            }
+        ]);
+
+        var services = new ServiceCollection();
+        var configuration = new ConfigurationBuilder()
+            .AddInMemoryCollection(new Dictionary<string, string?>
+            {
+                ["BRAIN_GATEWAY_URL"] = "http://brain-gateway/"
+            })
+            .Build();
+
+        services.AddLogging();
+        WebServices.BrainChatClientServiceCollectionExtensions
+            .AddBrainGatewayChatClient(services, configuration)
+            .ConfigurePrimaryHttpMessageHandler(() => handler);
+
+        using var serviceProvider = services.BuildServiceProvider();
+        var chatClient = serviceProvider.GetRequiredService<WebServices.IBrainChatClient>();
+
+        _ = await chatClient.ChatAsync(
+            "What changed after the new upload?",
+            "regular",
+            "tenant-a",
+            "conversation-1",
+            conversationHistory:
+            [
+                new WebServices.ConversationMessage("user", "Explain the original upload."),
+                new WebServices.ConversationMessage("assistant", "The original upload focused on Neo4j indexes.")
+            ],
+            cancellationToken: cancellationToken);
+
+        Assert.Single(handler.Requests);
+        var requestBody = await handler.Requests[0].Content!.ReadAsStringAsync(cancellationToken);
+        using var payload = JsonDocument.Parse(requestBody);
+
+        var history = payload.RootElement.GetProperty("conversation_history");
+        Assert.Equal(2, history.GetArrayLength());
+        Assert.Equal("Explain the original upload.", history[0].GetProperty("content").GetString());
+        Assert.Equal("The original upload focused on Neo4j indexes.", history[1].GetProperty("content").GetString());
     }
 
     [Fact]
@@ -464,7 +575,7 @@ public sealed class BrainGatewayPhase2Tests
                 "Critique this answer",
                 ApiContracts.ChatMode.Critique,
                 null,
-                5),
+                TopK: 5),
             cancellationToken);
 
         Assert.Equal(HttpStatusCode.ServiceUnavailable, response.StatusCode);

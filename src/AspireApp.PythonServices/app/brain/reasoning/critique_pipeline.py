@@ -11,8 +11,8 @@ import logging
 from typing import Any
 
 from ..knowledge import BrainKnowledgeRetriever
-from .agent_provider import AgentProvider, AgentResponse
-from ...contracts import Evidence, KnowledgeItem, ReasoningStep
+from .agent_provider import AgentProvider
+from ...contracts import ConversationMessage, Evidence, KnowledgeItem, ReasoningStep
 
 logger = logging.getLogger(__name__)
 
@@ -46,6 +46,7 @@ class CritiquePipeline:
         tenant_id: str,
         correlation_id: str,
         top_k: int = 5,
+        conversation_history: list[ConversationMessage] | None = None,
     ) -> dict[str, Any]:
         """
         Execute full critique pipeline.
@@ -63,13 +64,27 @@ class CritiquePipeline:
 
         reasoning_steps: list[ReasoningStep] = []
         evidence: list[Evidence] = []
+        conversation_context = self._format_conversation_history(conversation_history or [])
+        planner_prompt = (
+            "Analyze this question and break it into 2-3 specific sub-queries "
+            f"that would help answer it thoroughly: {query}"
+        )
+        if conversation_context:
+            planner_prompt = (
+                f"Conversation history:\n{conversation_context}\n\n"
+                f"Current user question: {query}\n\n"
+                "Break this follow-up into 2-3 specific sub-queries that would help answer it thoroughly."
+            )
 
         # Step 1: Planner — decompose query into sub-questions
         logger.info(f"[{correlation_id}] Critique: Planning phase")
         planner_response = await self.agent_provider.run_agent(
             agent_name="planner",
-            prompt=f"Analyze this question and break it into 2-3 specific sub-queries that would help answer it thoroughly: {query}",
-            context={"original_query": query},
+            prompt=planner_prompt,
+            context={
+                "original_query": query,
+                "conversation_history": conversation_context or "none",
+            },
         )
         reasoning_steps.append(
             ReasoningStep(
@@ -87,8 +102,13 @@ class CritiquePipeline:
 
         for i, sub_query in enumerate(sub_queries[:3], 1):  # Limit to 3 sub-queries
             try:
+                retrieval_query = self._build_retrieval_query(
+                    query=sub_query,
+                    conversation_context=conversation_context,
+                    current_question=query,
+                )
                 knowledge_result = await self.knowledge_retriever.retrieve(
-                    sub_query,
+                    retrieval_query,
                     tenant_id=tenant_id,
                     correlation_id=correlation_id,
                     limit=top_k,
@@ -130,6 +150,7 @@ class CritiquePipeline:
             context={
                 "query": query,
                 "knowledge": knowledge_context,
+                "conversation_history": conversation_context or "none",
             },
         )
         reasoning_steps.append(
@@ -157,6 +178,7 @@ class CritiquePipeline:
             context={
                 "draft": synthesizer_response.content,
                 "evidence_count": len(evidence),
+                "conversation_history": conversation_context or "none",
             },
         )
         reasoning_steps.append(
@@ -179,6 +201,40 @@ class CritiquePipeline:
             "reasoning_steps": reasoning_steps,
             "proactive_suggestions": [],  # Future: add proactive monitoring
         }
+
+    @staticmethod
+    def _format_conversation_history(messages: list[ConversationMessage], max_messages: int = 6) -> str:
+        """Render recent chat turns into a compact plain-text history block."""
+        recent_messages = messages[-max_messages:]
+        rendered_messages: list[str] = []
+
+        for message in recent_messages:
+            role = message.role.strip().lower()
+            content = " ".join(message.content.split())
+            if role not in {"user", "assistant"} or not content:
+                continue
+
+            speaker = "User" if role == "user" else "Assistant"
+            rendered_messages.append(f"{speaker}: {content}")
+
+        return "\n".join(rendered_messages)
+
+    @classmethod
+    def _build_retrieval_query(
+        cls,
+        query: str,
+        conversation_context: str,
+        current_question: str,
+    ) -> str:
+        """Blend follow-up context into retrieval queries when history is available."""
+        if not conversation_context:
+            return query
+
+        return (
+            f"Conversation history:\n{conversation_context}\n\n"
+            f"Current user question:\n{current_question}\n\n"
+            f"Sub-query:\n{query}"
+        )
 
     def _extract_sub_queries(self, planner_output: str) -> list[str]:
         """Parse sub-queries from planner response."""

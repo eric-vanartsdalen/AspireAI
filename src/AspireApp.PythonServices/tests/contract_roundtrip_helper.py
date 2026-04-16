@@ -12,7 +12,7 @@ sys.path.insert(0, str(PROJECT_ROOT))
 if str(TEST_ROOT) not in sys.path:
     sys.path.insert(0, str(TEST_ROOT))
 
-from app.contracts import CanonicalDocument, PageContent, ChatMode, BrainChatRequest
+from app.contracts import BrainChatRequest, CanonicalDocument, ChatMode, ConversationMessage, PageContent
 
 
 def build_sample_canonical_document() -> CanonicalDocument:
@@ -53,6 +53,10 @@ def build_sample_brain_chat_request() -> BrainChatRequest:
         query="How does Aspire orchestrate services?",
         mode=ChatMode.CRITIQUE,
         conversation_id="conv-123",
+        conversation_history=[
+            ConversationMessage(role="user", content="What services are available?"),
+            ConversationMessage(role="assistant", content="Aspire coordinates the web, API, Python, Neo4j, and Ollama services."),
+        ],
         top_k=10,
     )
 

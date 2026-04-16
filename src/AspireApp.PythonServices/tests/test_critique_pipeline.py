@@ -6,7 +6,7 @@ import pytest
 from unittest.mock import AsyncMock, MagicMock, patch
 
 from app.brain.reasoning import PydanticAIProvider, CritiquePipeline, AgentResponse
-from app.contracts import Evidence, KnowledgeItem, KnowledgeResult, ReasoningStep
+from app.contracts import ConversationMessage, Evidence, KnowledgeItem, KnowledgeResult, ReasoningStep
 
 
 # --- Mock agent provider for testing abstraction ---
@@ -228,6 +228,35 @@ class TestCritiquePipeline:
         # Should still complete with synthesizer/critic despite retrieval failure
         assert result["answer"] is not None
         assert any("retrieval" in step.step for step in result["reasoning_steps"])
+
+    def test_pipeline_blends_conversation_history_into_follow_up_retrieval(self):
+        mock_provider = MockAgentProvider()
+        mock_retriever = AsyncMock()
+        mock_retriever.retrieve.return_value = KnowledgeResult(
+            tenant_id="test",
+            correlation_id="corr-001",
+            results=_make_knowledge_items(1),
+        )
+
+        pipeline = CritiquePipeline(
+            agent_provider=mock_provider,
+            knowledge_retriever=mock_retriever,
+        )
+
+        asyncio.run(pipeline.execute(
+            query="What changed in the new upload?",
+            tenant_id="test",
+            correlation_id="corr-001",
+            conversation_history=[
+                ConversationMessage(role="user", content="Summarize the handbook."),
+                ConversationMessage(role="assistant", content="It covers onboarding and benefits."),
+            ],
+        ))
+
+        retrieval_queries = [call.args[0] for call in mock_retriever.retrieve.await_args_list]
+        assert retrieval_queries
+        assert any("Conversation history" in query for query in retrieval_queries)
+        assert any("Summarize the handbook." in query for query in retrieval_queries)
 
     def test_pipeline_deduplicates_knowledge_items(self):
         """Test that duplicate knowledge items are removed."""

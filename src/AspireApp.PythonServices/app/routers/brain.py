@@ -19,6 +19,7 @@ from ..brain.reasoning import PydanticAIProvider, CritiquePipeline
 from ..contracts import (
     BrainChatRequest,
     ChatMode,
+    ConversationMessage,
     Evidence,
     KnowledgeItem,
     ReasonResponse,
@@ -87,6 +88,35 @@ def _build_context_block(items: list[KnowledgeItem]) -> str:
     return "\n\n".join(parts)
 
 
+def _format_conversation_history(messages: list[ConversationMessage], max_messages: int = 6) -> str:
+    """Render recent chat turns into a compact history block."""
+    recent_messages = messages[-max_messages:]
+    rendered_messages: list[str] = []
+
+    for message in recent_messages:
+        role = message.role.strip().lower()
+        content = " ".join(message.content.split())
+        if role not in {"user", "assistant"} or not content:
+            continue
+
+        speaker = "User" if role == "user" else "Assistant"
+        rendered_messages.append(f"{speaker}: {content}")
+
+    return "\n".join(rendered_messages)
+
+
+def _build_retrieval_query(query: str, conversation_history: list[ConversationMessage]) -> str:
+    """Blend recent chat turns into the retrieval query for follow-up questions."""
+    history_block = _format_conversation_history(conversation_history)
+    if not history_block:
+        return query
+
+    return (
+        f"Conversation history:\n{history_block}\n\n"
+        f"Current user question:\n{query}"
+    )
+
+
 def _items_to_evidence(items: list[KnowledgeItem]) -> list[Evidence]:
     """Convert knowledge items to evidence citations."""
     evidence: list[Evidence] = []
@@ -142,6 +172,7 @@ async def brain_chat(
                 tenant_id=request.tenant_id,
                 correlation_id=correlation_id,
                 top_k=request.top_k,
+                conversation_history=request.conversation_history,
             )
             duration_ms = round((time.monotonic() - t0) * 1000)
             logger.info(f"[{correlation_id}] Critique pipeline completed in {duration_ms}ms")
@@ -173,9 +204,10 @@ async def brain_chat(
 
     # Step 1: Retrieve knowledge context
     t0 = time.monotonic()
+    retrieval_query = _build_retrieval_query(request.query, request.conversation_history)
     try:
         knowledge = await retriever.retrieve(
-            request.query,
+            retrieval_query,
             tenant_id=request.tenant_id,
             correlation_id=correlation_id,
             limit=request.top_k,
@@ -189,7 +221,11 @@ async def brain_chat(
         reasoning_steps.append(
             ReasoningStep(
                 step="retrieval",
-                reasoning=f"Queried knowledge graph for: {request.query[:80]}",
+                reasoning=(
+                    f"Queried knowledge graph for follow-up context using {len(request.conversation_history)} prior messages"
+                    if request.conversation_history
+                    else f"Queried knowledge graph for: {request.query[:80]}"
+                ),
                 tool="brain-knowledge-retriever",
                 result=f"{len(items)} results in {retrieval_ms}ms",
             )
@@ -214,6 +250,7 @@ async def brain_chat(
             llm.generate,
             request.query,
             context=context_block if context_block else None,
+            conversation_history=request.conversation_history,
         )
         generation_ms = round((time.monotonic() - t1) * 1000)
         reasoning_steps.append(

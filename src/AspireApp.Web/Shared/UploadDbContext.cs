@@ -198,6 +198,7 @@ namespace AspireApp.Web.Shared
                 entity.Property(e => e.OwnerUserId).IsRequired().HasMaxLength(200);
                 entity.Property(e => e.Role).IsRequired().HasMaxLength(20);
                 entity.Property(e => e.Content).IsRequired();
+                entity.Property(e => e.AssistantResponseJson).HasColumnType("jsonb");
 
                 entity.HasIndex(e => new { e.ConversationId, e.Sequence })
                       .IsUnique()

@@ -208,6 +208,11 @@ public sealed class BrainContractRoundTripTests
             Query: "How does Aspire work?",
             Mode: Contracts.ChatMode.Critique,
             ConversationId: "conv-42",
+            ConversationHistory:
+            [
+                new Contracts.ConversationMessage("user", "What services are available?"),
+                new Contracts.ConversationMessage("assistant", "Aspire coordinates the web, API, Python, Neo4j, and Ollama services.")
+            ],
             TopK: 10);
 
         using var payload = JsonDocument.Parse(JsonSerializer.Serialize(request, JsonOptions));
@@ -216,6 +221,7 @@ public sealed class BrainContractRoundTripTests
         Assert.True(root.TryGetProperty("query", out var query));
         Assert.True(root.TryGetProperty("mode", out var mode));
         Assert.True(root.TryGetProperty("conversation_id", out var convId));
+        Assert.True(root.TryGetProperty("conversation_history", out var conversationHistory));
         Assert.True(root.TryGetProperty("top_k", out var topK));
         Assert.True(root.TryGetProperty("tenant_id", out _));
         Assert.True(root.TryGetProperty("correlation_id", out _));
@@ -223,6 +229,7 @@ public sealed class BrainContractRoundTripTests
         Assert.Equal("How does Aspire work?", query.GetString());
         Assert.Equal("critique", mode.GetString());
         Assert.Equal("conv-42", convId.GetString());
+        Assert.Equal(2, conversationHistory.GetArrayLength());
         Assert.Equal(10, topK.GetInt32());
     }
 
@@ -236,6 +243,7 @@ public sealed class BrainContractRoundTripTests
               "query": "What is Aspire?",
               "mode": "regular",
               "conversation_id": null,
+              "conversation_history": [],
               "top_k": 5
             }
             """;
@@ -247,6 +255,7 @@ public sealed class BrainContractRoundTripTests
         Assert.Equal("What is Aspire?", contract.Query);
         Assert.Equal(Contracts.ChatMode.Regular, contract.Mode);
         Assert.Null(contract.ConversationId);
+        Assert.Empty(contract.ConversationHistory ?? []);
         Assert.Equal(5, contract.TopK);
 
         AssertJsonEquivalent(pythonJson, JsonSerializer.Serialize(contract, JsonOptions));
@@ -266,6 +275,8 @@ public sealed class BrainContractRoundTripTests
         Assert.Equal("How does Aspire orchestrate services?", contract.Query);
         Assert.Equal(Contracts.ChatMode.Critique, contract.Mode);
         Assert.Equal("conv-123", contract.ConversationId);
+        Assert.NotNull(contract.ConversationHistory);
+        Assert.Equal(2, contract.ConversationHistory!.Count);
         Assert.Equal(10, contract.TopK);
 
         var csharpJson = JsonSerializer.Serialize(contract, JsonOptions);

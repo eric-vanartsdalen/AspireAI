@@ -4,6 +4,7 @@ using IBrainChatClient = web::AspireApp.Web.Services.IBrainChatClient;
 using BrainChatResponse = web::AspireApp.Web.Services.BrainChatResponse;
 using BrainChatEvidence = web::AspireApp.Web.Services.BrainChatEvidence;
 using BrainChatReasoningStep = web::AspireApp.Web.Services.BrainChatReasoningStep;
+using ConversationMessage = web::AspireApp.Web.Services.ConversationMessage;
 using System.Net;
 using System.Security.Claims;
 using System.Threading.Tasks;
@@ -248,7 +249,8 @@ public sealed class ChatFocusTests
             string ownerUserId,
             string role,
             string content,
-            CancellationToken cancellationToken = default)
+            CancellationToken cancellationToken = default,
+            BrainChatResponse? assistantResponse = null)
         {
             throw new NotSupportedException();
         }
@@ -288,6 +290,7 @@ public sealed class ChatFocusTests
             string? tenantId,
             string? conversationId,
             int topK = 5,
+            IReadOnlyList<ConversationMessage>? conversationHistory = null,
             CancellationToken cancellationToken = default)
         {
             return Task.FromResult(new BrainChatResponse(

@@ -43,6 +43,7 @@ namespace AspireApp.Web.Components.Pages
         private ElementReference conversationTitleInput;
         private CancellationTokenSource? _cancellationTokenSource;
         private DotNetObjectReference<Chat>? _dotNetRef;
+        private const int MaxConversationHistoryMessages = 12;
         private const int AiFirstTokenTimeoutSeconds = 45;
         private const int AiResponseTimeoutSeconds = 150;
         private const string HaltedResponseTag = "[AI response was manually halted prematurely.]";
@@ -344,7 +345,7 @@ namespace AspireApp.Web.Components.Pages
             AIResponse = string.Empty;
             ElapsedTimeMessage = string.Empty;
             _chatHistory = conversation.Messages.ToChatHistory();
-            _messageEvidence.Clear();
+            LoadPersistedAssistantResponses(conversation.Messages);
         }
 
         private void ResetConversationDraft(bool clearStatus = true)
@@ -449,7 +450,7 @@ namespace AspireApp.Web.Components.Pages
             return true;
         }
 
-        private async Task PersistAssistantMessageAsync(string message)
+        private async Task PersistAssistantMessageAsync(string message, BrainChatResponse? assistantResponse)
         {
             if (!ActiveConversationId.HasValue)
             {
@@ -467,7 +468,8 @@ namespace AspireApp.Web.Components.Pages
                 ActiveConversationId.Value,
                 user.UserId,
                 ChatConversationRoles.Assistant,
-                message);
+                message,
+                assistantResponse: assistantResponse);
 
             if (conversationSummary is null)
             {
@@ -981,14 +983,16 @@ namespace AspireApp.Web.Components.Pages
                 responseTimeoutTokenSource.Token);
 
             _cancellationTokenSource = manualStopTokenSource;
+            BrainChatResponse? chatResponse = null;
 
             try
             {
-                var chatResponse = await BrainChatClient.ChatAsync(
+                chatResponse = await BrainChatClient.ChatAsync(
                     query: Status,
                     mode: SelectedChatMode,
                     tenantId: TenantContext.CurrentTenantId,
                     conversationId: ActiveConversationId?.ToString(),
+                    conversationHistory: BuildConversationHistoryForGateway(Status),
                     cancellationToken: linkedTokenSource.Token);
 
                 AIResponse = chatResponse.Answer;
@@ -996,7 +1000,7 @@ namespace AspireApp.Web.Components.Pages
                 // Track evidence for the next assistant message index
                 var nextAssistantIndex = _chatHistory.Count(m =>
                     m.Role == AuthorRole.Assistant);
-                if (chatResponse.Evidence.Count > 0 || chatResponse.Confidence > 0)
+                if (ShouldTrackAssistantResponseMetadata(chatResponse))
                 {
                     _messageEvidence[nextAssistantIndex] = chatResponse;
                 }
@@ -1034,7 +1038,7 @@ namespace AspireApp.Web.Components.Pages
             if (!string.IsNullOrEmpty(AIResponse))
             {
                 _chatHistory.AddAssistantMessage(AIResponse);
-                await PersistAssistantMessageAsync(AIResponse);
+                await PersistAssistantMessageAsync(AIResponse, chatResponse);
             }
 
             stopwatch.Stop();
@@ -1052,6 +1056,62 @@ namespace AspireApp.Web.Components.Pages
             {
                 _cancellationTokenSource?.Cancel();
             }
+        }
+
+        private void LoadPersistedAssistantResponses(IReadOnlyList<ChatConversationMessageRecord> messages)
+        {
+            _messageEvidence.Clear();
+
+            var assistantIndex = 0;
+            foreach (var message in messages.OrderBy(message => message.Sequence))
+            {
+                if (!string.Equals(message.Role, ChatConversationRoles.Assistant, StringComparison.OrdinalIgnoreCase))
+                {
+                    continue;
+                }
+
+                if (message.AssistantResponse is not null && ShouldTrackAssistantResponseMetadata(message.AssistantResponse))
+                {
+                    _messageEvidence[assistantIndex] = message.AssistantResponse;
+                }
+
+                assistantIndex++;
+            }
+        }
+
+        private IReadOnlyList<ConversationMessage> BuildConversationHistoryForGateway(string currentQuestion)
+        {
+            var messages = _chatHistory
+                .Where(message => message.Role == AuthorRole.User || message.Role == AuthorRole.Assistant)
+                .ToList();
+
+            if (messages.Count == 0)
+            {
+                return [];
+            }
+
+            var latestMessage = messages.LastOrDefault();
+            if (latestMessage?.Role == AuthorRole.User &&
+                string.Equals(latestMessage.Content?.Trim(), currentQuestion.Trim(), StringComparison.Ordinal))
+            {
+                messages.RemoveAt(messages.Count - 1);
+            }
+
+            var startIndex = Math.Max(0, messages.Count - MaxConversationHistoryMessages);
+            return messages
+                .Skip(startIndex)
+                .Select(message => new ConversationMessage(
+                    message.Role == AuthorRole.User ? ChatConversationRoles.User : ChatConversationRoles.Assistant,
+                    message.Content?.Trim() ?? string.Empty))
+                .Where(message => !string.IsNullOrWhiteSpace(message.Content))
+                .ToList();
+        }
+
+        private static bool ShouldTrackAssistantResponseMetadata(BrainChatResponse response)
+        {
+            return response.Confidence > 0 ||
+                   response.Evidence.Count > 0 ||
+                   response.ReasoningSteps.Count > 0;
         }
 
         private async Task CheckOllamaService()

@@ -11,6 +11,8 @@ import os
 from typing import Any
 from urllib import error, request
 
+from ..contracts import ConversationMessage
+
 logger = logging.getLogger(__name__)
 
 _DEFAULT_SYSTEM_PROMPT = (
@@ -60,6 +62,7 @@ class LlmChatService:
         *,
         system_prompt: str | None = None,
         context: str | None = None,
+        conversation_history: list[ConversationMessage] | None = None,
     ) -> str:
         """
         Generate a chat completion.
@@ -68,6 +71,7 @@ class LlmChatService:
             user_message: The user's question or prompt.
             system_prompt: Optional system prompt override.
             context: Retrieved knowledge context to inject before the user message.
+            conversation_history: Prior user/assistant turns for follow-up context.
 
         Returns:
             The assistant's response text.
@@ -82,6 +86,14 @@ class LlmChatService:
             system = f"{system}\n\n--- Retrieved Context ---\n{context}"
 
         messages.append({"role": "system", "content": system})
+        for message in conversation_history or []:
+            role = message.role.strip().lower()
+            content = message.content.strip()
+            if role not in {"user", "assistant"} or not content:
+                continue
+
+            messages.append({"role": role, "content": content})
+
         messages.append({"role": "user", "content": user_message})
 
         try:

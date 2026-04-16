@@ -8,6 +8,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 from app.contracts import (
     BrainChatRequest,
     ChatMode,
+    ConversationMessage,
     Evidence,
     KnowledgeItem,
     KnowledgeResult,
@@ -15,8 +16,10 @@ from app.contracts import (
     ReasoningStep,
 )
 from app.routers.brain import (
+    _build_retrieval_query,
     _build_context_block,
     _compute_confidence,
+    _format_conversation_history,
     _items_to_evidence,
     brain_chat,
 )
@@ -73,6 +76,31 @@ class TestBuildContextBlock:
         items = [KnowledgeItem(content="text", confidence=0.5, source_refs=[], relevance_score=0.5)]
         result = _build_context_block(items)
         assert "unknown" in result
+
+
+class TestConversationHistoryHelpers:
+    def test_formats_recent_conversation_history(self):
+        history = [
+            ConversationMessage(role="user", content="What did the policy say?"),
+            ConversationMessage(role="assistant", content="It covered hospitalization."),
+        ]
+
+        result = _format_conversation_history(history)
+
+        assert "User: What did the policy say?" in result
+        assert "Assistant: It covered hospitalization." in result
+
+    def test_build_retrieval_query_includes_history_for_follow_ups(self):
+        history = [
+            ConversationMessage(role="user", content="Summarize the policy."),
+            ConversationMessage(role="assistant", content="It covered hospitalization."),
+        ]
+
+        result = _build_retrieval_query("What about the deductible?", history)
+
+        assert "Conversation history" in result
+        assert "Summarize the policy." in result
+        assert "What about the deductible?" in result
 
 
 class TestItemsToEvidence:
@@ -235,6 +263,35 @@ class TestBrainChatEndpoint:
         _, kwargs = mock_llm.generate.call_args
         assert kwargs.get("context") is None
 
+    def test_follow_up_history_is_forwarded_to_retrieval_and_llm(self):
+        history = [
+            ConversationMessage(role="user", content="Summarize the newly uploaded handbook."),
+            ConversationMessage(role="assistant", content="It focuses on onboarding and benefits."),
+        ]
+        request = _make_request(query="What about vacation time?", conversation_history=history)
+
+        mock_retriever = AsyncMock()
+        mock_retriever.retrieve.return_value = KnowledgeResult(
+            tenant_id="test-tenant",
+            correlation_id="test-corr-001",
+            results=[],
+        )
+
+        mock_llm = MagicMock(spec=LlmChatService)
+        mock_llm.is_available.return_value = True
+        mock_llm.generate.return_value = "Vacation time is covered in the handbook."
+
+        mock_pipeline = MagicMock()
+
+        response = asyncio.run(brain_chat(request, retriever=mock_retriever, llm=mock_llm, critique_pipeline=mock_pipeline))
+
+        assert response.answer == "Vacation time is covered in the handbook."
+        retrieval_query = mock_retriever.retrieve.await_args.args[0]
+        assert "Conversation history" in retrieval_query
+        assert "newly uploaded handbook" in retrieval_query
+        _, kwargs = mock_llm.generate.call_args
+        assert kwargs["conversation_history"] == history
+
 
 class TestLlmChatService:
     def test_is_available_without_endpoint(self):
@@ -295,3 +352,29 @@ class TestLlmChatService:
         assert result == "Plain answer"
         body = json.loads(mock_urlopen.call_args[0][0].data.decode("utf-8"))
         assert "Retrieved Context" not in body["messages"][0]["content"]
+
+    @patch("app.services.llm_chat_service.request.urlopen")
+    def test_generate_includes_prior_conversation_history(self, mock_urlopen):
+        mock_response = MagicMock()
+        mock_response.read.return_value = json.dumps({
+            "message": {"role": "assistant", "content": "Follow-up answer"}
+        }).encode("utf-8")
+        mock_response.__enter__ = MagicMock(return_value=mock_response)
+        mock_response.__exit__ = MagicMock(return_value=False)
+        mock_urlopen.return_value = mock_response
+
+        service = LlmChatService(
+            model_name="test-model",
+            endpoint="http://localhost:11434",
+        )
+        result = service.generate(
+            "What about vacation time?",
+            conversation_history=[
+                ConversationMessage(role="user", content="Summarize the handbook."),
+                ConversationMessage(role="assistant", content="It covers onboarding and benefits."),
+            ],
+        )
+
+        assert result == "Follow-up answer"
+        body = json.loads(mock_urlopen.call_args[0][0].data.decode("utf-8"))
+        assert [message["role"] for message in body["messages"]] == ["system", "user", "assistant", "user"]

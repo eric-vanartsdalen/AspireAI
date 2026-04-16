@@ -70,6 +70,9 @@ public sealed class ChatConversationMessage
     [Column("content")]
     public string Content { get; set; } = string.Empty;
 
+    [Column("assistant_response_json")]
+    public string? AssistantResponseJson { get; set; }
+
     [Column("sequence")]
     public int Sequence { get; set; }
 
