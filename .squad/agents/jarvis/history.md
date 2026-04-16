@@ -1001,3 +1001,4 @@ eo4j_service to LightRagRetriever for enrichment when LightRAG lacks scores
 - Python gateway: `src/AspireApp.ApiService/Services/BrainBackendClient.cs` (response contracts)
 
 **Status:** MVP locked; post-MVP priorities ordered; Neo4j schema investigation begins 2026-04-30
+
