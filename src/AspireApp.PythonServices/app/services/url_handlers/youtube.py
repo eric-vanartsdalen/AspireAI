@@ -90,8 +90,13 @@ class YouTubeVideoHandler(UrlHandler):
             raise RuntimeError("youtube-transcript-api is required for YouTube transcript extraction")
         
         try:
+            transcript_api = YouTubeTranscriptApi() if callable(YouTubeTranscriptApi) else YouTubeTranscriptApi
+
             # Try to get transcript in English first, then any available
-            transcript_list = YouTubeTranscriptApi.list_transcripts(video_id)
+            if hasattr(transcript_api, "list"):
+                transcript_list = transcript_api.list(video_id)
+            else:
+                transcript_list = transcript_api.list_transcripts(video_id)
             
             # Prefer manually created over auto-generated
             transcript = None
@@ -120,11 +125,16 @@ class YouTubeVideoHandler(UrlHandler):
             
             # Fetch transcript text
             transcript_data = transcript.fetch()
+            if hasattr(transcript_data, "to_raw_data"):
+                transcript_data = transcript_data.to_raw_data()
             
             # Combine transcript segments into text
             text_parts = []
             for segment in transcript_data:
-                text_parts.append(segment.get("text", ""))
+                if hasattr(segment, "text"):
+                    text_parts.append(segment.text)
+                else:
+                    text_parts.append(segment.get("text", ""))
             
             full_text = " ".join(text_parts)
             
