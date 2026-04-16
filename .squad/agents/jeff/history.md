@@ -100,6 +100,25 @@ Build verified successfully. Tests were running but took longer than expected du
 
 <!-- Append new learnings below. Each entry is something lasting about the project. -->
 
+### 2026-04-16 — Upload UI tests should sign in directly to the protected upload route instead of reopening the sidebar nav
+
+**Status:** Implemented and validated for the upload/delete UI regression slice.
+
+**Key insight:**
+- `src\AspireApp.WebTest\Tests\BasicAspireAppHostTests.cs` was brittle because it signed in on Home and then depended on clicking the desktop sidebar link for "Upload Documents".
+- That nav step is a helper concern, not a product regression; the stable seam is the existing mock auth endpoint plus a `returnUrl=%2Fupload` redirect.
+- After the redirect, waiting for upload-surface markers (`#tenant-select` plus `[data-testid='upload-file-input']`) gives the tests a deterministic authenticated landing point without depending on sidebar animation or viewport state.
+
+**Validation:**
+- `dotnet build .\AspireApp.sln --no-restore --nologo --verbosity minimal /m:1`
+- `dotnet test .\src\AspireApp.WebTest\AspireApp.WebTest.csproj --no-build --filter "FullyQualifiedName~AspireApp.WebTest.Tests.BasicAspireAppHostTests.DeleteUploadedTestFile" --logger "console;verbosity=minimal"`
+- `dotnet test .\src\AspireApp.WebTest\AspireApp.WebTest.csproj --no-build --filter "FullyQualifiedName~AspireApp.WebTest.Tests.BasicAspireAppHostTests.FlowEndToEnd" --logger "console;verbosity=minimal"`
+- `dotnet test .\src\AspireApp.WebTest\AspireApp.WebTest.csproj --no-build --filter "FullyQualifiedName~AspireApp.WebTest.Tests.AuthUxFoundationTests.SignedInUserCanReachProtectedAppAreas" --logger "console;verbosity=minimal"`
+
+**Key paths:**
+- `src\AspireApp.WebTest\Tests\BasicAspireAppHostTests.cs`
+- `src\AspireApp.WebTest\Tests\AuthUxFoundationTests.cs`
+
 ### 2026-04-21 — Saved chat conversations must persist assistant response metadata and send recent history back through the gateway
 
 **Status:** Implemented and validated for the post-MVP conversation fixes.

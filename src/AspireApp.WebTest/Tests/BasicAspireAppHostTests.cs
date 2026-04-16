@@ -240,8 +240,6 @@ public class BasicAspireAppHostTests : IClassFixture<TestFixture>
             await page.GotoAsync(_data.WebfrontendUri, _data.Options);
             await WaitForPageLoadCompletion(page);
             await SignInAsDemoUserAsync(page);
-
-            await ClickByRole(AriaRole.Link, "Upload Documents", page);
             await SetUploadInput(TestFile, AriaRole.Button, "Choose File", page);
 
             var uploadButton = page.GetByRole(AriaRole.Button, new() { Name = "Start Upload" });
@@ -444,7 +442,6 @@ public class BasicAspireAppHostTests : IClassFixture<TestFixture>
             await page.GotoAsync(_data.WebfrontendUri, _data.Options);
             await WaitForPageLoadCompletion(page);
             await SignInAsDemoUserAsync(page);
-            await ClickByRole(AriaRole.Link, "Upload Documents", page);
             await WaitForUploadedFileRowAsync(page, uploadedFile.FileName!);
 
             IReadOnlyList<ILocator> filenameRows = await GetDocumentSourceTableRows(page);
@@ -491,18 +488,16 @@ public class BasicAspireAppHostTests : IClassFixture<TestFixture>
         }
     }
 
-    private static async Task SignInAsDemoUserAsync(IPage page)
+    private async Task SignInAsDemoUserAsync(IPage page)
     {
-        var providerButton = page.Locator("[data-testid='auth-provider-demo']");
-        await providerButton.WaitForAsync(new LocatorWaitForOptions { Timeout = 30_000 });
-        await providerButton.ClickAsync(new LocatorClickOptions { Delay = 250 });
-        var signInButton = page.Locator("[data-testid='auth-submit-sign-in']");
-        await signInButton.WaitForAsync(new LocatorWaitForOptions { Timeout = 30_000 });
-        await signInButton.ClickAsync(new LocatorClickOptions { Delay = 250 });
+        var signInPath =
+            $"auth/mock/signin?providerId={Uri.EscapeDataString(DemoProviderId)}&userId={Uri.EscapeDataString(DemoUserId)}&returnUrl=%2Fupload";
+        await page.GotoAsync(BuildAbsoluteUri(_data.WebfrontendUri, signInPath), _data.Options);
         await WaitForPageLoadCompletion(page);
+        Assert.DoesNotContain("/signin", page.Url, StringComparison.OrdinalIgnoreCase);
 
-        var signedInSurface = page.Locator("[data-testid='auth-summary'], [data-testid='auth-user-display'], #tenant-select, h1");
-        await WaitForLocator(signedInSurface.First, 30_000);
+        var uploadSurface = page.Locator("#tenant-select, [data-testid='upload-file-input']");
+        await WaitForLocator(uploadSurface.First, 30_000);
     }
 
     private async Task<AuthenticatedClient> CreateWebFrontendHttpClientAsync()

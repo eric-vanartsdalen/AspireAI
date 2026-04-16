@@ -30,6 +30,27 @@
 
 <!-- Append new learnings below. Each entry is something lasting about the project. -->
 
+### 2026-04-16 — Upload/delete Playwright flake was a test seam, not a product regression
+
+**Task:** Reproduce the reported `BasicAspireAppHostTests.DeleteUploadedTestFile` failure (`Navigation target 'Upload Documents' did not become clickable within 30000ms`).
+
+**Key findings:**
+- The failure did **not** reproduce as a stable product bug: `DeleteUploadedTestFile` passed three consecutive reruns before hardening, `FlowEndToEnd` passed, and the protected-route auth slice (`AuthUxFoundationTests.SignedInUserCanReachProtectedAppAreas`) also passed.
+- The brittle seam was the Playwright helper path, not the Upload UI. `BasicAspireAppHostTests` reached `/upload` by clicking the off-canvas `"Upload Documents"` sidebar link through `ClickByRole(...)`, while adjacent tests already used more reliable patterns: direct protected-route navigation (`AuthUxFoundationTests`) or direct mock sign-in with `returnUrl=%2Fupload` (`AuthenticatedUploadUxTests`).
+- For `BasicAspireAppHostTests`, the durable pattern is to enter the upload surface through the mock auth endpoint with `returnUrl=%2Fupload` and wait for tenant/upload controls, instead of asserting that a sidebar link becomes viewport-clickable.
+
+**Validation:**
+- `dotnet test .\src\AspireApp.WebTest\AspireApp.WebTest.csproj --no-build --filter "FullyQualifiedName~AspireApp.WebTest.Tests.BasicAspireAppHostTests.DeleteUploadedTestFile"` ✅
+- `dotnet test .\src\AspireApp.WebTest\AspireApp.WebTest.csproj --no-build --filter "FullyQualifiedName~AspireApp.WebTest.Tests.BasicAspireAppHostTests.FlowEndToEnd"` ✅
+- `dotnet test .\src\AspireApp.WebTest\AspireApp.WebTest.csproj --no-build --filter "FullyQualifiedName~AspireApp.WebTest.Tests.AuthUxFoundationTests.SignedInUserCanReachProtectedAppAreas"` ✅
+
+**Key file paths:**
+- `src\AspireApp.WebTest\Tests\BasicAspireAppHostTests.cs`
+- `src\AspireApp.WebTest\Tests\AuthenticatedUploadUxTests.cs`
+- `src\AspireApp.WebTest\Tests\AuthUxFoundationTests.cs`
+- `src\AspireApp.Web\Components\Layout\NavMenu.razor`
+- `src\AspireApp.Web\Components\Layout\MainLayout.razor`
+
 ### 2026-04-16 — Team Sync: Regression Coverage for Conversation Context + Evidence Persistence
 
 **Context:** Jarvis implemented `conversation_history` support. Jeff wired gateway history + metadata persistence. Cross-service alignment proven.
