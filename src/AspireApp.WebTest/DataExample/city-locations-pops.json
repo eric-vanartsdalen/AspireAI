@@ -1,0 +1,66 @@
+[
+    {
+        "city": "Tokyo",
+        "country": "Japan",
+        "country_code": "JP",
+        "lat": 35.6897,
+        "lng": 139.6922,
+        "population": 37732000
+    },
+    {
+        "city": "Delhi",
+        "country": "India",
+        "country_code": "IN",
+        "lat": 28.7041,
+        "lng": 77.1025,
+        "population": 32941000
+    },
+    {
+        "city": "Shanghai",
+        "country": "China",
+        "country_code": "CN",
+        "lat": 31.2304,
+        "lng": 121.4737,
+        "population": 29211000
+    },
+    {
+        "city": "São Paulo",
+        "country": "Brazil",
+        "country_code": "BR",
+        "lat": -23.5505,
+        "lng": -46.6333,
+        "population": 22620000
+    },
+    {
+        "city": "Mexico City",
+        "country": "Mexico",
+        "country_code": "MX",
+        "lat": 19.4326,
+        "lng": -99.1332,
+        "population": 22281000
+    },
+    {
+        "city": "Cairo",
+        "country": "Egypt",
+        "country_code": "EG",
+        "lat": 30.0444,
+        "lng": 31.2357,
+        "population": 22183000
+    },
+    {
+        "city": "Mumbai",
+        "country": "India",
+        "country_code": "IN",
+        "lat": 19.0760,
+        "lng": 72.8777,
+        "population": 21297000
+    },
+    {
+        "city": "New York",
+        "country": "United States",
+        "country_code": "US",
+        "lat": 40.7128,
+        "lng": -74.0060,
+        "population": 18937000
+    }
+]
