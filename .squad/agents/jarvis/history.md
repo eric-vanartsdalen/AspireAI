@@ -9,6 +9,202 @@
 
 <!-- Append new learnings below. Each entry is something lasting about the project. -->
 
+### 2026-04-16 — Team Sync: Follow-Up Chat History + Conversation Persistence
+
+**Context:** Jeff wired gateway history + persisted assistant metadata. Buster validated regression coverage. Cross-service contract alignment proven (54 Python + 44 .NET tests passing).
+
+**What I Implemented:**
+- Added backward-compatible `conversation_history` to BRAIN chat contract (normalized `null` to `[]` at Python boundary)
+- Updated Python retrieval to blend history into queries before knowledge search
+- Extended Ollama generation to replay prior user/assistant turns
+- Updated critique-mode reasoning to carry compact history through planning/retrieval/synthesis/critique phases
+- 54 targeted Python tests covering follow-up patterns, history normalization, and critique reasoning
+
+**Key Patterns Established:**
+- **Backward-compatible history fields:** Normalize `null`/missing payloads to `[]` at contract boundary
+- **History-aware retrieval:** Build queries from recent turns + current question
+- **Critique mode + history:** Carry history through all reasoning phases to keep response consistency
+
+**Result:**
+- Follow-up questions preserve context even when new documents shift retrieval candidates
+- Older callers that omit history still work cleanly
+- Cross-service contract tests prove alignment
+
+**Key file paths:**
+- `src/AspireApp.PythonServices/app/contracts/models.py`
+- `src/AspireApp.PythonServices/app/routers/brain.py`
+- `src/AspireApp.PythonServices/app/brain/reasoning/critique_pipeline.py`
+- `src/AspireApp.PythonServices/app/services/llm_chat_service.py`
+- `src/AspireApp.PythonServices/tests/test_brain_chat.py`
+
+### 2026-04-16 — Follow-Up Chat History Must Travel With BRAIN Requests
+
+**Problem:**
+- Follow-up `/brain/chat` questions lost context after new documents were uploaded because Python retrieval and generation only saw the latest user query.
+- The API gateway can serialize optional request fields as `null`, so a new history field had to accept both omitted and null payloads without breaking older callers.
+
+**Fix:**
+- Extended `BrainChatRequest` with `conversation_history` entries shaped as `{ role, content }` and normalized `null` to an empty list on the Python side.
+- Updated regular chat retrieval to blend recent history into the retrieval query and updated Ollama chat generation to replay prior user/assistant turns before the new question.
+- Updated critique-mode planning/retrieval/synthesis prompts to carry the same compact history block so follow-up reasoning stays grounded.
+
+**Result:**
+- Follow-up questions can reuse prior chat context even when the latest uploaded document shifts retrieval candidates.
+- Older callers that omit history, or gateway callers that forward `conversation_history: null`, still validate cleanly.
+- Python and gateway contract tests now cover the shared wire shape.
+
+**Key Pattern:**
+- **Backward-compatible history fields:** When adding cross-service chat history, normalize `null`/missing payloads to `[]` at the contract boundary before the pipeline touches them.
+- **History-aware retrieval:** For follow-up questions, build the retrieval query from recent turns plus the current question instead of embedding only the latest utterance.
+
+**Key file paths:**
+- `src/AspireApp.PythonServices/app/contracts/models.py` (request normalization for `conversation_history`)
+- `src/AspireApp.PythonServices/app/routers/brain.py` (history-aware retrieval + regular chat path)
+- `src/AspireApp.PythonServices/app/brain/reasoning/critique_pipeline.py` (history-aware critique prompts)
+- `src/AspireApp.PythonServices/app/services/llm_chat_service.py` (multi-turn Ollama payload construction)
+- `src/AspireApp.PythonServices/tests/test_brain_chat.py` and `tests/test_critique_pipeline.py` (follow-up coverage)
+- `src/AspireApp.ApiService/Contracts/BrainContractModels.cs` (gateway contract alignment)
+
+### 2026-04-15 — LightRAG Retrieval Multi-Shape Compatibility + Filename-Parsed Provenance
+
+**Problem:**
+- `BasicAspireAppHostTests.LiveLightRagNeo4jQueryRoundTrip` passed ingestion and Neo4j growth but returned empty retrieval results.
+- LightRAG response shape varies between newer `contexts` format and legacy `/query/data` chunk rows.
+- Some chunks lack explicit confidence scores, and document IDs were missing when LightRAG returned results by file path only.
+
+**Fix:**
+- Updated `LightRagRetriever` to accept both response shapes: try `contexts` first, fall back to `/query/data` chunks if absent.
+- Implemented filename parsing in `BrainKnowledgeRetriever.parse_document_id_from_path()` to extract document ID from staged patterns like `000007-guide.md` → ID 7.
+- Confidence enrichment now uses parsed document ID to query Neo4j for metadata (source_confidence, claim confidence).
+- Updated `app/services/lightrag_query_service.py` and `app/brain/knowledge/retrievers.py` to handle both shapes end-to-end.
+
+**Result:**
+- Retrieval now works with multiple LightRAG response schemas; no single schema assumption.
+- Provenance recoverable from filename parsing when explicit document IDs absent.
+- Confidence enrichment bridges legacy chunks to Neo4j metadata via filename → document ID mapping.
+- Live round-trip test passing (27/27 Python LightRAG tests passing).
+
+**Key Pattern:**
+- **Multi-shape API compatibility:** When LightRAG (or similar services) return multiple response formats, retriever must detect and handle all variants rather than failing on unexpected shape.
+- **Provenance recovery:** Use available metadata (filename, path, source_doc) to reconstruct missing IDs; enables confidence enrichment even when LightRAG response incomplete.
+
+**Key file paths:**
+- `src/AspireApp.PythonServices/app/services/lightrag_query_service.py` (response shape detection + chunk extraction)
+- `src/AspireApp.PythonServices/app/brain/knowledge/retrievers.py` (filename parsing, confidence enrichment)
+- `src/AspireApp.PythonServices/tests/test_lightrag_retriever.py` (multi-shape validation)
+- `src/AspireApp.PythonServices/tests/test_knowledge_retriever.py` (provenance + confidence tests)
+- `src/AspireApp.WebTest/Tests/BasicAspireAppHostTests.cs` (LiveLightRagNeo4jQueryRoundTrip validation)
+
+**Related Work:**
+- Builds on P1 Docling → LightRAG → Neo4j integration audit (2026-04-13)
+- Enables Phase 2 retrieval to work with production LightRAG without schema rework
+
+### 2026-04-18 — Confidence Enrichment Fix for BrainKnowledgeRetriever
+
+**Problem:**
+- Test `BrainQueryReturnsConfidenceEnrichedResults` expected confidence values NOT equal to 0.5 (the default), but LightRAG responses without explicit scores were falling back to DEFAULT_CONFIDENCE.
+- The `BrainKnowledgeRetriever` was creating `LightRagRetriever()` without passing the `neo4j_service`, so confidence enrichment via `get_confidence_by_provenance()` wasn't happening.
+
+**Fix:**
+- Updated `BrainKnowledgeRetriever.__init__()` to pass `neo4j_service` to `LightRagRetriever` when initializing the default retriever (line 454).
+- Now when LightRAG returns results without confidence scores, the retriever attempts to enrich them by querying Neo4j for document/page source_confidence or claim confidence.
+
+**Result:**
+- Confidence enrichment now works end-to-end: LightRAG results get enriched from Neo4j metadata when scores are missing.
+- If enrichment fails or confidence is still None, the retriever returns None for that item (fail-closed pattern) instead of defaulting to 0.5.
+- This enables the semantic fallback when LightRAG doesn't have enough data.
+
+**Key Pattern:**
+- **Fail-closed confidence:** When confidence cannot be resolved from either LightRAG response or Neo4j provenance, return None/empty results to signal unresolved confidence rather than guessing 0.5.
+- **Dependency injection:** Pass Neo4j service through the retriever chain so enrichment services have access to graph data.
+
+**Key file paths:**
+- `src/AspireApp.PythonServices/app/brain/knowledge/retrievers.py` (line 454: BrainKnowledgeRetriever initialization fix)
+- `src/AspireApp.PythonServices/app/services/neo4j_service.py` (lines 508-547: get_confidence_by_provenance implementation)
+- `src/AspireApp.WebTest/Tests/BasicAspireAppHostTests.cs` (line 423: confidence != 0.5 assertion)
+
+**Related Work:**
+- Confidence data path established in earlier P2-B work (Claim schema + SemanticKnowledgeRetriever)
+- This fix completes the LightRAG → Neo4j confidence enrichment path for the primary retriever
+
+### 2026-04-17 — P2-C Vector Index Infrastructure Complete
+
+**Completed:**
+- Created Neo4j vector indexes for semantic search: `page_content_vector` (Page.content_embedding) and `claim_text_vector` (Claim.text_embedding)
+- Implemented vector search methods: `search_claims_vector()` and `search_pages_vector()` in `Neo4jService`
+- Built `EmbeddingService` with sentence-transformers support, lazy-loading, batch encoding, and graceful degradation
+- Added comprehensive test coverage: `test_vector_infrastructure.py` (8/8 tests passing)
+
+**Key patterns:**
+- **Idempotent index creation:** Vector indexes created with `IF NOT EXISTS` in `_ensure_vector_indexes()`, safe to run on every Neo4j service initialization
+- **Neo4j 5.x vector syntax:** Uses `db.index.vector.queryNodes()` with cosine similarity function; 384-dimensional embeddings (default for sentence-transformers/all-MiniLM-L6-v2)
+- **Foundation-first approach:** Infrastructure (indexes, search methods, embedding service) implemented before population pipeline. Enables embedding integration to proceed in parallel with Phase 3 agent work
+- **Graceful degradation:** `EmbeddingService` handles missing sentence-transformers gracefully; returns `None` instead of crashing when model unavailable
+- **Test-driven:** All infrastructure validated without requiring live embeddings; mocks prove query structure and parameter passing
+
+**Remaining P2-C work:**
+- Populate `content_embedding` and `text_embedding` properties during document ingestion
+- Wire vector search into `SemanticKnowledgeRetriever` (vector-first retrieval with text fallback)
+- Coordinate with Jeff on Ollama embedding endpoint configuration (if switching from sentence-transformers)
+
+**Key file paths:**
+- `src/AspireApp.PythonServices/app/services/neo4j_service.py` (lines 31-96: vector index creation; lines 410-495: vector search methods)
+- `src/AspireApp.PythonServices/app/services/embedding_service.py` (embedding generation service)
+- `src/AspireApp.PythonServices/tests/test_vector_infrastructure.py` (8 tests validating index creation, search methods, embedding service)
+- `roadmap/Tasks.md` (P2-C status updated to "Infrastructure Complete")
+
+**Architecture decisions:**
+- Vector indexes created at Neo4j service initialization, not via separate migration scripts (simplifies deployment)
+- Embedding dimension configurable via `EMBEDDING_DIMENSION` env var (default: 384)
+- Similarity threshold exposed as parameter (default: 0.7) for retrieval tuning
+- Search methods return standard result shape matching text-based search (content, confidence, document_id, page_number) for easy integration
+
+### 2025-01-11 — Phase 2 Knowledge Layer: Claim Schema + Confidence Data Path
+
+**Completed:**
+- Extended Neo4j schema with Claim, Evidence, Concept, Entity node constraints (`neo4j_service.py` lines 31-50)
+- Implemented `ClaimExtractionService` for sentence-based claim extraction with confidence heuristics (Phase 2 baseline; LLM extraction deferred)
+- Added `create_claim_nodes()` and `search_claims()` methods to Neo4jService for Claim storage and retrieval
+- Updated `SemanticKnowledgeRetriever` to query Claim nodes first (confidence-backed), then fall back to Page nodes
+- Verified confidence data path: semantic fallback no longer collapses to `DEFAULT_CONFIDENCE=0.5`; retrieves real confidence from Neo4j
+- Added comprehensive tests: `test_knowledge_retriever.py` (10 tests), `test_claim_extraction.py` (5 tests)
+
+**Key pattern:**
+- **P2-B blocker resolved (partially):** The confidence data path now works end-to-end for stored claims. Semantic retrieval queries `Claim` nodes with extraction-quality confidence, falling back to `Page` nodes with document `source_confidence`.
+- **Remaining P2-B work:** Wire `ClaimExtractionService` into the ingestion pipeline so claims are actually extracted and stored during document processing.
+- **Claim extraction strategy:** Phase 2 uses simple sentence splitting with length/completeness heuristics. Phase 3 will upgrade to LLM-powered extraction.
+- **Retrieval prioritization:** `SemanticKnowledgeRetriever.retrieve()` tries Claims first (higher precision), then Pages (broader coverage).
+
+**Key file paths:**
+- `src/AspireApp.PythonServices/app/services/neo4j_service.py` (lines 31-50: constraints; lines 289-363: Claim CRUD)
+- `src/AspireApp.PythonServices/app/services/claim_extraction_service.py` (sentence-based extraction logic)
+- `src/AspireApp.PythonServices/app/brain/knowledge/retrievers.py` (lines 286-332: Claim-first retrieval)
+- `src/AspireApp.PythonServices/tests/test_knowledge_retriever.py` (lines 289-365: Claim retrieval tests)
+- `src/AspireApp.PythonServices/tests/test_claim_extraction.py` (extraction service tests)
+- `roadmap/Tasks.md` (Phase 2 Knowledge Layer + Validation Layer status updated)
+
+### 2026-11-02 — Roadmap Precision: Separating Proven from Deferred in Phase 2 BRAIN Work
+
+**Completed:**
+- Revised `roadmap/Tasks.md` to clarify P2-B and P2-C blockers per Buster's rejection feedback.
+- Separated `BrainKnowledgeRetriever` into proven (interface + routing) vs. deferred (confidence scoring, graph traversal).
+- Tightened gateway `/brain/query` scope: proved HTTP contract mapping, deferred full orchestration to Phase 3.
+- Moved Validation Layer into explicit Phase 2 blocker status (not Phase 3 optional).
+- Added inline blocker notes: Neo4j schema extension blocks both P2-B (confidence from claims) and P2-C (vector indexes).
+
+**Key pattern:**
+- When a deliverable is "done" (code written, interface exposed), distinguish what's proven by tests from what's deferred:
+  - ✅ Proven = interface contract, routing wiring, happy-path tests pass
+  - ❌ Deferred = core scoring/ranking logic, edge cases, data pipelines not yet wired
+- Validation Layer is not optional Phase 3+ work; it's a Phase 2 gate blocker. P2-B cannot close without Validation kickoff (claim extraction + confidence strategy).
+- Neo4j schema constraints (Claim/Evidence nodes) block both P2-B (confidence storage) and P2-C (vector index population).
+
+**Key file paths:**
+- `roadmap/Tasks.md` (lines 165-193: Knowledge Layer + Validation Layer sections clarified)
+- `src/AspireApp.WebTest/Tests/BasicAspireAppHostTests.cs` (proven test: `LiveLightRagNeo4jQueryRoundTrip`)
+- `src/AspireApp.WebTest/Tests/BrainGatewayPhase2Tests.cs` (proven test: `QueryKnowledgeAsync_MapsContractShapedKnowledgeResult_FromPythonQueryRoute`)
+- Decision: `.squad/decisions/inbox/jarvis-tasks-md-precision-edits.md`
+
 ### 2026-04-05 — Python Test Stability: Dependency-Tolerant Imports & Bootstrap Path Repair
 
 **Completed:**
@@ -67,6 +263,12 @@
 - C# context: `src/AspireApp.Web/Shared/UploadDbContext.cs` (lines 60-61 tenant indexes)
 - Decision: `.squad/decisions/inbox/jarvis-tenant-schema-fix.md`
 
+### 2026-04-18 — Batch Embedding Population Regression Proof
+
+**Completed:**
+- `process_document_task` now batches page/claim embeddings via `EmbeddingService.embed_batch` and persists them with `Neo4jService.populate_page_embedding` / `populate_claim_embedding`.
+- Regression coverage validates batch calls and embedding persistence during the real processing path with faked services.
+
 ## Core Context
 
 **Key architectural learnings from active development (Feb-Apr 2026):**
@@ -111,6 +313,50 @@
 **Files Modified:**
 - `src/AspireApp.PythonServices/app/services/database_service.py` — tenant_id column, indexes, column defs
 - Tests: Python contract audit validates round-trip; C# operational test validates persistence
+
+### 2026-04-24 — Phase 3b: PydanticAI Integration with Swappable Abstraction
+
+**Completed:**
+- Implemented PydanticAI as the agent framework for Critique mode (Phase 3b)
+- Created framework-agnostic `AgentProvider` protocol to keep agent orchestration swappable
+- Built `PydanticAIProvider` adapter implementing the protocol with Ollama backend support
+- Implemented `CritiquePipeline` orchestrating Planner → Retriever → Synthesizer → Critic agents
+- Updated `/brain/chat` endpoint to route Critique mode through multi-agent pipeline
+- Added comprehensive test coverage: 13 critique pipeline tests, 20 brain chat tests (all passing)
+
+**Key patterns:**
+- **Framework abstraction boundary:** Agent providers implement `AgentProvider` protocol with normalized `AgentResponse` shape. Pipeline logic depends only on protocol, not PydanticAI internals.
+- **Swappable by design:** Switching from PydanticAI to LangGraph/CrewAI/custom orchestrator requires only implementing a new provider class; pipeline and routing logic unchanged.
+- **Agent chaining:** `CritiquePipeline.execute()` runs sequential agent flow with context passing: planner breaks down query → retriever fetches knowledge per sub-query → synthesizer merges → critic validates and scores confidence.
+- **Graceful degradation:** Critique mode returns 503 when agent provider unavailable (OLLAMA_ENDPOINT not configured); Regular mode continues to work independently.
+- **Test-driven abstraction:** Mock provider validates protocol contract without requiring PydanticAI; pipeline tests prove orchestration logic decoupled from framework.
+
+**Architecture decisions:**
+- PydanticAI chosen for Phase 3b foundation due to Pydantic integration and structured output support
+- Agent provider cached by role to avoid re-initializing identical agents
+- Default system prompts defined for standard roles (planner, retriever, synthesizer, critic)
+- Confidence extraction from critic response uses multi-pattern regex fallback
+- Sub-query extraction uses heuristic parsing (numbered lists, question marks) with fallback to truncated planner output
+
+**Key file paths:**
+- `src/AspireApp.PythonServices/app/brain/reasoning/agent_provider.py` — Protocol definition (AgentProvider, AgentResponse)
+- `src/AspireApp.PythonServices/app/brain/reasoning/pydantic_ai_provider.py` — PydanticAI adapter implementation
+- `src/AspireApp.PythonServices/app/brain/reasoning/critique_pipeline.py` — Multi-agent orchestration logic
+- `src/AspireApp.PythonServices/app/routers/brain.py` — Critique mode routing in /brain/chat endpoint
+- `src/AspireApp.PythonServices/requirements.txt` — pydantic-ai dependency added
+- `src/AspireApp.PythonServices/tests/test_critique_pipeline.py` — 13 tests validating pipeline + abstraction
+- `src/AspireApp.PythonServices/tests/test_brain_chat.py` — 20 tests validating endpoint routing (updated for critique mode)
+
+**Remaining Phase 3b work:**
+- Wire Critique mode toggle activation in Blazor UI (currently backend-ready)
+- Add "BRAIN is thinking" progress indicator for multi-step reasoning
+- Display reasoning steps chain in chat UI
+- Consider adding Proactive Monitor agent for contradiction detection (deferred to Phase 4)
+
+**Related work:**
+- Builds on Phase 3a Regular mode foundation (BrainKnowledgeRetriever, /brain/chat endpoint)
+- Enables user-selectable reasoning depth: Regular (fast RAG) vs Critique (thorough multi-agent validation)
+
 
 **Next:** Data layer now ready for Kujan's contract audit closure and Buster's final approval.
 
@@ -607,3 +853,152 @@
 **Orchestration Log:** Created for session context at 20260405T143735Z-jarvis.md
 
 ---
+
+### 2026-04-15 — Phase 2 LightRAG Confidence Enrichment: Provenance-Based Fallback
+
+**Completed:**
+- Implemented Neo4jService.get_confidence_by_provenance() to query stored confidence by document_id + optional page_number (tries Claim nodes first, then Page/Document nodes)
+- Extended LightRagRetriever to accept optional 
+eo4j_service for confidence enrichment when LightRAG omits score metadata
+- Added _enrich_confidence_from_provenance() to _KnowledgeItemFactory to parse provenance from document_id/page_number fields or source_refs and query Neo4j
+- Updated _build_item() to accept nrich_confidence flag; when True and confidence is missing, attempts Neo4j enrichment before falling back to DEFAULT_CONFIDENCE=0.5
+- Wired Neo4j service through /rag/lightrag-query and /rag/query endpoints via dependency injection
+- Added 6 regression tests in 	est_lightrag_retriever.py verifying enrichment, ref parsing, explicit score preservation, and fallback behavior
+
+**Key pattern:**
+- **P2-B gap partially closed:** When LightRAG returns unscored results but provenance (document_id/page_number) is resolvable, LightRagRetriever now enriches confidence from stored Neo4j Claim/Page data instead of immediately defaulting to  .5.
+- **Provenance parsing:** The retriever parses both structured fields (document_id, page_number) and source_refs strings ("document:7/page:2") to resolve provenance for enrichment.
+- **Honest fallback:** When Neo4j cannot resolve confidence (no matching nodes or provenance unparseable), the retriever falls back to DEFAULT_CONFIDENCE=0.5 — this is still the P2-B blocker.
+- **Remaining P2-B work:** Fail closed to semantic fallback when confidence is unresolvable instead of surfacing synthetic  .5 confidence on the LightRAG path.
+
+**Key file paths:**
+- src/AspireApp.PythonServices/app/services/neo4j_service.py (lines 364-418: get_confidence_by_provenance())
+- src/AspireApp.PythonServices/app/brain/knowledge/retrievers.py (lines 18-97: enrichment logic in _KnowledgeItemFactory; lines 272-279: LightRagRetriever.__init__ with neo4j_service)
+- src/AspireApp.PythonServices/app/routers/rag.py (lines 23-25: wired Neo4j service to get_knowledge_retriever())
+- src/AspireApp.PythonServices/tests/test_lightrag_retriever.py (6 new tests: enrichment, ref parsing, fallback scenarios)
+- oadmap/Tasks.md (updated P2-B progress: enrichment implemented, fail-closed behavior still deferred)
+
+
+### 2026-04-15 — LightRAG Query Provenance Must Tolerate `contexts` and Unscored `chunks`
+
+**Completed:**
+- Updated `LightRagRetriever` to read both legacy `data.chunks` payloads and newer top-level/data `contexts` payloads from LightRAG.
+- Added provenance parsing from LightRAG `file_path` / `source_doc` fields so the retriever can recover `document:{id}` refs from staged filenames like `000007-guide.md`.
+- Used that parsed provenance to enrich missing confidence from Neo4j when `/query/data` returns chunk text without a score.
+- Added regression tests covering modern `contexts` responses and unscored chunk payloads.
+
+**Key pattern:**
+- Treat LightRAG retrieval as a version-tolerant seam: accept both `contexts` and `chunks`, and never assume score/provenance fields arrive in one fixed shape.
+- When LightRAG omits scores, derive document provenance from the staged file path and ask Neo4j for stored confidence instead of returning an empty result.
+- Deterministic staged filenames (`{document_id:06d}-{name}.md`) are now part of the retrieval confidence path, not just the ingestion handoff.
+
+**Key file paths:**
+- `src/AspireApp.PythonServices/app/brain/knowledge/retrievers.py`
+- `src/AspireApp.PythonServices/tests/test_lightrag_retriever.py`
+- `src/AspireApp.WebTest/Tests/BasicAspireAppHostTests.cs`
+
+---
+
+## Cross-Agent Coordination — Scribe Merge (2026-04-15T20:25:34Z)
+
+**Session:** Planning Doc Reconcile & Test Failure Triage
+
+**Work:** Jarvis analyzed Python processing timeouts, applied confidence enrichment fix, and mapped test failures to owners.
+
+**Coordination Points:**
+- Bob reconciled branch state; verified Phase 1/2 gates closed; flagged Python processing timeout investigation needed
+- Buster triaged 6 test failures; mapped LiveLightRagNeo4jQueryRoundTrip and FlowEndToEnd to orchestration issue
+- Jeff implemented upload-status race fix; confirmed Python-side confidence enrichment responsibility
+- Warden improved auth test selectors; Jarvis to investigate split-brain session-establishment in /auth/mock/signin
+
+**Key Outcomes:**
+- Confidence enrichment fix implemented: Pass 
+eo4j_service to LightRagRetriever for enrichment when LightRAG lacks scores
+- Test failure triage: LightRAG/FlowEndToEnd timeouts = orchestration bottleneck (not Python confidence bug); split-brain auth = endpoint wiring issue
+- Handoff clarified: Processing pipeline investigation (Bob/Jeff), auth endpoint fix (Jarvis coordination with endpoint inspection)
+
+**Related:** Orchestration logs created. Session log at .squad/log/2026-04-15T20-25-34Z-planning-doc-reconcile.md. 17 inbox decisions merged into .squad/decisions.md.
+### 2026-04-15 — Critique Mode Must Use PydanticAI's Ollama Provider, Not OpenAI Env Shims
+**Problem:**
+- Critique mode was constructing `Agent(model="openai:...")` and only then mutating `OPENAI_BASE_URL` / `OPENAI_API_KEY`.
+- PydanticAI resolved the default OpenAI client before those env mutations mattered, so `/brain/chat` in critique mode failed with `The api_key client option must be set...` even on the local Ollama/Aspire path.
+- The failure was configuration-path specific: regular chat used `LlmChatService` with `OLLAMA_ENDPOINT`, while critique mode took a separate OpenAI-compatible shim path.
+
+**Fix:**
+- Updated `app/brain/reasoning/pydantic_ai_provider.py` to build an explicit `OpenAIChatModel` with `OllamaProvider(base_url=OLLAMA_ENDPOINT)`.
+- Removed runtime mutation of `OPENAI_*` environment variables.
+- Aligned critique-mode model selection with Aspire chat config by preferring `CHAT_MODEL` before the legacy `OLLAMA_MODEL` fallback.
+
+**Result:**
+- Critique mode now stays on the same local Ollama/Aspire path as regular chat.
+- No unrelated OpenAI API key is required for planner/synthesizer/critic agents.
+- Regression coverage added in `src/AspireApp.PythonServices/tests/test_critique_pipeline.py`; focused suite (35 tests) and full Python suite (127 tests) passed.
+
+
+### 2026-04-15 — PydanticAI Critique Mode Explicit Ollama Provider Configuration
+
+**Problem:**
+- Critique mode failing deterministically with /brain/chat returning 500 on local Aspire/Ollama setup.
+- Root cause: PydanticAI provider initialized with OpenAI path; late environment mutation (OPENAI_BASE_URL, OPENAI_API_KEY) happened after provider creation, so credentials never applied.
+
+**Fix:**
+- Updated pp/brain/reasoning/pydantic_ai_provider.py to use explicit OllamaProvider(base_url=OLLAMA_ENDPOINT) configuration instead of relying on late env patching.
+- Provider now builds OpenAIChatModel(model_name, provider=OllamaProvider(...)) at initialization time, before any Aspire environment mutation.
+- Aligned critique mode with same local Ollama contract as regular chat mode.
+
+**Result:**
+- Critique mode now properly configured on local Aspire runtime.
+- HTTP errors from Python now surface correctly through gateway/Web client layers (see Jeff's HTTP error preservation fix).
+- Focused tests: 35/35 passed (test_critique_pipeline.py + test_brain_chat.py).
+- Full regression: 127/127 passed (complete Python test suite).
+
+**Cross-Agent Impact:**
+- **Jeff (.NET):** Provider fix surfaces correct HTTP status codes. Jeff updated gateway/Web clients to preserve 503 responses instead of collapsing to 502. Configuration failures now visible to Blazor UI.
+- **Buster (QA):** Provider fix provides foundation for three-seam regression suite. Python provider wiring validated; HTTP clients + saved conversation reload tests complete coverage.
+
+**Key Pattern:**
+- **Provider initialization order:** Late environment mutation is not reliable. Explicit configuration at init time ensures dependencies are satisfied before provider creation. Keeps provider discovery aligned across chat modes.
+
+**Key file paths:**
+- src/AspireApp.PythonServices/app/brain/reasoning/pydantic_ai_provider.py (provider initialization)
+- src/AspireApp.PythonServices/tests/test_critique_pipeline.py (provider validation)
+- .squad/decisions.md (full decision details + validation)
+- .squad/orchestration-log/2026-04-15T21-17-30Z-jarvis.md (session details)
+
+### 2026-04-16 — MVP Achieved: P3b on Track, Post-MVP Schema Investigation Queued
+
+**Scope:** Cross-agent session confirming MVP milestone and queuing post-MVP fixes for Phase 3c.
+
+**What Happened (Summary for Jarvis):**
+- MVP is **officially declared functional** (gateway-routed Regular mode chat end-to-end)
+- Two post-MVP fixes elevated to **P1-immediate** status:
+  1. **Conversation context not passed on follow-ups** (you + Jeff: Python routing + context preservation)
+  2. **Gateway evidence not persisted** (you lead: Neo4j schema enrichment for reasoning steps)
+- P3b critique UI remains on track; no blocking gates
+- Both tasks blocked on P3b completion (2026-04-30 target)
+
+**What This Means for Jarvis:**
+- Continue P3b validation pipeline work without interruption
+- Post-MVP evidence persistence task is **your lead** work in Phase 3c
+  - Scope: Neo4j schema review for persisting reasoning steps + evidence links
+  - Goal: Backend evidence survives session reload (user pain point)
+  - Cross-context: Works with Buster for UI validation
+- Context memory task (secondary): Work with Jeff on Python routing for multi-turn session state
+
+**Coordinator SQL-Tracked Tasks (Your Queue Post-P3b):**
+- `mvp-evidence-persistence` — Neo4j schema investigation + enrichment (owner: you)
+- `mvp-conversation-context-memory` — Python multi-turn routing (co-lead with Jeff)
+
+**Coordination Notes:**
+- Bob/Verbal confirmed user-driven prioritization
+- Both tasks queued pending P3b gate closure (2026-04-30)
+- No architectural decisions needed; purely implementation scope
+
+**Key Files to Review (post-MVP phase):**
+- Reasoning steps model: `src/AspireApp.PythonServices/app/contracts/models.py` (ReasoningStep shape)
+- Evidence storage: `src/AspireApp.PythonServices/app/brain/reasoning/` (currently in-memory only)
+- Neo4j schema: `src/AspireApp.PythonServices/app/services/neo4j_service.py` (current constraints/labels)
+- Python gateway: `src/AspireApp.ApiService/Services/BrainBackendClient.cs` (response contracts)
+
+**Status:** MVP locked; post-MVP priorities ordered; Neo4j schema investigation begins 2026-04-30
+

@@ -1,3 +1,4 @@
+import asyncio
 import json
 import shutil
 import os
@@ -6,10 +7,13 @@ from pathlib import Path
 from fastapi import APIRouter, HTTPException, Depends, BackgroundTasks
 import logging
 
+from ..brain.ingestion import build_canonical_document
 from ..services.database_service import DatabaseService
 from ..services.service_factory import get_docling_service
 from ..services.lightrag_handoff_service import LightRagHandoffService
 from ..services.neo4j_service import Neo4jService
+from ..services.claim_extraction_service import ClaimExtractionService
+from ..services.embedding_service import EmbeddingService
 from ..models.models import BatchProcessingStartResponse, DocumentCleanupResponse, ProcessingStartResponse, ProcessingStatus
 
 router = APIRouter(prefix="/processing", tags=["processing"])
@@ -36,6 +40,25 @@ async def process_document_task(
     lightrag_handoff: LightRagHandoffService | None = None,
     mark_processing_started: bool = True,
 ):
+    await asyncio.to_thread(
+        _process_document_task_sync,
+        document_id,
+        db,
+        docling,
+        neo4j,
+        lightrag_handoff,
+        mark_processing_started,
+    )
+
+
+def _process_document_task_sync(
+    document_id: int,
+    db: DatabaseService,
+    docling,  # Don't type hint since it could be either service
+    neo4j: Neo4jService,
+    lightrag_handoff: LightRagHandoffService | None = None,
+    mark_processing_started: bool = True,
+):
     """Background task to process a document"""
     try:
         logger.info(f"Starting processing for document {document_id}")
@@ -52,25 +75,102 @@ async def process_document_task(
         
         # Process with docling (full or fallback)
         processed_doc, pages = docling.process_document(document, resolved_file_path)
-        _attempt_lightrag_handoff(
-            document=document,
-            processed_doc=processed_doc,
-            lightrag_handoff=lightrag_handoff or LightRagHandoffService(),
-        )
-        _persist_processing_metadata(processed_doc)
-        
-        # Create Neo4j nodes
+        canonical_document = build_canonical_document(document, pages)
+        _persist_canonical_document(processed_doc, canonical_document)
+
+        # Create Neo4j nodes and generate embeddings BEFORE triggering LightRAG.
+        # LightRAG ingestion also calls Ollama; running both concurrently saturates
+        # the single Ollama instance and causes embedding timeouts that push total
+        # processing time past the test polling window.
         page_node_ids = []
         try:
             # Create document node
-            doc_node_id = neo4j.create_document_node(document)
+            doc_node_id = neo4j.create_document_node(canonical_document)
             
-            # Create page nodes
-            page_node_ids = neo4j.create_page_nodes(pages, doc_node_id, document.id)
+            # Initialize embedding service for P2-C population
+            embedding_service = EmbeddingService()
+            embedding_available = embedding_service.is_available()
+            
+            # Create page nodes and populate embeddings
+            page_node_ids = neo4j.create_page_nodes(canonical_document.pages, doc_node_id, document.id)
+            
+            # P2-C: Populate page embeddings during ingestion
+            if embedding_available:
+                page_texts = [page.content for page in canonical_document.pages]
+                try:
+                    page_embeddings = embedding_service.embed_batch(page_texts)
+                except Exception as embed_error:
+                    page_embeddings = None
+                    logger.warning(f"Failed to generate page embeddings for document {document_id}: {embed_error}")
+
+                if page_embeddings:
+                    for i, page in enumerate(canonical_document.pages):
+                        if i < len(page_node_ids) and i < len(page_embeddings):
+                            page_node_id = page_node_ids[i]
+                            page_embedding = page_embeddings[i]
+                            if page_embedding:
+                                neo4j.populate_page_embedding(page_node_id, page_embedding)
+                                logger.debug(
+                                    f"Populated embedding for page {page.page_number} of document {document_id}"
+                                )
+                else:
+                    logger.warning(f"Page embedding generation returned no embeddings for document {document_id}")
+            else:
+                logger.info(f"Embedding service unavailable - skipping embedding population for document {document_id}")
             
             # Create relationships
             neo4j.create_relationships(doc_node_id, page_node_ids)
             neo4j.create_sequential_relationships(page_node_ids)
+            
+            # Extract and persist claims from pages
+            claim_extractor = ClaimExtractionService()
+            for i, page in enumerate(canonical_document.pages):
+                if i < len(page_node_ids):
+                    page_node_id = page_node_ids[i]
+                    # Extract claims from page content
+                    claims = claim_extractor.extract_claims(
+                        content=page.content,
+                        source_confidence=canonical_document.source_confidence,
+                        source_type=canonical_document.source_type
+                    )
+                    
+                    # Persist claims to Neo4j
+                    if claims:
+                        claim_node_ids = neo4j.create_claim_nodes(
+                            claims=claims,
+                            page_node_id=page_node_id,
+                            document_id=document.id,
+                            page_number=page.page_number
+                        )
+                        
+                        # P2-C: Populate claim embeddings during ingestion
+                        if embedding_available:
+                            claim_texts = [claim.get("text", "") for claim in claims]
+                            try:
+                                claim_embeddings = embedding_service.embed_batch(claim_texts)
+                            except Exception as embed_error:
+                                claim_embeddings = None
+                                logger.warning(
+                                    f"Failed to generate claim embeddings for document {document_id}, page {page.page_number}: {embed_error}"
+                                )
+
+                            if claim_embeddings:
+                                for j, claim_node_id in enumerate(claim_node_ids):
+                                    if j < len(claim_embeddings):
+                                        claim_embedding = claim_embeddings[j]
+                                        if claim_embedding:
+                                            neo4j.populate_claim_embedding(claim_node_id, claim_embedding)
+                                            logger.debug(
+                                                f"Populated embedding for claim {j} on page {page.page_number}"
+                                            )
+                            else:
+                                logger.warning(
+                                    f"Claim embedding generation returned no embeddings for document {document_id}, page {page.page_number}"
+                                )
+                        
+                        logger.info(
+                            f"Extracted and persisted {len(claims)} claims from page {page.page_number} of document {document_id}"
+                        )
             
             # Update processed document with Neo4j node ID
             processed_doc.neo4j_node_id = doc_node_id
@@ -79,6 +179,22 @@ async def process_document_task(
             logger.warning(f"Neo4j processing failed for document {document_id}: {neo4j_error}")
             # Continue without Neo4j - the document is still processed
 
+        # All Ollama-dependent work is finished.  Hand off to LightRAG now so its
+        # own Ollama calls (LLM entity extraction + embedding) don't compete with
+        # the page/claim embedding batches above.
+        _attempt_lightrag_handoff(
+            document=document,
+            processed_doc=processed_doc,
+            lightrag_handoff=lightrag_handoff or LightRagHandoffService(),
+        )
+        _persist_processing_metadata(processed_doc)
+
+        db.update_file_ingestion_metadata(
+            file_id=document_id,
+            tenant_id=canonical_document.tenant_id,
+            source_type=canonical_document.source_type,
+            source_confidence=canonical_document.source_confidence,
+        )
         db.update_file_processing_results(
             file_id=document_id,
             docling_path=processed_doc.docling_document_path,
@@ -87,7 +203,7 @@ async def process_document_task(
         )
         
         # Save individual pages
-        for i, page in enumerate(pages):
+        for i, page in enumerate(canonical_document.pages):
             db.save_document_page(
                 file_id=document_id,
                 page_number=page.page_number,
@@ -150,6 +266,29 @@ def _persist_processing_metadata(processed_doc) -> None:
         json.dumps(metadata, indent=2, ensure_ascii=False),
         encoding="utf-8",
     )
+
+
+def _persist_canonical_document(processed_doc, canonical_document) -> None:
+    document_path = getattr(processed_doc, "docling_document_path", None)
+    if not document_path:
+        return
+
+    canonical_document_path = Path(document_path).with_name("canonical_document.json")
+    if not canonical_document_path.parent.exists():
+        return
+
+    canonical_document_path.write_text(
+        canonical_document.model_dump_json(indent=2),
+        encoding="utf-8",
+    )
+
+    metadata = getattr(processed_doc, "processing_metadata", None) or {}
+    metadata["canonical_document_path"] = str(canonical_document_path)
+    metadata["tenant_id"] = canonical_document.tenant_id
+    metadata["source_type"] = canonical_document.source_type
+    metadata["source_confidence"] = canonical_document.source_confidence
+    metadata["correlation_id"] = canonical_document.correlation_id
+    processed_doc.processing_metadata = metadata
 
 
 def _load_processing_metadata(docling_document_path: str | None) -> dict:

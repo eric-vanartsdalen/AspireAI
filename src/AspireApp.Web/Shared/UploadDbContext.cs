@@ -46,20 +46,6 @@ namespace AspireApp.Web.Shared
         [Obsolete("Use Datasources DbSet instead")]
         public DbSet<FileMetadata> Files => Set<FileMetadata>();
 
-        // ==================== Legacy Schema (Backward Compatibility) ====================
-
-        /// <summary>
-        /// Legacy documents table - marked obsolete, use Datasources instead
-        /// </summary>
-        [Obsolete("Use Datasources DbSet instead")]
-        public DbSet<Document> Documents => Set<Document>();
-
-        /// <summary>
-        /// Legacy processed documents table - marked obsolete
-        /// </summary>
-        [Obsolete("Use Datasources.DoclingDocumentPath instead")]
-        public DbSet<ProcessedDocument> ProcessedDocuments => Set<ProcessedDocument>();
-
         protected override void OnModelCreating(ModelBuilder modelBuilder)
         {
             base.OnModelCreating(modelBuilder);
@@ -212,6 +198,7 @@ namespace AspireApp.Web.Shared
                 entity.Property(e => e.OwnerUserId).IsRequired().HasMaxLength(200);
                 entity.Property(e => e.Role).IsRequired().HasMaxLength(20);
                 entity.Property(e => e.Content).IsRequired();
+                entity.Property(e => e.AssistantResponseJson).HasColumnType("jsonb");
 
                 entity.HasIndex(e => new { e.ConversationId, e.Sequence })
                       .IsUnique()
@@ -222,49 +209,6 @@ namespace AspireApp.Web.Shared
 
                 entity.HasIndex(e => new { e.ConversationId, e.CreatedAt })
                       .HasDatabaseName("idx_chat_messages_conversation_created");
-            });
-
-            // ==================== Legacy Schema Configuration (Backward Compatibility) ====================
-
-            // Configure legacy Documents entity
-            modelBuilder.Entity<Document>(entity =>
-            {
-                entity.ToTable("documents");
-                entity.HasKey(e => e.Id);
-                entity.Property(e => e.Id).ValueGeneratedOnAdd();
-                entity.Property(e => e.FileName).IsRequired().HasMaxLength(255);
-                entity.Property(e => e.OriginalFileName).IsRequired().HasMaxLength(255);
-                entity.Property(e => e.FilePath).IsRequired().HasMaxLength(500);
-                entity.Property(e => e.MimeType).HasMaxLength(100);
-                entity.Property(e => e.ProcessingStatus).HasMaxLength(50).HasDefaultValue("pending");
-                entity.Property(e => e.Processed).HasDefaultValue(false);
-                entity.Property(e => e.UploadDate).HasDefaultValueSql("CURRENT_TIMESTAMP");
-
-                // Legacy indexes
-                entity.HasIndex(e => e.Processed).HasDatabaseName("idx_documents_processed");
-                entity.HasIndex(e => e.UploadDate).HasDatabaseName("idx_documents_upload_date");
-                entity.HasIndex(e => e.ProcessingStatus).HasDatabaseName("idx_documents_status");
-                entity.HasIndex(e => e.FileName).HasDatabaseName("idx_documents_filename");
-            });
-
-            // Configure legacy ProcessedDocuments entity
-            modelBuilder.Entity<ProcessedDocument>(entity =>
-            {
-                entity.ToTable("processed_documents");
-                entity.HasKey(e => e.Id);
-                entity.Property(e => e.Id).ValueGeneratedOnAdd();
-                entity.Property(e => e.DoclingDocumentPath).IsRequired().HasMaxLength(500);
-                entity.Property(e => e.Neo4jNodeId).HasMaxLength(100);
-                entity.Property(e => e.ProcessingDate).HasDefaultValueSql("CURRENT_TIMESTAMP");
-
-                // Foreign key relationship (legacy)
-                entity.HasOne(e => e.Document)
-                      .WithMany(d => d.ProcessedDocuments)
-                      .HasForeignKey(e => e.DocumentId)
-                      .OnDelete(DeleteBehavior.Cascade);
-
-                // Legacy indexes
-                entity.HasIndex(e => e.DocumentId).HasDatabaseName("idx_processed_documents_document_id");
             });
         }
     }

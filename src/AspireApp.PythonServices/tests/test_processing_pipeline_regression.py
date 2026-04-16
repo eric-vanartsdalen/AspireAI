@@ -19,6 +19,7 @@ if str(TEST_ROOT) not in sys.path:
 
 from fastapi import BackgroundTasks, HTTPException
 
+from app.contracts import CanonicalDocument
 from app.routers import processing
 from app.services.lightrag_handoff_service import LightRagHandoffService
 
@@ -27,6 +28,7 @@ class FakeDatabaseService:
     def __init__(self, document: SimpleNamespace | None = None):
         self.document = document
         self.status_updates: list[tuple[int, str, str | None]] = []
+        self.ingestion_updates: list[dict] = []
         self.processing_updates: list[dict] = []
         self.saved_pages: list[dict] = []
         self.file_record: dict | None = None
@@ -44,6 +46,9 @@ class FakeDatabaseService:
 
     def update_file_processing_results(self, **kwargs) -> None:
         self.processing_updates.append(kwargs)
+
+    def update_file_ingestion_metadata(self, **kwargs) -> None:
+        self.ingestion_updates.append(kwargs)
 
     def save_document_page(self, **kwargs) -> None:
         self.saved_pages.append(kwargs)
@@ -63,8 +68,13 @@ class FakeDatabaseService:
 class FakeNeo4jService:
     def __init__(self):
         self.deleted_document_ids: list[int] = []
+        self.created_documents: list[object] = []
+        self.created_claims: list[dict] = []
+        self.page_embeddings: dict[str, list[float]] = {}
+        self.claim_embeddings: dict[str, list[float]] = {}
 
     def create_document_node(self, document):
+        self.created_documents.append(document)
         return "doc-node"
 
     def create_page_nodes(self, pages, doc_node_id, document_id):
@@ -75,10 +85,59 @@ class FakeNeo4jService:
 
     def create_sequential_relationships(self, page_node_ids):
         return None
+    
+    def create_claim_nodes(self, claims, page_node_id, document_id, page_number):
+        self.created_claims.append({
+            "claims": claims,
+            "page_node_id": page_node_id,
+            "document_id": document_id,
+            "page_number": page_number
+        })
+        return [f"claim-node-{page_number}-{i}" for i in range(len(claims))]
+    
+    def populate_page_embedding(self, page_node_id: str, embedding: list[float]) -> None:
+        """Store page embedding in fake storage"""
+        self.page_embeddings[page_node_id] = embedding
+    
+    def populate_claim_embedding(self, claim_node_id: str, embedding: list[float]) -> None:
+        """Store claim embedding in fake storage"""
+        self.claim_embeddings[claim_node_id] = embedding
 
     def delete_document_graph(self, document_id: int):
         self.deleted_document_ids.append(document_id)
         return {"deleted_documents": 1, "deleted_pages": 2}
+
+
+class FakeEmbeddingService:
+    def __init__(self, embedding_dimension: int = 384):
+        self.embedding_dimension = embedding_dimension
+        self.batch_calls: list[list[str]] = []
+
+    def is_available(self) -> bool:
+        return True
+
+    def embed_batch(self, texts: list[str], batch_size: int = 32, show_progress: bool = False):
+        self.batch_calls.append(list(texts))
+        return [[float(i)] * self.embedding_dimension for i in range(len(texts))]
+
+    def embed_text(self, text: str):
+        raise AssertionError("embed_text should not be called when batch embedding is available")
+
+
+class FakeClaimExtractionService:
+    def extract_claims(self, content: str, source_confidence: float, source_type: str):
+        return [
+            {
+                "text": f"{content} claim 1",
+                "confidence": source_confidence,
+                "source_type": source_type,
+            },
+            {
+                "text": f"{content} claim 2",
+                "confidence": source_confidence,
+                "source_type": source_type,
+            },
+        ]
 
 
 class FakeLightRagHandoffService:
@@ -136,8 +195,13 @@ class ProcessingPipelineRegressionTests(unittest.TestCase):
     def test_process_document_task_persists_pages_and_marks_processed(self):
         document = SimpleNamespace(
             id=42,
+            filename="science-textbook.pdf",
+            original_filename="science-textbook.pdf",
             file_path="C:\\data\\uploads\\stored-file.pdf",
+            mime_type="application/pdf",
             processing_status="uploaded",
+            tenant_id="default",
+            source_type="upload",
         )
         db = FakeDatabaseService(document)
         neo4j = FakeNeo4jService()
@@ -150,28 +214,67 @@ class ProcessingPipelineRegressionTests(unittest.TestCase):
                     processing_metadata={"markdown_path": "/app/data/processed/documents/42/output.md"},
                 ),
                 [
-                    SimpleNamespace(page_number=1, content="Page 1", metadata={"page": 1}),
-                    SimpleNamespace(page_number=2, content="Page 2", metadata={"page": 2}),
+                    SimpleNamespace(page_number=1, content="The Earth revolves around the Sun. This is a well-established fact.", metadata={"page": 1}),
+                    SimpleNamespace(page_number=2, content="Water is essential for life. All living organisms require water to survive.", metadata={"page": 2}),
                 ],
             )
         )
+        fake_embedding_service = FakeEmbeddingService()
+        fake_claim_extractor = FakeClaimExtractionService()
 
-        asyncio.run(
-            processing.process_document_task(
-                document_id=42,
-                db=db,
-                docling=docling,
-                neo4j=neo4j,
-                lightrag_handoff=FakeLightRagHandoffService(),
+        with patch("app.routers.processing.EmbeddingService", return_value=fake_embedding_service), \
+            patch("app.routers.processing.ClaimExtractionService", return_value=fake_claim_extractor):
+            asyncio.run(
+                processing.process_document_task(
+                    document_id=42,
+                    db=db,
+                    docling=docling,
+                    neo4j=neo4j,
+                    lightrag_handoff=FakeLightRagHandoffService(),
+                )
             )
-        )
 
         self.assertEqual((42, "processing", None), db.status_updates[0])
         self.assertEqual((42, "processed", None), db.status_updates[-1])
+        self.assertEqual(1, len(db.ingestion_updates))
         self.assertEqual(1, len(db.processing_updates))
         self.assertEqual(2, len(db.saved_pages))
         self.assertEqual("page-node-1", db.saved_pages[0]["neo4j_node_id"])
-        self.assertEqual("Page 2", db.saved_pages[1]["content"])
+        self.assertEqual("Water is essential for life. All living organisms require water to survive.", db.saved_pages[1]["content"])
+        self.assertEqual(0.9, db.ingestion_updates[0]["source_confidence"])
+        self.assertIsInstance(neo4j.created_documents[0], CanonicalDocument)
+        
+        # Verify claim extraction was called
+        self.assertGreater(len(neo4j.created_claims), 0, "Claims should be extracted from pages")
+        self.assertEqual(2, len(neo4j.created_claims), "Should extract claims from both pages")
+        
+        # Verify claims were extracted for page 1
+        page1_claims = neo4j.created_claims[0]
+        self.assertEqual(42, page1_claims["document_id"])
+        self.assertEqual(1, page1_claims["page_number"])
+        self.assertEqual("page-node-1", page1_claims["page_node_id"])
+        self.assertGreater(len(page1_claims["claims"]), 0, "Page 1 should have extracted claims")
+        
+        # Verify claims were extracted for page 2
+        page2_claims = neo4j.created_claims[1]
+        self.assertEqual(42, page2_claims["document_id"])
+        self.assertEqual(2, page2_claims["page_number"])
+        self.assertEqual("page-node-2", page2_claims["page_node_id"])
+        self.assertGreater(len(page2_claims["claims"]), 0, "Page 2 should have extracted claims")
+        
+        # Verify embedding generation and persistence
+        self.assertEqual(3, len(fake_embedding_service.batch_calls), "Expected batch embeddings for pages and claims")
+        expected_page_texts = [
+            "The Earth revolves around the Sun. This is a well-established fact.",
+            "Water is essential for life. All living organisms require water to survive.",
+        ]
+        self.assertEqual(expected_page_texts, fake_embedding_service.batch_calls[0])
+        self.assertEqual(2, len(neo4j.page_embeddings))
+        self.assertIn("page-node-1", neo4j.page_embeddings)
+        self.assertIn("page-node-2", neo4j.page_embeddings)
+        self.assertEqual(4, len(neo4j.claim_embeddings))
+        for embedding in neo4j.claim_embeddings.values():
+            self.assertEqual(384, len(embedding))
 
     def test_process_document_task_marks_error_when_docling_fails(self):
         document = SimpleNamespace(

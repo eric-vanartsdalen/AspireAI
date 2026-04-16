@@ -32,6 +32,7 @@ public sealed class ChatConversationStoreBootstrapper(UploadDbContext dbContext)
                 tenant_id character varying(100) NULL,
                 title character varying(200) NOT NULL,
                 title_source character varying(20) NOT NULL DEFAULT 'fallback',
+                chat_mode character varying(20) NOT NULL DEFAULT 'regular',
                 created_at timestamp with time zone NOT NULL DEFAULT NOW(),
                 updated_at timestamp with time zone NOT NULL DEFAULT NOW(),
                 last_message_at timestamp with time zone NULL
@@ -53,6 +54,22 @@ public sealed class ChatConversationStoreBootstrapper(UploadDbContext dbContext)
             """,
             cancellationToken);
 
+        // Migration: Add chat_mode column for existing tables
+        await _dbContext.Database.ExecuteSqlRawAsync(
+            """
+            DO $$
+            BEGIN
+                IF NOT EXISTS (
+                    SELECT 1 FROM information_schema.columns
+                    WHERE table_name = 'chat_conversations' AND column_name = 'chat_mode'
+                ) THEN
+                    ALTER TABLE chat_conversations
+                    ADD COLUMN chat_mode character varying(20) NOT NULL DEFAULT 'regular';
+                END IF;
+            END $$;
+            """,
+            cancellationToken);
+
         await _dbContext.Database.ExecuteSqlRawAsync(
             """
             CREATE TABLE IF NOT EXISTS chat_messages (
@@ -61,6 +78,7 @@ public sealed class ChatConversationStoreBootstrapper(UploadDbContext dbContext)
                 owner_user_id character varying(200) NOT NULL,
                 role character varying(20) NOT NULL,
                 content text NOT NULL,
+                assistant_response_json jsonb NULL,
                 sequence integer NOT NULL,
                 created_at timestamp with time zone NOT NULL DEFAULT NOW(),
                 CONSTRAINT fk_chat_messages_conversation
@@ -90,6 +108,21 @@ public sealed class ChatConversationStoreBootstrapper(UploadDbContext dbContext)
             """
             CREATE INDEX IF NOT EXISTS idx_chat_messages_conversation_created
             ON chat_messages (conversation_id, created_at);
+            """,
+            cancellationToken);
+
+        await _dbContext.Database.ExecuteSqlRawAsync(
+            """
+            DO $$
+            BEGIN
+                IF NOT EXISTS (
+                    SELECT 1 FROM information_schema.columns
+                    WHERE table_name = 'chat_messages' AND column_name = 'assistant_response_json'
+                ) THEN
+                    ALTER TABLE chat_messages
+                    ADD COLUMN assistant_response_json jsonb NULL;
+                END IF;
+            END $$;
             """,
             cancellationToken);
     }

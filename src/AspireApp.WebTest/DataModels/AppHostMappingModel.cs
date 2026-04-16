@@ -12,7 +12,7 @@ public class AppHostMappingModel
     public string GraphDBUri { get; set; } = string.Empty;
     public string LightRagUri { get; set; } = string.Empty;
     public string PythonServiceUri { get; set; } = string.Empty;
-    public string ApiServiceUri { get; set; } = string.Empty;
+    public string BrainGatewayUri { get; set; } = string.Empty;
     public string SharedDataPath { get; set; } = string.Empty;
     public string SharedDatabasePath { get; set; } = string.Empty;
     public string UploadStoreConnectionString { get; set; } = string.Empty;

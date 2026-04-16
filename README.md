@@ -1,14 +1,29 @@
 # AspireAI
 
-A modular, Blazor-based chat assistant platform that ingests documents, builds knowledge graphs, and delivers retrieval-augmented answers with source citations � all orchestrated through .NET Aspire.
+A modular, Blazor-based chat assistant platform that ingests documents, builds knowledge graphs, and delivers retrieval-augmented answers with source citations - all orchestrated through .NET Aspire.
 
 > **Disclaimer:** This is an experimental learning project. Expect rough edges and areas to improve. Use at your own risk!
 
+## Current State: Functional MVP
+
+**What's Working:**
+- **Multi-conversation chat** with persistent conversation history saved to Postgres
+- **Gateway-routed BRAIN chat** with Regular mode knowledge-augmented responses
+- **Document ingestion** via Docling (PDF/DOCX) to Neo4j knowledge graph through BRAIN contracts
+- **Multi-provider authentication** (Microsoft Entra ID, local demo providers) with tenant isolation
+- **Citation display** showing confidence scores and evidence snippets in chat responses
+- **Speech I/O** with Web Speech API for voice input/output
+- **Cross-service orchestration** via .NET Aspire with health monitoring
+
+**Known Limitations (Next Priorities):**
+1. **Conversation context not passed on follow-ups** - If you reference a prior question after uploading new documents, the LLM doesn't receive the earlier conversation context to re-answer with new data
+2. **Gateway evidence not persisted** - Backend brain evidence/citations are not saved with conversation messages; reopening a conversation loses the evidence metadata
+
 ## What It Does
 
-1. **Chat** � Conversational UI powered by local LLMs (Ollama) via Semantic Kernel, with speech-to-text and text-to-speech support.
-2. **Ingest** � Upload documentation - a Python/Docling pipeline extracts page-level content and persists output.
-3. **Retrieve** � LightRAG + Neo4j turn extracted content into a queryable knowledge graph, surfacing cited answers in chat.
+1. **Chat** - Conversational UI powered by local LLMs (Ollama) via gateway-routed BRAIN reasoning layer, with speech-to-text and text-to-speech support.
+2. **Ingest** - Upload documentation through BRAIN API Gateway - a Python/Docling pipeline extracts page-level content and persists output to Neo4j knowledge graph.
+3. **Retrieve** - LightRAG + Neo4j turn extracted content into a queryable knowledge graph, surfacing cited answers in chat with confidence scores.
 
 ## Technology Stack
 
@@ -16,17 +31,17 @@ A modular, Blazor-based chat assistant platform that ingests documents, builds k
 |-------|------------|
 | Orchestration | .NET Aspire |
 | Web UI | Blazor (.NET 10) |
-| AI Runtime | Ollama (local containerized LLMs) accessed via Semantic Kernel |
+| AI Runtime | Ollama (local containerized LLMs) |
 | Document Processing | Python FastAPI + Docling |
 | Knowledge Graph | LightRAG (containerized) with Neo4j (containerized) |
-| Relational Storage | SQLite (EF Core) |
+| Relational Storage | Postgres (conversation history, user auth, metadata) |
 | Containerization | Docker |
 
 ## Prerequisites
 
-- [.NET 10 SDK](https://dotnet.microsoft.com/en-us/download/dotnet/10.0) � verify with `dotnet --version`
-- [Docker Desktop](https://www.docker.com/products/docker-desktop/) � required for Neo4j, Ollama, and Python containers
-- [Aspire Tooling](https://learn.microsoft.com/en-us/dotnet/aspire/fundamentals/setup-tooling) � workload install via `dotnet workload install aspire`
+- [.NET 10 SDK](https://dotnet.microsoft.com/en-us/download/dotnet/10.0) - verify with `dotnet --version`
+- [Docker Desktop](https://www.docker.com/products/docker-desktop/) - required for Neo4j, Ollama, and Python containers
+- [Aspire Tooling](https://learn.microsoft.com/en-us/dotnet/aspire/fundamentals/setup-tooling) - workload install via `dotnet workload install aspire`
 - Python 3.11+ *(optional, for local Python development outside containers)*
 
 ## Getting Started
@@ -44,30 +59,30 @@ dotnet build
 dotnet run --project src/AspireApp.AppHost
 ```
 
-The Aspire dashboard opens automatically. All services � Web UI, Python processing, Neo4j, Ollama � start and register health checks there.
+The Aspire dashboard opens automatically. All services - Web UI, Python processing, Neo4j, and Ollama - start and register health checks there.
 
-> **Startup project must be `AspireApp.AppHost`.** If the app 404s or services are missing, right-click `AspireApp.AppHost` in Solution Explorer ? *Set as Startup Project*.
+> **Startup project must be `AspireApp.AppHost`.** If the app 404s or services are missing, right-click `AspireApp.AppHost` in Solution Explorer -> *Set as Startup Project*.
 
 ## Project Layout
 
 | Path | Purpose |
 |------|---------|
-| `src/AspireApp.AppHost/` | Aspire orchestration � wires all services, containers, and config |
-| `src/AspireApp.Web/` | Blazor UI � chat, file upload, speech I/O |
-| `src/AspireApp.ApiService/` | Minimal API (placeholder for future gateway) |
-| `src/AspireApp.PythonServices/` | FastAPI � document processing, RAG retrieval, Neo4j integration |
+| `src/AspireApp.AppHost/` | Aspire orchestration - wires all services, containers, and config |
+| `src/AspireApp.Web/` | Blazor UI - chat, file upload, speech I/O, conversation management |
+| `src/AspireApp.ApiService/` | BRAIN API Gateway - `/brain/chat`, `/brain/ingest`, `/brain/query` endpoints |
+| `src/AspireApp.PythonServices/` | FastAPI - document processing (Docling), RAG retrieval, Neo4j knowledge graph integration |
 | `src/AspireApp.Neo4JService/` | Neo4j Docker build context and config |
 | `src/AspireApp.ServiceDefaults/` | Shared .NET service configuration and health checks |
 | `data/` | Bind-mounted volume for uploaded documents |
-| `database/` | SQLite and Neo4j storage volumes |
+| `database/` | Postgres, Neo4j, and other local storage volumes |
 
 ## Documentation
 
 | Document | Contents |
 |----------|----------|
 | [Architecture](roadmap/Architecture.md) | System design, component map, data schemas, design principles |
-| [Plan](plan.md) | Epics and phased roadmap from foundation through advanced features |
-| [Tasks](roadmap/Tasks.md) | Active work breakdown � stabilization track, checklists, gate criteria |
+| [Plan](roadmap/Plan.md) | Epics and phased roadmap from foundation through advanced features |
+| [Tasks](roadmap/Tasks.md) | Active work breakdown - stabilization track, checklists, gate criteria |
 
 ## Troubleshooting
 
@@ -126,7 +141,7 @@ To keep live Microsoft available but still expose demos for explicit testing, se
 
 ## Contributing
 
-Contributions welcome! Fork the repo, create a feature branch, and open a PR. See the [Plan](plan.md) for current priorities.
+Contributions welcome! Fork the repo, create a feature branch, and open a PR. See the [Plan](roadmap/Plan.md) for current priorities.
 
 ## License
 

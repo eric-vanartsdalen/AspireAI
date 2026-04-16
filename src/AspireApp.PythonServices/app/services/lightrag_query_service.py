@@ -55,6 +55,9 @@ class LightRagQueryService:
     @staticmethod
     def _serialize_query_request(query_request: LightRagQueryRequest | Dict[str, Any]) -> Dict[str, Any]:
         if isinstance(query_request, dict):
-            return dict(query_request)
+            payload = dict(query_request)
+            payload.pop("tenant_id", None)
+            payload.pop("correlation_id", None)
+            return payload
 
-        return query_request.dict()
+        return query_request.dict(exclude={"tenant_id", "correlation_id"}, exclude_none=True)

@@ -26,13 +26,6 @@ builder.Services.AddControllers();
 
 builder.Services.AddOutputCache();
 
-builder.Services.AddHttpClient<WeatherApiClient>(client =>
-    {
-        // This URL uses "https+http://" to indicate HTTPS is preferred over HTTP.
-        // Learn more about service discovery scheme resolution at https://aka.ms/dotnet/sdschemes.
-        client.BaseAddress = new("https+http://apiservice");
-    });
-
 #pragma warning disable EXTEXP0001
 builder.Services.AddHttpClient<IDocumentProcessingCoordinator, DocumentProcessingCoordinator>((serviceProvider, client) =>
     {
@@ -51,6 +44,10 @@ builder.Services.AddHttpClient<IDocumentProcessingCoordinator, DocumentProcessin
         options.AttemptTimeout.Timeout = TimeSpan.FromSeconds(90);
         options.CircuitBreaker.SamplingDuration = TimeSpan.FromMinutes(3);
     });
+#pragma warning restore EXTEXP0001
+
+#pragma warning disable EXTEXP0001
+builder.Services.AddBrainGatewayChatClient(builder.Configuration);
 #pragma warning restore EXTEXP0001
 
 // Add HttpClient factory for general use
@@ -125,8 +122,7 @@ app.Use(async (context, next) =>
 {
     if (HttpMethods.IsGet(context.Request.Method) &&
         (context.Request.Path.Equals("/chat", StringComparison.OrdinalIgnoreCase) ||
-         context.Request.Path.Equals("/upload", StringComparison.OrdinalIgnoreCase) ||
-         context.Request.Path.Equals("/weather", StringComparison.OrdinalIgnoreCase)) &&
+         context.Request.Path.Equals("/upload", StringComparison.OrdinalIgnoreCase)) &&
         context.User.Identity?.IsAuthenticated != true)
     {
         var returnUrl = Uri.EscapeDataString($"{context.Request.Path}{context.Request.QueryString}");

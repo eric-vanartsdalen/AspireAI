@@ -79,7 +79,9 @@ public sealed class AuthenticatedUploadUxTests : IClassFixture<TestFixture>
             Assert.True(uploadedFile.Id > 0, "Upload succeeded in UI but did not persist a valid file ID to the backend.");
             Assert.False(string.IsNullOrWhiteSpace(uploadedFile.FileName), "Upload succeeded in UI but backend file name is missing.");
             Assert.Contains(filePrefix, uploadedFile.FileName, StringComparison.OrdinalIgnoreCase);
-            Assert.Equal("uploaded", uploadedFile.Status);
+            // After Jeff's fire-and-forget change, status transitions immediately to "processing"
+            Assert.True(uploadedFile.Status == "uploaded" || uploadedFile.Status == "processing", 
+                $"Expected status 'uploaded' or 'processing', got '{uploadedFile.Status}'");
             Assert.Equal(tenantId, uploadedFile.TenantId);
 
             await DeleteUploadsByPrefixAsync(page, filePrefix);

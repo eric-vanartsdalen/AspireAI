@@ -100,10 +100,8 @@ namespace AspireApp.Web.Data
         public string? SourceUrl { get; set; }
 
         // ==================== Navigation Properties ====================
-        
-        public virtual ICollection<DocumentPage> Pages { get; set; } = [];
 
-        public virtual ICollection<ProcessedDocument> ProcessedDocuments { get; set; } = [];
+        public virtual ICollection<DocumentPage> Pages { get; set; } = [];
 
         // ==================== Computed Properties ====================
         
@@ -210,86 +208,6 @@ namespace AspireApp.Web.Data
         
         [ForeignKey("FileId")]
         public virtual FileMetadata File { get; set; } = null!;
-    }
-
-    // ==================== Legacy Compatibility (DEPRECATED) ====================
-    // These entities are maintained for backward compatibility during migration
-    // TODO: Remove after all code is updated to use FileMetadata directly
-
-    [Table("documents")]
-    public class Document
-    {
-        [Key]
-        [Column("id")]
-        public int Id { get; set; }
-
-        [Required]
-        [Column("filename")]
-        [MaxLength(255)]
-        public string FileName { get; set; } = string.Empty;
-
-        [Required]
-        [Column("original_filename")]
-        [MaxLength(255)]
-        public string OriginalFileName { get; set; } = string.Empty;
-
-        [Required]
-        [Column("file_path")]
-        [MaxLength(500)]
-        public string FilePath { get; set; } = string.Empty;
-
-        [Column("file_size")]
-        public long? FileSize { get; set; }
-
-        [Column("mime_type")]
-        [MaxLength(100)]
-        public string? MimeType { get; set; }
-
-        [Column("upload_date")]
-        public DateTime UploadDate { get; set; } = DateTime.UtcNow;
-
-        [Column("processed")]
-        public bool Processed { get; set; } = false;
-
-        [Column("processing_status")]
-        [MaxLength(50)]
-        public string ProcessingStatus { get; set; } = "pending";
-
-        public virtual ICollection<ProcessedDocument> ProcessedDocuments { get; set; } = [];
-    }
-
-    [Table("processed_documents")]
-    public class ProcessedDocument
-    {
-        [Key]
-        [Column("id")]
-        public int Id { get; set; }
-
-        [Column("document_id")]
-        public int DocumentId { get; set; }
-
-        [Required]
-        [Column("docling_document_path")]
-        [MaxLength(500)]
-        public string DoclingDocumentPath { get; set; } = string.Empty;
-
-        [Column("total_pages")]
-        public int? TotalPages { get; set; }
-
-        [Column("processing_date")]
-        public DateTime ProcessingDate { get; set; } = DateTime.UtcNow;
-
-        [Column("processing_metadata")]
-        public string? ProcessingMetadata { get; set; }
-
-        [Column("neo4j_node_id")]
-        [MaxLength(100)]
-        public string? Neo4jNodeId { get; set; }
-
-        [ForeignKey("DocumentId")]
-        public virtual FileMetadata Document { get; set; } = null!;
-
-        public virtual ICollection<DocumentPage> DocumentPages { get; set; } = [];
     }
 
 }

@@ -1,3 +1,4 @@
+using System.Text.Json;
 using System.Text.RegularExpressions;
 using AspireApp.Web.Data;
 using AspireApp.Web.Shared;
@@ -33,11 +34,33 @@ public static class ChatConversationTitleSources
     public const string User = "user";
 }
 
+public static class ChatConversationModes
+{
+    public const string Regular = "regular";
+    public const string Critique = "critique";
+
+    public static string Normalize(string mode)
+    {
+        if (string.Equals(mode, Regular, StringComparison.OrdinalIgnoreCase))
+        {
+            return Regular;
+        }
+
+        if (string.Equals(mode, Critique, StringComparison.OrdinalIgnoreCase))
+        {
+            return Critique;
+        }
+
+        return Regular;
+    }
+}
+
 public sealed record ChatConversationSummary(
     Guid ConversationId,
     string Title,
     string Preview,
     string? TenantId,
+    string ChatMode,
     int MessageCount,
     bool HasUserEditedTitle,
     DateTime CreatedAt,
@@ -48,12 +71,14 @@ public sealed record ChatConversationMessageRecord(
     string Role,
     string Content,
     int Sequence,
-    DateTime CreatedAt);
+    DateTime CreatedAt,
+    BrainChatResponse? AssistantResponse = null);
 
 public sealed record ChatConversationDetail(
     Guid ConversationId,
     string Title,
     string? TenantId,
+    string ChatMode,
     bool HasUserEditedTitle,
     DateTime CreatedAt,
     DateTime UpdatedAt,
@@ -63,8 +88,9 @@ public interface IChatConversationService
 {
     Task<IReadOnlyList<ChatConversationSummary>> ListConversationsAsync(string ownerUserId, CancellationToken cancellationToken = default);
     Task<ChatConversationDetail?> GetConversationAsync(Guid conversationId, string ownerUserId, CancellationToken cancellationToken = default);
-    Task<ChatConversationSummary> StartConversationAsync(string ownerUserId, string? tenantId, string userMessage, CancellationToken cancellationToken = default);
-    Task<ChatConversationSummary?> AddMessageAsync(Guid conversationId, string ownerUserId, string role, string content, CancellationToken cancellationToken = default);
+    Task<ChatConversationSummary> StartConversationAsync(string ownerUserId, string? tenantId, string userMessage, string chatMode = ChatConversationModes.Regular, CancellationToken cancellationToken = default);
+    Task<ChatConversationSummary?> AddMessageAsync(Guid conversationId, string ownerUserId, string role, string content, CancellationToken cancellationToken = default, BrainChatResponse? assistantResponse = null);
+    Task<ChatConversationSummary?> UpdateChatModeAsync(Guid conversationId, string ownerUserId, string chatMode, CancellationToken cancellationToken = default);
     Task<ChatConversationSummary?> RenameConversationAsync(Guid conversationId, string ownerUserId, string title, CancellationToken cancellationToken = default);
     Task<bool> DeleteConversationAsync(Guid conversationId, string ownerUserId, CancellationToken cancellationToken = default);
 }
@@ -74,6 +100,11 @@ public sealed class ChatConversationService(
     IChatTitleGenerator titleGenerator,
     ILogger<ChatConversationService> logger) : IChatConversationService
 {
+    private static readonly JsonSerializerOptions AssistantResponseJsonOptions = new(JsonSerializerDefaults.Web)
+    {
+        PropertyNameCaseInsensitive = true
+    };
+
     private readonly UploadDbContext _dbContext = dbContext;
     private readonly IChatTitleGenerator _titleGenerator = titleGenerator;
     private readonly ILogger<ChatConversationService> _logger = logger;
@@ -115,28 +146,24 @@ public sealed class ChatConversationService(
             .AsNoTracking()
             .Where(message => message.ConversationId == conversationId && message.OwnerUserId == normalizedOwnerUserId)
             .OrderBy(message => message.Sequence)
-            .Select(message => new ChatConversationMessageRecord(
-                message.Id,
-                message.Role,
-                message.Content,
-                message.Sequence,
-                message.CreatedAt))
             .ToListAsync(cancellationToken);
 
         return new ChatConversationDetail(
             conversation.Id,
             conversation.Title,
             conversation.TenantId,
+            conversation.ChatMode,
             string.Equals(conversation.TitleSource, ChatConversationTitleSources.User, StringComparison.OrdinalIgnoreCase),
             conversation.CreatedAt,
             conversation.UpdatedAt,
-            messages);
+            messages.Select(MapMessageRecord).ToList());
     }
 
     public async Task<ChatConversationSummary> StartConversationAsync(
         string ownerUserId,
         string? tenantId,
         string userMessage,
+        string chatMode = ChatConversationModes.Regular,
         CancellationToken cancellationToken = default)
     {
         var normalizedOwnerUserId = NormalizeOwnerUserId(ownerUserId);
@@ -150,6 +177,7 @@ public sealed class ChatConversationService(
             TenantId = NormalizeTenantId(tenantId),
             Title = ChatConversationTitleHelper.BuildFallbackTitle(normalizedMessage),
             TitleSource = ChatConversationTitleSources.Fallback,
+            ChatMode = ChatConversationModes.Normalize(chatMode),
             CreatedAt = now,
             UpdatedAt = now,
             LastMessageAt = now
@@ -186,7 +214,8 @@ public sealed class ChatConversationService(
         string ownerUserId,
         string role,
         string content,
-        CancellationToken cancellationToken = default)
+        CancellationToken cancellationToken = default,
+        BrainChatResponse? assistantResponse = null)
     {
         var normalizedOwnerUserId = NormalizeOwnerUserId(ownerUserId);
         var normalizedRole = ChatConversationRoles.Normalize(role);
@@ -215,6 +244,7 @@ public sealed class ChatConversationService(
             OwnerUserId = normalizedOwnerUserId,
             Role = normalizedRole,
             Content = normalizedContent,
+            AssistantResponseJson = SerializeAssistantResponse(normalizedRole, assistantResponse),
             Sequence = nextSequence,
             CreatedAt = now
         });
@@ -228,6 +258,32 @@ public sealed class ChatConversationService(
         {
             await TryApplyGeneratedTitleAsync(conversationId, normalizedOwnerUserId, cancellationToken);
         }
+
+        return await GetConversationSummaryAsync(conversationId, normalizedOwnerUserId, cancellationToken);
+    }
+
+    public async Task<ChatConversationSummary?> UpdateChatModeAsync(
+        Guid conversationId,
+        string ownerUserId,
+        string chatMode,
+        CancellationToken cancellationToken = default)
+    {
+        var normalizedOwnerUserId = NormalizeOwnerUserId(ownerUserId);
+        var normalizedMode = ChatConversationModes.Normalize(chatMode);
+
+        var conversation = await _dbContext.ChatConversations
+            .SingleOrDefaultAsync(
+                existing => existing.Id == conversationId && existing.OwnerUserId == normalizedOwnerUserId,
+                cancellationToken);
+
+        if (conversation is null)
+        {
+            return null;
+        }
+
+        conversation.ChatMode = normalizedMode;
+        conversation.UpdatedAt = DateTime.UtcNow;
+        await _dbContext.SaveChangesAsync(cancellationToken);
 
         return await GetConversationSummaryAsync(conversationId, normalizedOwnerUserId, cancellationToken);
     }
@@ -364,12 +420,6 @@ public sealed class ChatConversationService(
             .AsNoTracking()
             .Where(message => message.ConversationId == conversationId && message.OwnerUserId == ownerUserId)
             .OrderBy(message => message.Sequence)
-            .Select(message => new ChatConversationMessageRecord(
-                message.Id,
-                message.Role,
-                message.Content,
-                message.Sequence,
-                message.CreatedAt))
             .ToListAsync(cancellationToken);
 
         if (messages.Count < 2)
@@ -378,7 +428,7 @@ public sealed class ChatConversationService(
         }
 
         var generatedTitle = ChatConversationTitleHelper.NormalizeGeneratedTitle(
-            await _titleGenerator.TryGenerateTitleAsync(messages, cancellationToken));
+            await _titleGenerator.TryGenerateTitleAsync(messages.Select(MapMessageRecord).ToList(), cancellationToken));
 
         if (string.IsNullOrWhiteSpace(generatedTitle) ||
             string.Equals(generatedTitle, conversation.Title, StringComparison.OrdinalIgnoreCase))
@@ -412,10 +462,54 @@ public sealed class ChatConversationService(
             conversation.Title,
             ChatConversationTitleHelper.BuildPreview(messages.LastOrDefault()?.Content),
             conversation.TenantId,
+            conversation.ChatMode,
             messages.Count,
             string.Equals(conversation.TitleSource, ChatConversationTitleSources.User, StringComparison.OrdinalIgnoreCase),
             conversation.CreatedAt,
             conversation.UpdatedAt);
+    }
+
+    private ChatConversationMessageRecord MapMessageRecord(ChatConversationMessage message)
+    {
+        return new ChatConversationMessageRecord(
+            message.Id,
+            message.Role,
+            message.Content,
+            message.Sequence,
+            message.CreatedAt,
+            DeserializeAssistantResponse(message));
+    }
+
+    private BrainChatResponse? DeserializeAssistantResponse(ChatConversationMessage message)
+    {
+        if (string.IsNullOrWhiteSpace(message.AssistantResponseJson))
+        {
+            return null;
+        }
+
+        try
+        {
+            return JsonSerializer.Deserialize<BrainChatResponse>(message.AssistantResponseJson, AssistantResponseJsonOptions);
+        }
+        catch (JsonException ex)
+        {
+            _logger.LogWarning(
+                ex,
+                "Ignoring invalid assistant response metadata for chat message {MessageId}",
+                message.Id);
+            return null;
+        }
+    }
+
+    private static string? SerializeAssistantResponse(string normalizedRole, BrainChatResponse? assistantResponse)
+    {
+        if (!string.Equals(normalizedRole, ChatConversationRoles.Assistant, StringComparison.Ordinal) ||
+            assistantResponse is null)
+        {
+            return null;
+        }
+
+        return JsonSerializer.Serialize(assistantResponse, AssistantResponseJsonOptions);
     }
 
     private static string NormalizeOwnerUserId(string ownerUserId)

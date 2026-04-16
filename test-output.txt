@@ -1,0 +1,14 @@
+Test run for C:\Users\ericv\source\repos\eric-vanartsdalen\AspireAI\src\AspireApp.WebTest\bin\Debug\net10.0\AspireApp.WebTest.dll (.NETCoreApp,Version=v10.0)
+A total of 1 test files matched the specified pattern.
+C:\Users\ericv\source\repos\eric-vanartsdalen\AspireAI\src\AspireApp.WebTest\bin\Debug\net10.0\AspireApp.WebTest.dll
+[xUnit.net 00:00:00.00] xUnit.net VSTest Adapter v3.1.5+1b188a7b0a (64-bit .NET 10.0.6)
+[xUnit.net 00:00:00.27]   Discovering: AspireApp.WebTest
+[xUnit.net 00:00:00.46]   Discovered:  AspireApp.WebTest
+[xUnit.net 00:00:00.59]   Starting:    AspireApp.WebTest
+  Passed AspireApp.WebTest.Tests.ChatConversationPersistenceTests.SignedInUserCanSaveRenameResumeAndDeleteConversation [1 m 48 s]
+[xUnit.net 00:02:37.05]   Finished:    AspireApp.WebTest (ID = '67b67ba2c09fdb7beb7e73ab9487b595270c6c8907236e45182b54e8d1a43301')
+
+Test Run Successful.
+Total tests: 1
+     Passed: 1
+ Total time: 2.6244 Minutes

@@ -7,6 +7,8 @@ using System.ComponentModel;
 using System.Diagnostics;
 using System.Linq.Expressions;
 using System.Net;
+using System.Net.Http.Headers;
+using System.Net.Http.Json;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using Xunit.v3.Priority;
@@ -26,9 +28,11 @@ public class BasicAspireAppHostTests : IClassFixture<TestFixture>
     private const string DeleteButtonInCell = "td button";
     private const string DemoProviderId = "demo";
     private const string DemoUserId = "demo-taylor-jones";
+    private const string SmokeRoundTripQuery = "AspireAI smoke test";
     private static readonly string TestFile = Path.Combine(AppContext.BaseDirectory, "..", "..", "..", "..",
             "AspireApp.WebTest", "DataExample", "processing-smoke.pdf");
     private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web);
+    private const int LightRagIngestionTimeoutMs = 300_000;
     private static readonly TimeSpan PythonVisibilityTimeout = TimeSpan.FromSeconds(30);
     private static readonly TimeSpan WebApiTimeout = TimeSpan.FromSeconds(90);
     private static readonly TimeSpan PythonVisibilityPollInterval = TimeSpan.FromMilliseconds(500);
@@ -94,7 +98,7 @@ public class BasicAspireAppHostTests : IClassFixture<TestFixture>
             string graphDbLink = string.Empty;
             string lightRagLink = string.Empty;
             string pythonServiceLink = string.Empty;
-            string apiServiceLink = string.Empty;
+            string brainGatewayLink = string.Empty;
 
             for (int i = 0; i < rowNames.Count; i++)
             {
@@ -123,9 +127,10 @@ public class BasicAspireAppHostTests : IClassFixture<TestFixture>
                 {
                     pythonServiceLink = link.Trim();
                 }
-                if (name.Contains("ApiService", StringComparison.OrdinalIgnoreCase))
+                if (name.Contains("Brain-Gateway", StringComparison.OrdinalIgnoreCase) ||
+                    name.Contains("BrainGateway", StringComparison.OrdinalIgnoreCase))
                 {
-                    apiServiceLink = link.Trim();
+                    brainGatewayLink = link.Trim();
                 }
             }
 
@@ -133,7 +138,7 @@ public class BasicAspireAppHostTests : IClassFixture<TestFixture>
             Assert.False(string.IsNullOrWhiteSpace(webFrontendLink), "Web Frontend link should not be empty");
             Assert.False(string.IsNullOrWhiteSpace(graphDbLink), "Graph-Db link should not be empty");
             Assert.False(string.IsNullOrEmpty(pythonServiceLink), "PythonService link should not be empty");
-            Assert.False(string.IsNullOrEmpty(apiServiceLink), "ApiService link should not be empty");
+            Assert.False(string.IsNullOrEmpty(brainGatewayLink), "Brain Gateway link should not be empty");
 
             Assert.True(ollamaLink.Contains(_data.OllamaUri, StringComparison.OrdinalIgnoreCase),
                 $"Ollama link ({ollamaLink}) should contain {_data.OllamaUri}");
@@ -148,8 +153,8 @@ public class BasicAspireAppHostTests : IClassFixture<TestFixture>
             }
             Assert.True(pythonServiceLink.Contains(_data.PythonServiceUri, StringComparison.OrdinalIgnoreCase),
                 $"PythonService link ({pythonServiceLink}) should contain {_data.PythonServiceUri}");
-            Assert.True(apiServiceLink.Contains(_data.ApiServiceUri, StringComparison.OrdinalIgnoreCase),
-                $"ApiService link ({apiServiceLink}) should contain {_data.ApiServiceUri}");
+            Assert.True(brainGatewayLink.Contains(_data.BrainGatewayUri, StringComparison.OrdinalIgnoreCase),
+                $"Brain Gateway link ({brainGatewayLink}) should contain {_data.BrainGatewayUri}");
         });
     }
 
@@ -235,8 +240,6 @@ public class BasicAspireAppHostTests : IClassFixture<TestFixture>
             await page.GotoAsync(_data.WebfrontendUri, _data.Options);
             await WaitForPageLoadCompletion(page);
             await SignInAsDemoUserAsync(page);
-
-            await ClickByRole(AriaRole.Link, "Upload Documents", page);
             await SetUploadInput(TestFile, AriaRole.Button, "Choose File", page);
 
             var uploadButton = page.GetByRole(AriaRole.Button, new() { Name = "Start Upload" });
@@ -285,7 +288,7 @@ public class BasicAspireAppHostTests : IClassFixture<TestFixture>
 
             var artifacts = await WaitForProcessedArtifactsAsync(documentId);
             using var lightRagClient = CreateLightRagHttpClient();
-            await WaitForLightRagIngestionAsync(lightRagClient, artifacts);
+            await WaitForLightRagIngestionAsync(lightRagClient, artifacts, timeoutMs: LightRagIngestionTimeoutMs);
             Assert.True(File.Exists(artifacts.DocumentJsonPath),
                 $"Expected Docling document artifact at '{artifacts.DocumentJsonPath}', but it was not created.");
             Assert.True(File.Exists(artifacts.FirstPagePath),
@@ -301,6 +304,125 @@ public class BasicAspireAppHostTests : IClassFixture<TestFixture>
         });
     }
 
+    [Fact, Priority(2)]
+    public async Task LiveLightRagNeo4jQueryRoundTrip()
+    {
+        var clientInfo = await CreateWebFrontendHttpClientAsync();
+        using var webClient = clientInfo.Client;
+        await DeleteExistingTestUploadsAsync(webClient);
+        using var graphDbClient = CreateGraphDbHttpClient();
+        var baselineLightRagGraphState = await QueryNeo4jLightRagGraphAsync(graphDbClient);
+
+        var uploadedFile = await UploadTestFileViaApiAsync(webClient);
+        using var pythonClient = CreatePythonServiceHttpClient();
+        var finalStatus = await PollForProcessingCompletionAsync(pythonClient, uploadedFile.Id);
+        Assert.Equal("processed", finalStatus.Status);
+
+        var artifacts = await WaitForProcessedArtifactsAsync(uploadedFile.Id);
+        using var lightRagClient = CreateLightRagHttpClient();
+        await WaitForLightRagIngestionAsync(lightRagClient, artifacts, timeoutMs: LightRagIngestionTimeoutMs);
+
+        var knowledgeQuery = SmokeRoundTripQuery;
+
+        var graphState = await QueryNeo4jDocumentGraphAsync(graphDbClient, uploadedFile.Id);
+        Assert.Equal(1, graphState.DocumentCount);
+        Assert.True(graphState.PageCount > 0,
+            $"Expected at least one Neo4j page node for document {uploadedFile.Id}, but the graph query returned {graphState.PageCount}.");
+        var lightRagGraphState = await WaitForLightRagNeo4jGraphGrowthAsync(graphDbClient, baselineLightRagGraphState);
+        Assert.True(
+            lightRagGraphState.NodeCount > baselineLightRagGraphState.NodeCount ||
+            lightRagGraphState.RelationshipCount > baselineLightRagGraphState.RelationshipCount,
+            $"Expected LightRAG-managed Neo4j graph state to grow after ingesting document {uploadedFile.Id}, but baseline nodes/relationships were {baselineLightRagGraphState.NodeCount}/{baselineLightRagGraphState.RelationshipCount} and the latest state is {lightRagGraphState.NodeCount}/{lightRagGraphState.RelationshipCount}.");
+
+        var lightRagResult = await WaitForKnowledgeQueryResultAsync(
+            pythonClient,
+            "rag/lightrag-query",
+            new
+            {
+                query = knowledgeQuery,
+                mode = "mix",
+                top_k = 3,
+                chunk_top_k = 3,
+                include_references = true,
+                include_chunk_content = true,
+                tenant_id = clientInfo.TenantId,
+                correlation_id = $"live-lightrag-{uploadedFile.Id}"
+            });
+
+        Assert.NotEmpty(lightRagResult.Results);
+        Assert.Contains(lightRagResult.Results, item =>
+            item.SourceRefs.Any(sourceRef =>
+                sourceRef.Contains($"document:{uploadedFile.Id}", StringComparison.OrdinalIgnoreCase) ||
+                (!string.IsNullOrWhiteSpace(uploadedFile.FileName) &&
+                 sourceRef.Contains(uploadedFile.FileName, StringComparison.OrdinalIgnoreCase))) ||
+            ContainsSignificantQueryTerm(item.Content, knowledgeQuery));
+
+        using var brainGatewayClient = CreateBrainGatewayHttpClient();
+        var gatewayResult = await WaitForKnowledgeQueryResultAsync(
+            brainGatewayClient,
+            "brain/query",
+            new
+            {
+                tenant_id = clientInfo.TenantId,
+                correlation_id = $"live-brain-query-{uploadedFile.Id}",
+                query = knowledgeQuery,
+                top_k = 3
+            });
+
+        Assert.NotEmpty(gatewayResult.Results);
+        Assert.Contains(gatewayResult.Results, item =>
+            item.SourceRefs.Any(sourceRef =>
+                sourceRef.Contains($"document:{uploadedFile.Id}", StringComparison.OrdinalIgnoreCase) ||
+                (!string.IsNullOrWhiteSpace(uploadedFile.FileName) &&
+                 sourceRef.Contains(uploadedFile.FileName, StringComparison.OrdinalIgnoreCase))) ||
+            ContainsSignificantQueryTerm(item.Content, knowledgeQuery));
+    }
+
+    [Fact, Priority(2)]
+    [Trait("Category", "P2-B")]
+    public async Task BrainQueryReturnsConfidenceEnrichedResults()
+    {
+        var clientInfo = await CreateWebFrontendHttpClientAsync();
+        using var webClient = clientInfo.Client;
+        await DeleteExistingTestUploadsAsync(webClient);
+        var uploadedFile = await UploadTestFileViaApiAsync(webClient);
+        using var pythonClient = CreatePythonServiceHttpClient();
+        var finalStatus = await PollForProcessingCompletionAsync(pythonClient, uploadedFile.Id);
+        Assert.Equal("processed", finalStatus.Status);
+
+        var artifacts = await WaitForProcessedArtifactsAsync(uploadedFile.Id);
+        using var lightRagClient = CreateLightRagHttpClient();
+        await WaitForLightRagIngestionAsync(lightRagClient, artifacts, timeoutMs: LightRagIngestionTimeoutMs);
+
+        using var brainGatewayClient = CreateBrainGatewayHttpClient();
+        var gatewayResult = await WaitForKnowledgeQueryResultAsync(
+            brainGatewayClient,
+            "brain/query",
+            new
+            {
+                tenant_id = clientInfo.TenantId,
+                correlation_id = $"p2b-confidence-{uploadedFile.Id}",
+                query = SmokeRoundTripQuery,
+                top_k = 3
+            });
+
+        Assert.NotEmpty(gatewayResult.Results);
+
+        var uploadedDocResults = gatewayResult.Results
+            .Where(item => item.SourceRefs.Any(sourceRef =>
+                sourceRef.Contains($"document:{uploadedFile.Id}", StringComparison.OrdinalIgnoreCase) ||
+                (!string.IsNullOrWhiteSpace(uploadedFile.FileName) &&
+                 sourceRef.Contains(uploadedFile.FileName, StringComparison.OrdinalIgnoreCase))))
+            .ToList();
+
+        Assert.NotEmpty(uploadedDocResults);
+
+        foreach (var result in uploadedDocResults)
+        {
+            Assert.NotEqual(0.5, result.Confidence);
+        }
+    }
+
     [Fact, Priority(3)]
     public async Task DeleteUploadedTestFile()
     {
@@ -313,14 +435,13 @@ public class BasicAspireAppHostTests : IClassFixture<TestFixture>
         Assert.Equal("processed", finalStatus.Status);
         var artifacts = await WaitForProcessedArtifactsAsync(uploadedFile.Id);
         using var lightRagClient = CreateLightRagHttpClient();
-        await WaitForLightRagIngestionAsync(lightRagClient, artifacts);
+        await WaitForLightRagIngestionAsync(lightRagClient, artifacts, timeoutMs: LightRagIngestionTimeoutMs);
 
         await WithPageAsync(async page =>
         {
             await page.GotoAsync(_data.WebfrontendUri, _data.Options);
             await WaitForPageLoadCompletion(page);
             await SignInAsDemoUserAsync(page);
-            await ClickByRole(AriaRole.Link, "Upload Documents", page);
             await WaitForUploadedFileRowAsync(page, uploadedFile.FileName!);
 
             IReadOnlyList<ILocator> filenameRows = await GetDocumentSourceTableRows(page);
@@ -367,18 +488,16 @@ public class BasicAspireAppHostTests : IClassFixture<TestFixture>
         }
     }
 
-    private static async Task SignInAsDemoUserAsync(IPage page)
+    private async Task SignInAsDemoUserAsync(IPage page)
     {
-        var providerButton = page.Locator("[data-testid='auth-provider-demo']");
-        await providerButton.WaitForAsync(new LocatorWaitForOptions { Timeout = 30_000 });
-        await providerButton.ClickAsync(new LocatorClickOptions { Delay = 250 });
-        var signInButton = page.Locator("[data-testid='auth-submit-sign-in']");
-        await signInButton.WaitForAsync(new LocatorWaitForOptions { Timeout = 30_000 });
-        await signInButton.ClickAsync(new LocatorClickOptions { Delay = 250 });
+        var signInPath =
+            $"auth/mock/signin?providerId={Uri.EscapeDataString(DemoProviderId)}&userId={Uri.EscapeDataString(DemoUserId)}&returnUrl=%2Fupload";
+        await page.GotoAsync(BuildAbsoluteUri(_data.WebfrontendUri, signInPath), _data.Options);
         await WaitForPageLoadCompletion(page);
+        Assert.DoesNotContain("/signin", page.Url, StringComparison.OrdinalIgnoreCase);
 
-        var signedInSurface = page.Locator("[data-testid='auth-summary'], [data-testid='auth-user-display'], #tenant-select, h1");
-        await WaitForLocator(signedInSurface.First, 30_000);
+        var uploadSurface = page.Locator("#tenant-select, [data-testid='upload-file-input']");
+        await WaitForLocator(uploadSurface.First, 30_000);
     }
 
     private async Task<AuthenticatedClient> CreateWebFrontendHttpClientAsync()
@@ -422,6 +541,32 @@ public class BasicAspireAppHostTests : IClassFixture<TestFixture>
         };
     }
 
+    private HttpClient CreateBrainGatewayHttpClient()
+    {
+        var handler = new HttpClientHandler
+        {
+            ServerCertificateCustomValidationCallback = HttpClientHandler.DangerousAcceptAnyServerCertificateValidator
+        };
+
+        return new HttpClient(handler)
+        {
+            BaseAddress = new Uri($"{_data.BrainGatewayUri.TrimEnd('/')}/"),
+            Timeout = WebApiTimeout
+        };
+    }
+
+    private HttpClient CreateGraphDbHttpClient()
+    {
+        var client = new HttpClient
+        {
+            BaseAddress = new Uri($"{_data.GraphDBUri.TrimEnd('/')}/"),
+            Timeout = WebApiTimeout
+        };
+        var encodedCredentials = Convert.ToBase64String(System.Text.Encoding.UTF8.GetBytes("neo4j:neo4j@secret"));
+        client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Basic", encodedCredentials);
+        return client;
+    }
+
     private async Task AuthenticateAsync(HttpClient webClient)
     {
         var signInUri = $"auth/mock/signin?providerId={DemoProviderId}&userId={Uri.EscapeDataString(DemoUserId)}&returnUrl=%2F";
@@ -456,7 +601,7 @@ public class BasicAspireAppHostTests : IClassFixture<TestFixture>
         return tenantId;
     }
 
-    private async Task DeleteExistingTestUploadsAsync(HttpClient webClient)
+    private async Task DeleteExistingTestUploadsAsync(HttpClient webClient, string? targetFilePath = null)
     {
         using var listResponse = await webClient.GetAsync("api/FileUpload", TestContext.Current.CancellationToken);
         var listBody = await listResponse.Content.ReadAsStringAsync(TestContext.Current.CancellationToken);
@@ -467,8 +612,9 @@ public class BasicAspireAppHostTests : IClassFixture<TestFixture>
         var listResult = DeserializeJson<UploadedFilesApiResponse>(listBody, "GET /api/FileUpload");
         Assert.True(listResult.Success, $"Existing upload query returned success=false. Response: {listBody}");
 
-        var testFileName = PullFilename(TestFile);
+        var testFileName = PullFilename(targetFilePath ?? TestFile);
         var testFilePrefix = Path.GetFileNameWithoutExtension(testFileName);
+        using var lightRagClient = CreateLightRagHttpClient();
 
         foreach (var existingFile in listResult.Files.Where(file =>
                      string.Equals(file.SourceType, "upload", StringComparison.OrdinalIgnoreCase) &&
@@ -481,13 +627,16 @@ public class BasicAspireAppHostTests : IClassFixture<TestFixture>
 
             Assert.True(deleteResponse.IsSuccessStatusCode,
                 $"Pre-test cleanup failed for document {existingFile.Id} ('{existingFile.FileName}'). DELETE '{BuildAbsoluteUri(_data.WebfrontendUri, $"api/FileUpload/{existingFile.Id}")}' returned {(int)deleteResponse.StatusCode} {deleteResponse.ReasonPhrase}. Response: {deleteBody}");
+
+            await WaitForUploadedFileRemovedFromApiAsync(webClient, existingFile.Id);
+            await WaitForLightRagPipelineIdleAsync(lightRagClient);
         }
     }
 
-    private async Task<UploadedFileApiModel> WaitForUploadedFileAsync(HttpClient webClient, int timeoutMs = 60000)
+    private async Task<UploadedFileApiModel> WaitForUploadedFileAsync(HttpClient webClient, string targetFilePath, int timeoutMs = 60000)
     {
         var waitStopwatch = Stopwatch.StartNew();
-        var testFileName = PullFilename(TestFile);
+        var testFileName = PullFilename(targetFilePath);
         string lastPayload = "<no upload state returned>";
 
         while (waitStopwatch.ElapsedMilliseconds < timeoutMs)
@@ -556,13 +705,14 @@ public class BasicAspireAppHostTests : IClassFixture<TestFixture>
         return default!;
     }
 
-    private async Task<UploadedFileApiModel> UploadTestFileViaApiAsync(HttpClient webClient)
+    private async Task<UploadedFileApiModel> UploadTestFileViaApiAsync(HttpClient webClient, string? filePath = null)
     {
-        await using var fileStream = File.OpenRead(TestFile);
+        var resolvedFilePath = string.IsNullOrWhiteSpace(filePath) ? TestFile : filePath;
+        await using var fileStream = File.OpenRead(resolvedFilePath);
         using var form = new MultipartFormDataContent();
         using var streamContent = new StreamContent(fileStream);
         streamContent.Headers.ContentType = new System.Net.Http.Headers.MediaTypeHeaderValue("application/pdf");
-        form.Add(streamContent, "file", Path.GetFileName(TestFile));
+        form.Add(streamContent, "file", Path.GetFileName(resolvedFilePath));
 
         using var uploadResponse = await webClient.PostAsync("api/FileUpload", form, TestContext.Current.CancellationToken);
         var uploadBody = await uploadResponse.Content.ReadAsStringAsync(TestContext.Current.CancellationToken);
@@ -574,7 +724,7 @@ public class BasicAspireAppHostTests : IClassFixture<TestFixture>
         Assert.True(uploadResult.Success, $"Seed upload returned success=false. Response: {uploadBody}");
         Assert.False(uploadResult.IsDuplicate, $"Seed upload unexpectedly returned a duplicate response. Response: {uploadBody}");
 
-        return await WaitForUploadedFileAsync(webClient);
+        return await WaitForUploadedFileAsync(webClient, resolvedFilePath);
     }
 
     private async Task WaitForUploadedFileRemovedFromApiAsync(HttpClient webClient, int documentId, int timeoutMs = 30000)
@@ -847,7 +997,7 @@ public class BasicAspireAppHostTests : IClassFixture<TestFixture>
         return default!;
     }
 
-    private static async Task WaitForLightRagIngestionAsync(HttpClient lightRagClient, ProcessedArtifactsInfo artifacts, int timeoutMs = 120000)
+    private static async Task WaitForLightRagIngestionAsync(HttpClient lightRagClient, ProcessedArtifactsInfo artifacts, int timeoutMs = LightRagIngestionTimeoutMs)
     {
         var stagedInputFileName = Path.GetFileName(artifacts.LightRagStagedInputPath);
         Assert.False(string.IsNullOrWhiteSpace(stagedInputFileName), "Processed artifacts did not record a LightRAG staged input path.");
@@ -881,6 +1031,31 @@ public class BasicAspireAppHostTests : IClassFixture<TestFixture>
 
         Assert.Fail(
             $"Timed out after {timeoutMs}ms waiting for LightRAG ingestion of '{stagedInputFileName}'. Last documents payload: {lastDocumentsPayload}{Environment.NewLine}Last pipeline payload: {lastPipelinePayload}");
+    }
+
+    private static async Task WaitForLightRagPipelineIdleAsync(HttpClient lightRagClient, int timeoutMs = 120000)
+    {
+        var waitStopwatch = Stopwatch.StartNew();
+        string lastPipelinePayload = "<no LightRAG pipeline payload returned>";
+
+        while (waitStopwatch.ElapsedMilliseconds < timeoutMs)
+        {
+            using var pipelineResponse = await lightRagClient.GetAsync("documents/pipeline_status", TestContext.Current.CancellationToken);
+            lastPipelinePayload = await pipelineResponse.Content.ReadAsStringAsync(TestContext.Current.CancellationToken);
+
+            Assert.True(pipelineResponse.IsSuccessStatusCode,
+                $"LightRAG pipeline query returned {(int)pipelineResponse.StatusCode} {pipelineResponse.ReasonPhrase}. Response: {lastPipelinePayload}");
+
+            if (!LightRagPipelineBusy(lastPipelinePayload))
+            {
+                return;
+            }
+
+            await Task.Delay(500, TestContext.Current.CancellationToken);
+        }
+
+        Assert.Fail(
+            $"Timed out after {timeoutMs}ms waiting for the LightRAG pipeline to become idle. Last pipeline payload: {lastPipelinePayload}");
     }
 
     private static LightRagHandoffInfo? TryReadLightRagHandoffInfo(string metadataPath)
@@ -1009,6 +1184,173 @@ public class BasicAspireAppHostTests : IClassFixture<TestFixture>
         return $"{metadataPath} (scan_requested={lightRagHandoff.ScanRequested}, staged_input_path={stagedInputPath})";
     }
 
+    private async Task<Neo4jLightRagGraphState> QueryNeo4jLightRagGraphAsync(HttpClient graphDbClient)
+    {
+        using var response = await graphDbClient.PostAsJsonAsync(
+            "db/neo4j/tx/commit",
+            new
+            {
+                statements = new[]
+                {
+                    new
+                    {
+                        statement = """
+                            MATCH (n)
+                            WHERE NOT n:Document AND NOT n:Page
+                            OPTIONAL MATCH (n)-[r]-()
+                            RETURN count(DISTINCT n) AS nodeCount, count(DISTINCT r) AS relationshipCount
+                            """
+                    }
+                }
+            },
+            TestContext.Current.CancellationToken);
+        var responseBody = await response.Content.ReadAsStringAsync(TestContext.Current.CancellationToken);
+
+        Assert.True(response.IsSuccessStatusCode,
+            $"Neo4j LightRAG graph query returned {(int)response.StatusCode} {response.ReasonPhrase}. Response: {responseBody}");
+
+        using var payload = JsonDocument.Parse(responseBody);
+        if (payload.RootElement.TryGetProperty("errors", out var errorsElement) &&
+            errorsElement.ValueKind == JsonValueKind.Array &&
+            errorsElement.GetArrayLength() > 0)
+        {
+            Assert.Fail($"Neo4j LightRAG graph query returned errors: {errorsElement}");
+        }
+
+        var resultsElement = payload.RootElement.GetProperty("results");
+        var row = resultsElement[0].GetProperty("data")[0].GetProperty("row");
+        return new Neo4jLightRagGraphState
+        {
+            NodeCount = row[0].GetInt32(),
+            RelationshipCount = row[1].GetInt32()
+        };
+    }
+
+    private async Task<Neo4jDocumentGraphState> QueryNeo4jDocumentGraphAsync(HttpClient graphDbClient, int documentId)
+    {
+        using var response = await graphDbClient.PostAsJsonAsync(
+            "db/neo4j/tx/commit",
+            new
+            {
+                statements = new[]
+                {
+                    new
+                    {
+                        statement = """
+                            MATCH (d:Document {id: $documentId})
+                            OPTIONAL MATCH (d)-[:CONTAINS]->(p:Page)
+                            RETURN count(DISTINCT d) AS documentCount, count(DISTINCT p) AS pageCount
+                            """,
+                        parameters = new
+                        {
+                            documentId
+                        }
+                    }
+                }
+            },
+            TestContext.Current.CancellationToken);
+        var responseBody = await response.Content.ReadAsStringAsync(TestContext.Current.CancellationToken);
+
+        Assert.True(response.IsSuccessStatusCode,
+            $"Neo4j transactional query for document {documentId} returned {(int)response.StatusCode} {response.ReasonPhrase}. Response: {responseBody}");
+
+        using var payload = JsonDocument.Parse(responseBody);
+        if (payload.RootElement.TryGetProperty("errors", out var errorsElement) &&
+            errorsElement.ValueKind == JsonValueKind.Array &&
+            errorsElement.GetArrayLength() > 0)
+        {
+            Assert.Fail($"Neo4j transactional query returned errors for document {documentId}: {errorsElement}");
+        }
+
+        var resultsElement = payload.RootElement.GetProperty("results");
+        var row = resultsElement[0].GetProperty("data")[0].GetProperty("row");
+        return new Neo4jDocumentGraphState
+        {
+            DocumentCount = row[0].GetInt32(),
+            PageCount = row[1].GetInt32()
+        };
+    }
+
+    private async Task<Neo4jLightRagGraphState> WaitForLightRagNeo4jGraphGrowthAsync(
+        HttpClient graphDbClient,
+        Neo4jLightRagGraphState baselineState,
+        int timeoutMs = 120000)
+    {
+        var waitStopwatch = Stopwatch.StartNew();
+        Neo4jLightRagGraphState? latestState = null;
+
+        while (waitStopwatch.ElapsedMilliseconds < timeoutMs)
+        {
+            latestState = await QueryNeo4jLightRagGraphAsync(graphDbClient);
+            if (latestState.NodeCount > baselineState.NodeCount ||
+                latestState.RelationshipCount > baselineState.RelationshipCount)
+            {
+                return latestState;
+            }
+
+            await Task.Delay(1000, TestContext.Current.CancellationToken);
+        }
+
+        Assert.Fail(
+            $"Timed out after {timeoutMs}ms waiting for LightRAG-managed Neo4j graph state to grow. Baseline nodes/relationships: {baselineState.NodeCount}/{baselineState.RelationshipCount}. Last observed nodes/relationships: {latestState?.NodeCount ?? 0}/{latestState?.RelationshipCount ?? 0}.");
+        return default!;
+    }
+
+    private async Task<KnowledgeQueryApiResponse> WaitForKnowledgeQueryResultAsync(
+        HttpClient client,
+        string relativePath,
+        object payload,
+        int timeoutMs = 120000)
+    {
+        var waitStopwatch = Stopwatch.StartNew();
+        string lastResult = "<no retrieval response received>";
+
+        while (waitStopwatch.ElapsedMilliseconds < timeoutMs)
+        {
+            using var response = await client.PostAsJsonAsync(relativePath, payload, TestContext.Current.CancellationToken);
+            var responseBody = await response.Content.ReadAsStringAsync(TestContext.Current.CancellationToken);
+            lastResult = $"{(int)response.StatusCode} {response.ReasonPhrase}. Response: {responseBody}";
+
+            if (response.IsSuccessStatusCode)
+            {
+                var result = DeserializeJson<KnowledgeQueryApiResponse>(responseBody, $"POST /{relativePath}");
+                result.RawJson = responseBody;
+                if (result.Results.Any(item => !string.IsNullOrWhiteSpace(item.Content)))
+                {
+                    return result;
+                }
+            }
+            else if (response.StatusCode is not (HttpStatusCode.BadGateway or HttpStatusCode.ServiceUnavailable))
+            {
+                Assert.Fail($"Knowledge query '{relativePath}' failed unexpectedly. {lastResult}");
+            }
+
+            await Task.Delay(1000, TestContext.Current.CancellationToken);
+        }
+
+        Assert.Fail(
+            $"Timed out after {timeoutMs}ms waiting for knowledge query '{relativePath}' to return a non-empty result. Last result: {lastResult}");
+        return default!;
+    }
+
+    private static bool ContainsSignificantQueryTerm(string content, string queryText)
+    {
+        foreach (var queryTerm in queryText.Split(' ', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
+        {
+            if (queryTerm.Length < 5)
+            {
+                continue;
+            }
+
+            if (content.Contains(queryTerm, StringComparison.OrdinalIgnoreCase))
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
     private async Task<PythonDocumentApiResponse> WaitForPythonDocumentVisibleAsync(HttpClient pythonClient, int documentId)
     {
         var endpoint = $"documents/{documentId}";
@@ -1069,37 +1411,51 @@ public class BasicAspireAppHostTests : IClassFixture<TestFixture>
 
         while (pollStopwatch.Elapsed < ProcessingPollTimeout)
         {
-            using var statusResponse = await pythonClient.GetAsync(endpoint, TestContext.Current.CancellationToken);
-            lastPayload = await statusResponse.Content.ReadAsStringAsync(TestContext.Current.CancellationToken);
-
-            Assert.True(statusResponse.IsSuccessStatusCode,
-                $"Python status endpoint '{BuildAbsoluteUri(_data.PythonServiceUri, endpoint)}' returned {(int)statusResponse.StatusCode} {statusResponse.ReasonPhrase}. Response: {lastPayload}");
-
-            var status = DeserializeJson<ProcessingStatusApiResponse>(lastPayload, $"GET /{endpoint}");
-            status.RawJson = lastPayload;
-
-            Assert.Equal(documentId, status.DocumentId);
-            Assert.False(string.IsNullOrWhiteSpace(status.Status),
-                $"Python status endpoint returned an empty status for document {documentId}. Payload: {lastPayload}");
-
-            observedStatuses.Add(status.Status);
-
-            if (status.Status.Equals("processed", StringComparison.OrdinalIgnoreCase))
+            try
             {
-                return status;
+                using var statusResponse = await pythonClient.GetAsync(endpoint, TestContext.Current.CancellationToken);
+                lastPayload = await statusResponse.Content.ReadAsStringAsync(TestContext.Current.CancellationToken);
+
+                if (statusResponse.StatusCode == HttpStatusCode.NotFound ||
+                    (statusResponse.StatusCode == HttpStatusCode.InternalServerError && IsTransientDatabaseFailure(lastPayload)))
+                {
+                    await Task.Delay(ProcessingPollInterval, TestContext.Current.CancellationToken);
+                    continue;
+                }
+
+                Assert.True(statusResponse.IsSuccessStatusCode,
+                    $"Python status endpoint '{BuildAbsoluteUri(_data.PythonServiceUri, endpoint)}' returned {(int)statusResponse.StatusCode} {statusResponse.ReasonPhrase}. Response: {lastPayload}");
+
+                var status = DeserializeJson<ProcessingStatusApiResponse>(lastPayload, $"GET /{endpoint}");
+                status.RawJson = lastPayload;
+
+                Assert.Equal(documentId, status.DocumentId);
+                Assert.False(string.IsNullOrWhiteSpace(status.Status),
+                    $"Python status endpoint returned an empty status for document {documentId}. Payload: {lastPayload}");
+
+                observedStatuses.Add(status.Status);
+
+                if (status.Status.Equals("processed", StringComparison.OrdinalIgnoreCase))
+                {
+                    return status;
+                }
+
+                if (status.Status.Equals("error", StringComparison.OrdinalIgnoreCase))
+                {
+                    Assert.Fail(
+                        $"Python processing reported error for document {documentId}: {status.ErrorMessage ?? "<no error_message>"}. Status payload: {lastPayload}");
+                }
+
+                if (!status.Status.Equals("uploaded", StringComparison.OrdinalIgnoreCase) &&
+                    !status.Status.Equals("processing", StringComparison.OrdinalIgnoreCase))
+                {
+                    Assert.Fail(
+                        $"Python status endpoint returned unexpected status '{status.Status}' for document {documentId}. Payload: {lastPayload}");
+                }
             }
-
-            if (status.Status.Equals("error", StringComparison.OrdinalIgnoreCase))
+            catch (Exception ex) when (ex is HttpRequestException or TaskCanceledException)
             {
-                Assert.Fail(
-                    $"Python processing reported error for document {documentId}: {status.ErrorMessage ?? "<no error_message>"}. Status payload: {lastPayload}");
-            }
-
-            if (!status.Status.Equals("uploaded", StringComparison.OrdinalIgnoreCase) &&
-                !status.Status.Equals("processing", StringComparison.OrdinalIgnoreCase))
-            {
-                Assert.Fail(
-                    $"Python status endpoint returned unexpected status '{status.Status}' for document {documentId}. Payload: {lastPayload}");
+                lastPayload = $"{ex.GetType().Name}: {ex.Message}";
             }
 
             await Task.Delay(ProcessingPollInterval, TestContext.Current.CancellationToken);
@@ -1600,5 +1956,49 @@ public class BasicAspireAppHostTests : IClassFixture<TestFixture>
     {
         public bool ScanRequested { get; set; }
         public string? StagedInputPath { get; set; }
+    }
+
+    private sealed class KnowledgeQueryApiResponse
+    {
+        [JsonPropertyName("tenant_id")]
+        public string TenantId { get; set; } = string.Empty;
+
+        [JsonPropertyName("correlation_id")]
+        public string CorrelationId { get; set; } = string.Empty;
+
+        [JsonPropertyName("results")]
+        public List<KnowledgeQueryItemApiResponse> Results { get; set; } = [];
+
+        [JsonIgnore]
+        public string RawJson { get; set; } = string.Empty;
+    }
+
+    private sealed class KnowledgeQueryItemApiResponse
+    {
+        [JsonPropertyName("content")]
+        public string Content { get; set; } = string.Empty;
+
+        [JsonPropertyName("confidence")]
+        public double Confidence { get; set; }
+
+        [JsonPropertyName("source_refs")]
+        public List<string> SourceRefs { get; set; } = [];
+
+        [JsonPropertyName("relevance_score")]
+        public double RelevanceScore { get; set; }
+    }
+
+    private sealed class Neo4jDocumentGraphState
+    {
+        public int DocumentCount { get; set; }
+
+        public int PageCount { get; set; }
+    }
+
+    private sealed class Neo4jLightRagGraphState
+    {
+        public int NodeCount { get; set; }
+
+        public int RelationshipCount { get; set; }
     }
 }

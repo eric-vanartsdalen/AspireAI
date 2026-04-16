@@ -2,8 +2,12 @@ extern alias web;
 
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging.Abstractions;
+using BrainChatEvidence = web::AspireApp.Web.Services.BrainChatEvidence;
+using BrainChatReasoningStep = web::AspireApp.Web.Services.BrainChatReasoningStep;
+using BrainChatResponse = web::AspireApp.Web.Services.BrainChatResponse;
 using ChatConversation = web::AspireApp.Web.Data.ChatConversation;
 using ChatConversationMessage = web::AspireApp.Web.Data.ChatConversationMessage;
+using ChatConversationModes = web::AspireApp.Web.Services.ChatConversationModes;
 using ChatConversationRoles = web::AspireApp.Web.Services.ChatConversationRoles;
 using ChatConversationService = web::AspireApp.Web.Services.ChatConversationService;
 using ChatConversationTitleSources = web::AspireApp.Web.Services.ChatConversationTitleSources;
@@ -24,7 +28,7 @@ public sealed class ChatConversationServiceTests
             "demo-taylor-jones",
             "tenant-alpha",
             "How do I configure Neo4j indexes for better performance?",
-            TestContext.Current.CancellationToken);
+            cancellationToken: TestContext.Current.CancellationToken);
 
         Assert.Equal("How do I configure Neo4j indexes", summary.Title);
         Assert.Equal("tenant-alpha", summary.TenantId);
@@ -50,7 +54,7 @@ public sealed class ChatConversationServiceTests
             "demo-taylor-jones",
             "tenant-alpha",
             "How do I configure Neo4j indexes for better performance?",
-            TestContext.Current.CancellationToken);
+            cancellationToken: TestContext.Current.CancellationToken);
 
         var updated = await service.AddMessageAsync(
             started.ConversationId,
@@ -68,6 +72,98 @@ public sealed class ChatConversationServiceTests
     }
 
     [Fact]
+    public async Task AddMessageAsync_PersistsAssistantMetadata_AndReloadsIt()
+    {
+        await using var context = CreateDbContext();
+        var service = CreateService(context);
+
+        var started = await service.StartConversationAsync(
+            "demo-taylor-jones",
+            "tenant-alpha",
+            "Summarize the current document state.",
+            cancellationToken: TestContext.Current.CancellationToken);
+
+        var response = new BrainChatResponse(
+            Answer: "The document covers Neo4j indexing guidance.",
+            Confidence: 0.87,
+            Evidence:
+            [
+                new BrainChatEvidence("Index on frequently filtered properties.", 0.82, "document:7/page:2")
+            ],
+            ReasoningSteps:
+            [
+                new BrainChatReasoningStep("retrieval", "Matched the indexing section.", "brain-knowledge-retriever", "1 result")
+            ],
+            ProactiveSuggestions: []);
+
+        var updated = await service.AddMessageAsync(
+            started.ConversationId,
+            "demo-taylor-jones",
+            ChatConversationRoles.Assistant,
+            response.Answer,
+            TestContext.Current.CancellationToken,
+            response);
+
+        Assert.NotNull(updated);
+
+        var storedAssistantMessage = await context.ChatConversationMessages
+            .SingleAsync(
+                message => message.ConversationId == started.ConversationId &&
+                           message.Role == ChatConversationRoles.Assistant,
+                TestContext.Current.CancellationToken);
+
+        Assert.False(string.IsNullOrWhiteSpace(storedAssistantMessage.AssistantResponseJson));
+
+        var reloaded = await service.GetConversationAsync(
+            started.ConversationId,
+            "demo-taylor-jones",
+            TestContext.Current.CancellationToken);
+
+        var assistantMessage = Assert.Single(reloaded!.Messages, message => message.Role == ChatConversationRoles.Assistant);
+        Assert.NotNull(assistantMessage.AssistantResponse);
+        Assert.Equal(0.87, assistantMessage.AssistantResponse!.Confidence);
+        Assert.Single(assistantMessage.AssistantResponse.Evidence);
+        Assert.Single(assistantMessage.AssistantResponse.ReasoningSteps);
+    }
+
+    [Fact]
+    public async Task StartConversationAsync_AndUpdateChatModeAsync_PersistNormalizedChatMode()
+    {
+        await using var context = CreateDbContext();
+        var service = CreateService(context);
+
+        var started = await service.StartConversationAsync(
+            "demo-taylor-jones",
+            "tenant-alpha",
+            "Walk me through critique mode",
+            chatMode: "CRITIQUE",
+            cancellationToken: TestContext.Current.CancellationToken);
+
+        Assert.Equal(ChatConversationModes.Critique, started.ChatMode);
+
+        var createdConversation = await context.ChatConversations.SingleAsync(TestContext.Current.CancellationToken);
+        Assert.Equal(ChatConversationModes.Critique, createdConversation.ChatMode);
+
+        var updated = await service.UpdateChatModeAsync(
+            started.ConversationId,
+            "demo-taylor-jones",
+            "REGULAR",
+            TestContext.Current.CancellationToken);
+
+        Assert.NotNull(updated);
+        Assert.Equal(ChatConversationModes.Regular, updated!.ChatMode);
+
+        var reloaded = await service.GetConversationAsync(
+            started.ConversationId,
+            "demo-taylor-jones",
+            TestContext.Current.CancellationToken);
+
+        Assert.NotNull(reloaded);
+        Assert.Equal(ChatConversationModes.Regular, reloaded!.ChatMode);
+        Assert.Equal(ChatConversationModes.Regular, createdConversation.ChatMode);
+    }
+
+    [Fact]
     public async Task RenameConversationAsync_PreservesUserTitle_WhenAssistantMessagesArriveLater()
     {
         await using var context = CreateDbContext();
@@ -77,7 +173,7 @@ public sealed class ChatConversationServiceTests
             "demo-taylor-jones",
             "tenant-alpha",
             "Help me plan my document ingestion workflow",
-            TestContext.Current.CancellationToken);
+            cancellationToken: TestContext.Current.CancellationToken);
 
         var renamed = await service.RenameConversationAsync(
             started.ConversationId,

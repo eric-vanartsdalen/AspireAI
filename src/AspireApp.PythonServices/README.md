@@ -60,6 +60,7 @@ dotnet run --project src\AspireApp.AppHost
 - `GET /rag/page-content/{document_id}/{page_number}` — retrieve one page
 - `GET /rag/surrounding-pages/{document_id}/{page_number}` — retrieve nearby pages
 - `POST /rag/semantic-search` — semantic retrieval with optional filters
+- `POST /rag/lightrag-query` — contract-shaped LightRAG retrieval returning `KnowledgeResult`
 - `GET /rag/health` — check PostgreSQL + Neo4j retrieval dependencies
 
 ## Processing flow

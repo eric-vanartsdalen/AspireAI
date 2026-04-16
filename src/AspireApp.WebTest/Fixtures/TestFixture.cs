@@ -16,6 +16,7 @@ public class TestFixture : IAsyncLifetime
 {
 	private const string AspireDashboardResourceName = "aspire-dashboard";
 	private const string PythonServiceResourceName = "python-service";
+	private const string LightRagResourceName = "lightrag";
 	private const string WebFrontendResourceName = "webfrontend";
 	private const string DashboardBrowserTokenEnvironmentVariable = "DASHBOARD__FRONTEND__BROWSERTOKEN";
 	private const string DashboardPublicUrlEnvironmentVariable = "DASHBOARD__FRONTEND__PUBLICURL";
@@ -89,6 +90,7 @@ public class TestFixture : IAsyncLifetime
 		// capturing their dynamic endpoints from Aspire.
 		var webState = await _app.ResourceNotifications.WaitForResourceHealthyAsync(WebFrontendResourceName);
 		var pythonState = await _app.ResourceNotifications.WaitForResourceHealthyAsync(PythonServiceResourceName);
+		await _app.ResourceNotifications.WaitForResourceHealthyAsync(LightRagResourceName);
 		ValidateDatabaseBindings(webState.Snapshot.EnvironmentVariables, pythonState.Snapshot.EnvironmentVariables);
 
 		// ✅ Resolve Aspire Dashboard endpoint including token
@@ -110,7 +112,7 @@ public class TestFixture : IAsyncLifetime
         AppHostMapping.GraphDBUri = _app.GetEndpoint("graph-db", "http").AbsoluteUri.TrimEnd('/');
         AppHostMapping.LightRagUri = _app.GetEndpoint("lightrag", "http").AbsoluteUri.TrimEnd('/');
         AppHostMapping.PythonServiceUri = _app.GetEndpoint("python-service", "http").AbsoluteUri.TrimEnd('/');
-		AppHostMapping.ApiServiceUri = _app.GetEndpoint("apiservice", "https").AbsoluteUri.TrimEnd('/');
+		AppHostMapping.BrainGatewayUri = _app.GetEndpoint("brain-gateway", "https").AbsoluteUri.TrimEnd('/');
         AppHostMapping.SharedDataPath = _testDataPath;
         AppHostMapping.SharedDatabasePath = _testDatabasePath;
 

@@ -59,6 +59,7 @@ class DatabaseContractAuditTests(unittest.TestCase):
 
         self.assertEqual({"files", "document_pages"}, set(schema["tables"]))
         self.assertIn("file_hash", schema["columns"]["files"])
+        self.assertIn("source_confidence", schema["columns"]["files"])
         self.assertIn("page_metadata", schema["columns"]["document_pages"])
         self.assertTrue(
             {
@@ -104,12 +105,28 @@ class DatabaseContractAuditTests(unittest.TestCase):
 
         self.assertEqual(file_id, document.id)
         self.assertEqual("test-tenant", file_record["tenant_id"])
+        self.assertEqual(0.7, file_record["source_confidence"])
         self.assertEqual("processed", status.status)
         self.assertEqual(3, status.total_pages)
         self.assertEqual(1, status.processed_pages)
         self.assertEqual("Persisted page content", pages[0]["content"])
         self.assertEqual("healthy", health["status"])
         self.assertEqual("postgres", health["database_provider"])
+
+    def test_create_file_record_derives_source_confidence_from_source_type(self):
+        service = DatabaseService("host=test port=5432 dbname=appdb user=postgres password=pw")
+        file_id = service.create_file_record(
+            file_name="note.txt",
+            original_file_name="note.txt",
+            file_path="uploads",
+            mime_type="text/plain",
+            source_type="user_note",
+        )
+
+        file_record = service.get_file_by_id(file_id)
+
+        self.assertEqual("user_note", file_record["source_type"])
+        self.assertEqual(0.3, file_record["source_confidence"])
 
     def test_retryable_documents_include_error_rows_and_retry_clears_stale_artifacts(self):
         service = DatabaseService("host=test port=5432 dbname=appdb user=postgres password=pw")

@@ -1,4 +1,6 @@
-﻿namespace AspireApp.Web.Components.Pages;
+﻿using AspireApp.Web;
+
+namespace AspireApp.Web.Components.Pages;
 
 public static class HomeConfigurations
 {
@@ -40,11 +42,11 @@ public static class HomeConfigurations
         ActiveModelController = Environment.GetEnvironmentVariable("AI-Controller-Type")
             ?? "ollama";
         ActiveModelURL = GetConfiguredValue(
-            ServiceDiscoveryUtilities.GetServiceConnectionString("ConnectionStrings__ollama"),
+            ServiceDiscoveryUtilities.GetServiceConnectionString("ollama"),
             Environment.GetEnvironmentVariable("AI-Endpoint"),
             "http://localhost:11434");
         ActiveModel = GetConfiguredValue(
-            ServiceDiscoveryUtilities.GetServiceConnectionString("ConnectionStrings__chat"),
+            ServiceDiscoveryUtilities.GetServiceConnectionString("chat"),
             Environment.GetEnvironmentVariable("AI-Model"),
             "phi4-mini:latest");
 

@@ -1,7 +1,13 @@
 extern alias web;
 
+using IBrainChatClient = web::AspireApp.Web.Services.IBrainChatClient;
+using BrainChatResponse = web::AspireApp.Web.Services.BrainChatResponse;
+using BrainChatEvidence = web::AspireApp.Web.Services.BrainChatEvidence;
+using BrainChatReasoningStep = web::AspireApp.Web.Services.BrainChatReasoningStep;
+using ConversationMessage = web::AspireApp.Web.Services.ConversationMessage;
 using System.Net;
 using System.Security.Claims;
+using System.Threading.Tasks;
 using Bunit;
 using Microsoft.AspNetCore.Components.Authorization;
 using Microsoft.EntityFrameworkCore;
@@ -31,7 +37,7 @@ namespace AspireApp.WebTest.Tests;
 public sealed class ChatFocusTests
 {
     [Fact]
-    public void RenameTitleInput_DoesNotRefocusQuestionInputWhileTyping()
+    public async Task RenameTitleInput_DoesNotRefocusQuestionInputWhileTyping()
     {
         var previousOllamaConnection = Environment.GetEnvironmentVariable("ConnectionStrings__ollama");
         var previousChatConnection = Environment.GetEnvironmentVariable("ConnectionStrings__chat");
@@ -84,11 +90,12 @@ public sealed class ChatFocusTests
             testContext.Services.AddSingleton<IChatConversationService>(chatConversationService);
             testContext.Services.AddSingleton(tenantContext);
             testContext.Services.AddSingleton(new AiInfoStateService(configuration, httpClientFactory));
+            testContext.Services.AddSingleton<IBrainChatClient>(new StubBrainChatClient());
 
             var cut = testContext.Render<Chat>();
 
             cut.WaitForAssertion(() => Assert.Single(cut.FindAll("[data-testid='chat-conversation-select']")));
-            cut.Find("[data-testid='chat-conversation-select']").Click();
+            await cut.InvokeAsync(() => cut.Find("[data-testid='chat-conversation-select']").Click());
             cut.WaitForAssertion(() => Assert.Single(cut.FindAll("[data-testid='chat-conversation-rename']")));
 
             var focusCallsBeforeRename = CountFocusCalls(testContext);
@@ -193,6 +200,7 @@ public sealed class ChatFocusTests
                     "Existing conversation title",
                     "User preview",
                     "tenant-alpha",
+                    "regular",
                     1,
                     false,
                     Timestamp,
@@ -212,6 +220,7 @@ public sealed class ChatFocusTests
                     conversationId,
                     "Existing conversation title",
                     "tenant-alpha",
+                    "regular",
                     false,
                     Timestamp,
                     Timestamp,
@@ -229,6 +238,7 @@ public sealed class ChatFocusTests
             string ownerUserId,
             string? tenantId,
             string userMessage,
+            string chatMode = "regular",
             CancellationToken cancellationToken = default)
         {
             throw new NotSupportedException();
@@ -239,7 +249,8 @@ public sealed class ChatFocusTests
             string ownerUserId,
             string role,
             string content,
-            CancellationToken cancellationToken = default)
+            CancellationToken cancellationToken = default,
+            BrainChatResponse? assistantResponse = null)
         {
             throw new NotSupportedException();
         }
@@ -253,12 +264,41 @@ public sealed class ChatFocusTests
             throw new NotSupportedException();
         }
 
+        public Task<ChatConversationSummary?> UpdateChatModeAsync(
+            Guid conversationId,
+            string ownerUserId,
+            string chatMode,
+            CancellationToken cancellationToken = default)
+        {
+            throw new NotSupportedException();
+        }
+
         public Task<bool> DeleteConversationAsync(
             Guid conversationId,
             string ownerUserId,
             CancellationToken cancellationToken = default)
         {
             throw new NotSupportedException();
+        }
+    }
+
+    private sealed class StubBrainChatClient : IBrainChatClient
+    {
+        public Task<BrainChatResponse> ChatAsync(
+            string query,
+            string mode,
+            string? tenantId,
+            string? conversationId,
+            int topK = 5,
+            IReadOnlyList<ConversationMessage>? conversationHistory = null,
+            CancellationToken cancellationToken = default)
+        {
+            return Task.FromResult(new BrainChatResponse(
+                Answer: "Stub response",
+                Confidence: 0.9,
+                Evidence: Array.Empty<BrainChatEvidence>(),
+                ReasoningSteps: Array.Empty<BrainChatReasoningStep>(),
+                ProactiveSuggestions: Array.Empty<string>()));
         }
     }
 }

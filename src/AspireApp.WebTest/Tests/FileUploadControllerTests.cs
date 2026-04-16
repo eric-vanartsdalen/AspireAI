@@ -2,10 +2,12 @@ extern alias web;
 
 using System.Security.Claims;
 using System.Reflection;
+using System.Diagnostics;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
+using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging.Abstractions;
 using AuthenticatedUser = web::AspireApp.Web.Services.AuthenticatedUser;
 using AuthenticatedUserClaims = web::AspireApp.Web.Services.AuthenticatedUserClaims;
@@ -222,6 +224,7 @@ public sealed class FileUploadControllerTests
             var ok = Assert.IsAssignableFrom<ObjectResult>(result);
             Assert.Equal(StatusCodes.Status200OK, ok.StatusCode ?? StatusCodes.Status200OK);
             var storedFileId = await context.Datasources.Select(fileRecord => fileRecord.Id).SingleAsync(TestContext.Current.CancellationToken);
+            await WaitForQueuedDocumentAsync(processingCoordinator, storedFileId);
             Assert.Equal([storedFileId], processingCoordinator.QueuedDocumentIds);
         }
         finally
@@ -320,7 +323,8 @@ public sealed class FileUploadControllerTests
             storage,
             tenantManagement,
             NullLogger<FileUploadController>.Instance,
-            configuration);
+            configuration,
+            new NullHostApplicationLifetime());
 
         var identity = new ClaimsIdentity(authenticationType: "Test");
         AuthenticatedUserClaims.AddClaims(identity, currentUser);
@@ -370,6 +374,22 @@ public sealed class FileUploadControllerTests
         }
     }
 
+    private static async Task WaitForQueuedDocumentAsync(FakeDocumentProcessingCoordinator processingCoordinator, int documentId, int timeoutMs = 2_000)
+    {
+        var stopwatch = Stopwatch.StartNew();
+        while (stopwatch.ElapsedMilliseconds < timeoutMs)
+        {
+            if (processingCoordinator.QueuedDocumentIds.Contains(documentId))
+            {
+                return;
+            }
+
+            await Task.Delay(25);
+        }
+
+        Assert.Fail($"Timed out waiting for automatic processing to queue document {documentId}.");
+    }
+
     private sealed class FakeDocumentProcessingCoordinator : IDocumentProcessingCoordinator
     {
         public List<int> QueuedDocumentIds { get; } = [];
@@ -387,5 +407,13 @@ public sealed class FileUploadControllerTests
             CleanedDocumentIds.Add(documentId);
             return Task.CompletedTask;
         }
+    }
+
+    private sealed class NullHostApplicationLifetime : IHostApplicationLifetime
+    {
+        public CancellationToken ApplicationStarted => CancellationToken.None;
+        public CancellationToken ApplicationStopping => CancellationToken.None;
+        public CancellationToken ApplicationStopped => CancellationToken.None;
+        public void StopApplication() { }
     }
 }

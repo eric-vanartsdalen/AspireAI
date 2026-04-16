@@ -13,6 +13,10 @@ class Document(BaseModel):
     upload_date: datetime
     processed: bool = False
     processing_status: str = "pending"
+    tenant_id: str = "default"
+    source_type: str = "upload"
+    source_confidence: Optional[float] = None
+    source_url: Optional[str] = None
 
 
 class ProcessedDocument(BaseModel):
@@ -79,6 +83,8 @@ class LightRagQueryRequest(BaseModel):
     chunk_top_k: int = 10
     include_references: bool = True
     include_chunk_content: bool = True
+    tenant_id: str = "default"
+    correlation_id: Optional[str] = None
 
 
 class LightRagQueryResponse(BaseModel):

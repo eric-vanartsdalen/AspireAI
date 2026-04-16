@@ -11,12 +11,14 @@ public class FileUploadController(
     FileStorageService fileStorageService,
     TenantManagementService tenantManagementService,
     ILogger<FileUploadController> logger,
-    IConfiguration configuration) : ControllerBase
+    IConfiguration configuration,
+    IHostApplicationLifetime applicationLifetime) : ControllerBase
 {
     private readonly FileStorageService _fileStorageService = fileStorageService;
     private readonly TenantManagementService _tenantManagementService = tenantManagementService;
     private readonly ILogger<FileUploadController> _logger = logger;
     private readonly IConfiguration _configuration = configuration;
+    private readonly IHostApplicationLifetime _applicationLifetime = applicationLifetime;
 
     private readonly string[] _allowedExtensions = [".pdf", ".docx", ".txt", ".md"];
     private readonly long _maxFileSize = configuration.GetValue<long?>("FileUpload:MaxFileSize") ?? 10485760;
@@ -134,15 +136,31 @@ public class FileUploadController(
                 "uploaded",
                 tenantId);
 
-            var automaticProcessing = await _fileStorageService.TryStartAutomaticProcessingAsync(
-                fileMetadata.Id,
-                cancellationToken);
-
             if (_logger.IsEnabled(LogLevel.Information))
             {
                 _logger.LogInformation("File uploaded successfully: {FileName} -> {FilePath}, Size: {Size} bytes, Hash: {Hash}, Tenant: {TenantId}",
                     file.FileName, filePath, file.Length, fileHash, tenantId);
             }
+
+            // Queue automatic processing in background without blocking the response
+            // This ensures the upload response returns with status="uploaded" before processing changes it
+            var fileId = fileMetadata.Id;
+            _ = Task.Run(async () =>
+            {
+                // Give the response time to complete before starting processing
+                await Task.Delay(100, _applicationLifetime.ApplicationStopping);
+                try
+                {
+                    await _fileStorageService.TryStartAutomaticProcessingAsync(fileId, _applicationLifetime.ApplicationStopping);
+                }
+                catch (Exception ex)
+                {
+                    if (_logger.IsEnabled(LogLevel.Warning))
+                    {
+                        _logger.LogWarning(ex, "Background automatic processing failed for file {FileId}", fileId);
+                    }
+                }
+            }, _applicationLifetime.ApplicationStopping);
 
             return Ok(new
             {
@@ -153,15 +171,9 @@ public class FileUploadController(
                 length = file.Length,
                 id = fileMetadata.Id,
                 uploadedAt = fileMetadata.UploadedAt,
-                status = fileMetadata.Status,
+                status = "uploaded",
                 fileHash,
-                automaticProcessingAttempted = automaticProcessing.Attempted,
-                automaticProcessingStarted = automaticProcessing.Started,
-                message = automaticProcessing.Attempted
-                    ? automaticProcessing.Started
-                        ? "File uploaded successfully. Processing started automatically."
-                        : "File uploaded successfully, but automatic processing could not be started."
-                    : "File uploaded successfully."
+                message = "File uploaded successfully."
             });
         }
         catch (Exception ex)

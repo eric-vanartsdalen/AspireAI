@@ -3,7 +3,7 @@ from fastapi.responses import JSONResponse, StreamingResponse
 import logging
 import os
 
-from .routers import documents, processing, rag
+from .routers import brain, documents, processing, rag
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -17,6 +17,7 @@ app = FastAPI(
 )
 
 # Include routers
+app.include_router(brain.router)
 app.include_router(documents.router)
 app.include_router(processing.router)
 app.include_router(rag.router)
@@ -29,10 +30,12 @@ def read_root():
         "version": "1.0.0",
         "endpoints": [
             "/docs - API documentation",
+            "/brain/chat - Knowledge-augmented chat (Regular / Critique mode)",
             "/documents - Upload inventory and per-document status",
             "/documents/health/database - Operational store health",
             "/processing - Document processing",
             "/rag - Retrieval endpoints",
+            "/rag/query - Contract-shaped retrieval with LightRAG-first fallback",
             "/rag/lightrag-query - LightRAG retrieval via Python API"
         ]
     }

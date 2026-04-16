@@ -1,5 +1,7 @@
 ﻿# AspireAI Roadmap
 
+**Last Updated:** 2026-04-15
+
 ## Vision
 
 AspireAI is a configurable, modular Blazor-based chat assistant platform that supports conversation with local or hosted LLMs, document ingestion and RAG. Ideally, this will use flexible plug-in architecture — all designed for reuse, extension, and future upgrades (e.g. GraphRAG, multi-agent workflows).
@@ -8,9 +10,21 @@ Note: Updates to Aspire and .Net framework SDK will be likely and affected as se
 
 ---
 
-## 2026-02-13 Stabilization Plan (Active)
+## Current Status Snapshot
 
-This section captures the current execution plan so near-term priorities are not lost.
+> **Use `roadmap/Plan.md` and `roadmap/Tasks.md` as the active planning set.** This file now serves as the legacy roadmap reference.
+
+- **Done:** Original phases 0–3 are complete on this branch.
+- **Done beyond this legacy roadmap:** The repo already contains the BRAIN Phase 1/2 foundation — gateway contracts, ingest/query routes, retrieval seams, vector population/search, and the Web UI citation/confidence path captured in `Plan.md` and `Tasks.md`.
+- **Active now:** Phase 3 beta is in progress: Regular and Critique chat routes exist, the Web UI renders citations/confidence, and critique reasoning is visible. Critique mode remains experimental until live-validated.
+- **Superseded:** Original phases 4–8 are no longer the execution plan; they are replaced by the BRAIN phases in `Plan.md`.
+- **Next:** Prove one end-to-end Aspire flow from ingested document to gateway-routed chat with citations/confidence in the Web UI, then close the remaining BRAIN Phase 3 gaps (session memory, contradiction/proactive monitoring, proactive suggestions, and chat-mode transition regression coverage) before Phase 4 hardening/evaluation.
+
+---
+
+## 2026-02-13 Stabilization Plan (Historical)
+
+This section captures the original stabilization work that led into the BRAIN pivot. Keep it as historical context, not as the active execution plan.
 
 ### 2026-02-14 Status Update
 
@@ -33,12 +47,12 @@ This section captures the current execution plan so near-term priorities are not
 - Status lifecycle handling must normalize/accept `Uploaded` and canonicalize to the processing workflow values.
 - Contract alignment work should preserve both display name (`original_file_name`) and stored file identity (`file_name`).
 
-### Current Reality Snapshot
+### Current Reality Snapshot (Historical — pre-BRAIN branch state)
 
-- Upload flow is implemented in Blazor/Web and persists metadata in SQLite (`files`, `document_pages`).
-- Chat currently streams from Ollama via Semantic Kernel without retrieval augmentation.
-- Python service has processing/RAG endpoints, but several router/service contracts still reflect legacy document schemas and method signatures.
-- LightRAG and Neo4j are orchestrated in AppHost, but runtime integration into chat retrieval is not complete.
+- At this checkpoint, upload flow was implemented in Blazor/Web and persisted metadata in the operational document store.
+- At this checkpoint, chat still streamed from Ollama via Semantic Kernel without retrieval augmentation.
+- At this checkpoint, the Python service had processing/RAG endpoints, but several router/service contracts still reflected legacy document schemas and method signatures.
+- This snapshot predates the gateway/contracts/retrieval foundations and the Regular + Critique chat UI work now present on the branch.
 
 ### Canonical Decisions
 
@@ -144,7 +158,7 @@ This section captures the current execution plan so near-term priorities are not
 
 ## Phase 3: Document Upload & Ingestion Pipeline
 
-**Status**: ⏳ IN-PROGRESS
+**Status**: ✅ Complete *(delivered through the BRAIN foundation; see `Plan.md` and `Tasks.md` for the active follow-on work)*
 
 **Objective**: Allow users to upload documents (PDF, DOCX, etc.), which are chunked, embedded, and stored for later retrieval.  
 **Outcomes**:
@@ -163,7 +177,7 @@ This section captures the current execution plan so near-term priorities are not
 
 ## Phase 4: Retrieval-Augmented Generation (RAG) — Flat Vector RAG
 
-**Status**: ⏳ TO-DO
+**Status**: ➡️ Superseded by BRAIN Phase 2 / Phase 3
 
 **Objective**: Implement simple RAG using flat vector retrieval to give chat responses augmented context from documents.  
 **Outcomes**:
@@ -185,7 +199,7 @@ This section captures the current execution plan so near-term priorities are not
 
 ## Phase 5: RAG Enhancement — LightRAG or GraphRAG
 
-**Status**: ⏳ TO-DO
+**Status**: ➡️ Superseded by BRAIN Phase 2 / Phase 3
 
 **Objective**: Implement more advanced retrieval strategies (LightRAG or GraphRAG) and improve citation/graphical retrieval logic.  
 **Outcomes**:
@@ -203,7 +217,7 @@ This section captures the current execution plan so near-term priorities are not
 
 ## Phase 6: Plugin Ecosystem & Community Extensibility
 
-**Status**: ⏳ TO-DO
+**Status**: ➡️ Superseded by BRAIN Phase 6
 
 **Objective**: Harden AspireAI as a plugin-friendly, community extensible platform where others can add new LLM providers, retrieval strategies, or UI components.  
 **Outcomes**:
@@ -223,7 +237,7 @@ This section captures the current execution plan so near-term priorities are not
 
 ## Phase 7: UX Polish, Testing, Deployment, and Dockerization
 
-**Status**: ⏳ TO-DO
+**Status**: ➡️ Superseded by BRAIN Phase 4 / Phase 6
 
 **Objective**: Improve user experience, add robust testing, and prepare AspireAI for containerized deployment using Docker.  
 **Outcomes**:
@@ -244,7 +258,7 @@ This section captures the current execution plan so near-term priorities are not
 
 ## Phase 8: Advanced Features (Optional / Future)
 
-**Status**: ⏳ TO-DO
+**Status**: ➡️ Superseded by the BRAIN phase sequence
 
 These are stretch or future goals once the core is solid:
 
@@ -265,17 +279,17 @@ These are stretch or future goals once the core is solid:
 | Phase 0 | Repo setup, extension interface scaffolding | `feature/setup` | ✅ Complete |
 | Phase 1 | Basic Blazor chat UI (text only) | `feature/blazor-chat-ui` | ✅ Complete |
 | Phase 2 | Mic input (speech-to-text) and TTS (text-to-speech) | `feature/speech-io` | ✅ Complete |
-| Phase 3 | Document upload and ingestion (Docling pipeline) | `feature/doc-upload` | ⏳ TO-DO |
-| Phase 4 | Flat-vector RAG and citation footnotes | `feature/rag-flat` | ⏳ TO-DO |
-| Phase 5 | LightRAG / GraphRAG retrieval strategies | `feature/rag-graph` | ⏳ TO-DO |
-| Phase 6 | Plugin ecosystem and extensibility | `feature/plugin-ecosystem` | ⏳ TO-DO |
-| Phase 7 | Testing, UX polish, Dockerization, CI/CD | `feature/deployment-ci` | ⏳ TO-DO |
-| Phase 8 | Advanced / stretch features | `feature/advanced` | ⏳ TO-DO |
+| Phase 3 | Document upload and ingestion (Docling pipeline) | `feature/doc-upload` | ✅ Complete |
+| Phase 4 | Flat-vector RAG and citation footnotes | `feature/rag-flat` | ➡️ Superseded by BRAIN `Plan.md` |
+| Phase 5 | LightRAG / GraphRAG retrieval strategies | `feature/rag-graph` | ➡️ Superseded by BRAIN `Plan.md` |
+| Phase 6 | Plugin ecosystem and extensibility | `feature/plugin-ecosystem` | ➡️ Superseded by BRAIN `Plan.md` |
+| Phase 7 | Testing, UX polish, Dockerization, CI/CD | `feature/deployment-ci` | ➡️ Superseded by BRAIN `Plan.md` |
+| Phase 8 | Advanced / stretch features | `feature/advanced` | ➡️ Superseded by BRAIN `Plan.md` |
 
 ---
 
 ### Final Thoughts
 
-- As you work through each branch and use Copilot, we can iterate on each feature one at a time.  
-- The extension interfaces and plugin scaffolding help ensure that future changes — like swapping out Ollama for another LLM, or switching to GraphRAG — don't require heavy refactorings.  
-- We'll revisit the `Roadmap.md` as things evolve — it's meant to be a living document.
+- Keep this file as the historical "how we got here" roadmap.
+- Use `roadmap/Plan.md` for the active BRAIN roadmap and `roadmap/Tasks.md` for execution status.
+- The next honest milestone is the Phase 3 beta proof: one end-to-end Aspire flow from ingested document to gateway-routed chat with citations/confidence in the Web UI.

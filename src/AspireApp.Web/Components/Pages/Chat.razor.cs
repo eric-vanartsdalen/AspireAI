@@ -36,10 +36,14 @@ namespace AspireApp.Web.Components.Pages
         [Inject]
         public AiInfoStateService AiInfoState { get; set; } = default!;
 
+        [Inject]
+        public required IBrainChatClient BrainChatClient { get; set; }
+
         private ElementReference questionInput;
         private ElementReference conversationTitleInput;
         private CancellationTokenSource? _cancellationTokenSource;
         private DotNetObjectReference<Chat>? _dotNetRef;
+        private const int MaxConversationHistoryMessages = 12;
         private const int AiFirstTokenTimeoutSeconds = 45;
         private const int AiResponseTimeoutSeconds = 150;
         private const string HaltedResponseTag = "[AI response was manually halted prematurely.]";
@@ -55,6 +59,7 @@ namespace AspireApp.Web.Components.Pages
         private string ConversationTitleDraft { get; set; } = string.Empty;
         private bool IsEditingConversationTitle { get; set; }
         private bool ShouldFocusConversationTitleInput { get; set; }
+        private bool ShouldFocusQuestionInput { get; set; } = true;
         private string ConversationStatusMessage { get; set; } = string.Empty;
         private bool ConversationStatusIsError { get; set; }
         private AuthenticatedUser? CurrentUser { get; set; }
@@ -77,6 +82,12 @@ namespace AspireApp.Web.Components.Pages
         private string? CurrentlySpeakingMessage { get; set; }
         private bool IsInteractiveReady { get; set; }
 
+        // Mode selector
+        private string SelectedChatMode { get; set; } = ChatConversationModes.Regular;
+
+        // Citation tracking: maps assistant message index to evidence from the gateway response
+        private readonly Dictionary<int, BrainChatResponse> _messageEvidence = new();
+
         private string ConversationStatusCssClass => ConversationStatusIsError ? "alert alert-danger" : "alert alert-info";
 
         private bool HasActiveConversation => ActiveConversationId.HasValue;
@@ -94,14 +105,14 @@ namespace AspireApp.Web.Components.Pages
             Console.WriteLine("=== Chat OnInitializedAsync START ===");
 
             var configEndpoint = configuration["AI-Endpoint"];
-            var configModel = configuration["AI-Chat-Model"];
+            var configModel = configuration["AI-Model"];
             var envEndpoint = Environment.GetEnvironmentVariable("AI-Endpoint");
-            var envModel = Environment.GetEnvironmentVariable("AI-Chat-Model");
+            var envModel = Environment.GetEnvironmentVariable("AI-Model");
 
             Console.WriteLine($"Chat: Config AI-Endpoint = '{configEndpoint}'");
-            Console.WriteLine($"Chat: Config AI-Chat-Model = '{configModel}'");
+            Console.WriteLine($"Chat: Config AI-Model = '{configModel}'");
             Console.WriteLine($"Chat: Env AI-Endpoint = '{envEndpoint}'");
-            Console.WriteLine($"Chat: Env AI-Chat-Model = '{envModel}'");
+            Console.WriteLine($"Chat: Env AI-Model = '{envModel}'");
             Console.WriteLine($"Chat: HomeConfigurations.ActiveModelURL = '{HomeConfigurations.ActiveModelURL}'");
             Console.WriteLine($"Chat: HomeConfigurations.ActiveModel = '{HomeConfigurations.ActiveModel}'");
 
@@ -177,16 +188,17 @@ namespace AspireApp.Web.Components.Pages
             ApplyConversationSummary(activeConversation);
         }
 
-        private async Task StartNewConversationAsync()
+        private Task StartNewConversationAsync()
         {
             if (IsAIResponsing)
             {
-                return;
+                return Task.CompletedTask;
             }
 
             ResetConversationDraft();
-            await FocusQuestionInput();
+            RequestQuestionInputFocus();
             StateHasChanged();
+            return Task.CompletedTask;
         }
 
         private async Task SelectConversationAsync(Guid conversationId)
@@ -213,6 +225,7 @@ namespace AspireApp.Web.Components.Pages
 
             ApplyConversationDetail(conversation);
             ClearConversationStatus();
+            RequestQuestionInputFocus();
             await ScrollChatToBottomAsync();
         }
 
@@ -225,6 +238,7 @@ namespace AspireApp.Web.Components.Pages
 
             ConversationTitleDraft = ActiveConversationTitle;
             IsEditingConversationTitle = true;
+            ShouldFocusQuestionInput = false;
             ShouldFocusConversationTitleInput = true;
         }
 
@@ -233,6 +247,7 @@ namespace AspireApp.Web.Components.Pages
             IsEditingConversationTitle = false;
             ShouldFocusConversationTitleInput = false;
             ConversationTitleDraft = ActiveConversationTitle;
+            RequestQuestionInputFocus();
         }
 
         private async Task SaveConversationTitleAsync()
@@ -272,6 +287,7 @@ namespace AspireApp.Web.Components.Pages
             ApplyConversationSummary(renamedConversation);
             IsEditingConversationTitle = false;
             ShouldFocusConversationTitleInput = false;
+            RequestQuestionInputFocus();
             await LoadConversationSummariesAsync();
             ClearConversationStatus();
         }
@@ -310,6 +326,7 @@ namespace AspireApp.Web.Components.Pages
         {
             ActiveConversationId = conversation.ConversationId;
             ActiveConversationTitle = conversation.Title;
+            SelectedChatMode = ChatConversationModes.Normalize(conversation.ChatMode);
 
             if (!IsEditingConversationTitle)
             {
@@ -323,10 +340,12 @@ namespace AspireApp.Web.Components.Pages
             ActiveConversationTitle = conversation.Title;
             ConversationTitleDraft = conversation.Title;
             IsEditingConversationTitle = false;
+            SelectedChatMode = ChatConversationModes.Normalize(conversation.ChatMode);
             Question = string.Empty;
             AIResponse = string.Empty;
             ElapsedTimeMessage = string.Empty;
             _chatHistory = conversation.Messages.ToChatHistory();
+            LoadPersistedAssistantResponses(conversation.Messages);
         }
 
         private void ResetConversationDraft(bool clearStatus = true)
@@ -335,10 +354,14 @@ namespace AspireApp.Web.Components.Pages
             ActiveConversationTitle = ChatConversationTitleHelper.BuildFallbackTitle(string.Empty);
             ConversationTitleDraft = string.Empty;
             IsEditingConversationTitle = false;
+            ShouldFocusConversationTitleInput = false;
+            ShouldFocusQuestionInput = false;
+            SelectedChatMode = ChatConversationModes.Regular;
             Question = string.Empty;
             AIResponse = string.Empty;
             ElapsedTimeMessage = string.Empty;
             _chatHistory = new ChatHistory();
+            _messageEvidence.Clear();
 
             if (clearStatus)
             {
@@ -350,6 +373,37 @@ namespace AspireApp.Web.Components.Pages
         {
             ConversationStatusMessage = message;
             ConversationStatusIsError = isError;
+        }
+
+        private async Task OnChatModeChangedAsync(string newMode)
+        {
+            SelectedChatMode = ChatConversationModes.Normalize(newMode);
+
+            if (!ActiveConversationId.HasValue)
+            {
+                return;
+            }
+
+            var user = await ResolveCurrentUserAsync();
+            if (user is null)
+            {
+                return;
+            }
+
+            await ChatConversationService.UpdateChatModeAsync(
+                ActiveConversationId.Value,
+                user.UserId,
+                SelectedChatMode);
+        }
+
+        private string FormatConfidenceBadge(double confidence)
+        {
+            return confidence switch
+            {
+                >= 0.8 => "high",
+                >= 0.5 => "medium",
+                _ => "low"
+            };
         }
 
         private void ClearConversationStatus()
@@ -373,7 +427,8 @@ namespace AspireApp.Web.Components.Pages
                 conversationSummary = await ChatConversationService.StartConversationAsync(
                     user.UserId,
                     TenantContext.CurrentTenantId,
-                    message);
+                    message,
+                    SelectedChatMode);
             }
             else
             {
@@ -395,7 +450,7 @@ namespace AspireApp.Web.Components.Pages
             return true;
         }
 
-        private async Task PersistAssistantMessageAsync(string message)
+        private async Task PersistAssistantMessageAsync(string message, BrainChatResponse? assistantResponse)
         {
             if (!ActiveConversationId.HasValue)
             {
@@ -413,7 +468,8 @@ namespace AspireApp.Web.Components.Pages
                 ActiveConversationId.Value,
                 user.UserId,
                 ChatConversationRoles.Assistant,
-                message);
+                message,
+                assistantResponse: assistantResponse);
 
             if (conversationSummary is null)
             {
@@ -856,8 +912,9 @@ namespace AspireApp.Web.Components.Pages
                 ShouldFocusConversationTitleInput = false;
                 await FocusConversationTitleInput();
             }
-            else if ((firstRender || !IsAIResponsing) && !IsEditingConversationTitle)
+            else if (ShouldFocusQuestionInput && !IsEditingConversationTitle)
             {
+                ShouldFocusQuestionInput = false;
                 await FocusQuestionInput();
             }
 
@@ -865,6 +922,17 @@ namespace AspireApp.Web.Components.Pages
             {
                 await ScrollChatToBottomAsync(delayMs: 10);
             }
+        }
+
+        private void RequestQuestionInputFocus()
+        {
+            if (IsEditingConversationTitle)
+            {
+                return;
+            }
+
+            ShouldFocusConversationTitleInput = false;
+            ShouldFocusQuestionInput = true;
         }
 
         private async Task FocusQuestionInput()
@@ -906,73 +974,36 @@ namespace AspireApp.Web.Components.Pages
 
         private async Task CallBackgroundAI()
         {
-            var kernel = GetOrCreateKernel();
             var stopwatch = Stopwatch.StartNew();
 
             var manualStopTokenSource = new CancellationTokenSource();
-            using var firstTokenTimeoutTokenSource = new CancellationTokenSource(TimeSpan.FromSeconds(AiFirstTokenTimeoutSeconds));
-            using var responseTimeoutTokenSource = new CancellationTokenSource(TimeSpan.FromSeconds(AiResponseTimeoutSeconds));
+            using var responseTimeoutTokenSource = new CancellationTokenSource(TimeSpan.FromMinutes(3));
             using var linkedTokenSource = CancellationTokenSource.CreateLinkedTokenSource(
                 manualStopTokenSource.Token,
-                firstTokenTimeoutTokenSource.Token,
                 responseTimeoutTokenSource.Token);
 
             _cancellationTokenSource = manualStopTokenSource;
+            BrainChatResponse? chatResponse = null;
 
             try
             {
-                var chatCompletionService = kernel.GetRequiredService<IChatCompletionService>();
-                var promptSettings = new PromptExecutionSettings();
+                chatResponse = await BrainChatClient.ChatAsync(
+                    query: Status,
+                    mode: SelectedChatMode,
+                    tenantId: TenantContext.CurrentTenantId,
+                    conversationId: ActiveConversationId?.ToString(),
+                    conversationHistory: BuildConversationHistoryForGateway(Status),
+                    cancellationToken: linkedTokenSource.Token);
 
-                var stream = chatCompletionService.GetStreamingChatMessageContentsAsync(
-                    _chatHistory,
-                    promptSettings,
-                    kernel,
-                    linkedTokenSource.Token);
+                AIResponse = chatResponse.Answer;
 
-                var updateBuffer = new System.Text.StringBuilder();
-                var lastUpdateTime = DateTime.UtcNow;
-                var lastScrollTime = DateTime.UtcNow;
-                const int updateIntervalMs = 20;
-                const int earlyTokenThreshold = 10;
-                var tokenCount = 0;
-
-                await foreach (var message in stream)
+                // Track evidence for the next assistant message index
+                var nextAssistantIndex = _chatHistory.Count(m =>
+                    m.Role == AuthorRole.Assistant);
+                if (ShouldTrackAssistantResponseMetadata(chatResponse))
                 {
-                    updateBuffer.Append(message.Content);
-                    tokenCount++;
-
-                    if (tokenCount == 1)
-                    {
-                        firstTokenTimeoutTokenSource.CancelAfter(Timeout.InfiniteTimeSpan);
-                    }
-
-                    var now = DateTime.UtcNow;
-                    var shouldUpdate = tokenCount <= earlyTokenThreshold ||
-                        (now - lastUpdateTime).TotalMilliseconds >= updateIntervalMs;
-
-                    if (shouldUpdate)
-                    {
-                        AIResponse = updateBuffer.ToString();
-                        StateHasChanged();
-                        lastUpdateTime = now;
-
-                        if ((now - lastScrollTime).TotalMilliseconds >= 150)
-                        {
-                            try
-                            {
-                                await JSRuntime.InvokeVoidAsync("scrollChatToBottom");
-                                lastScrollTime = now;
-                            }
-                            catch (Exception ex)
-                            {
-                                Console.WriteLine($"Error scrolling during stream: {ex.Message}");
-                            }
-                        }
-                    }
+                    _messageEvidence[nextAssistantIndex] = chatResponse;
                 }
-
-                AIResponse = updateBuffer.ToString();
             }
             catch (OperationCanceledException) when (manualStopTokenSource.IsCancellationRequested)
             {
@@ -981,23 +1012,18 @@ namespace AspireApp.Web.Components.Pages
                     AIResponse += "\n" + HaltedResponseTag;
                 }
             }
-            catch (OperationCanceledException) when (firstTokenTimeoutTokenSource.IsCancellationRequested)
-            {
-                SetConversationStatus(
-                    "The AI service is still warming up. Your prompt is saved, and you can retry once the model is ready.",
-                    isError: true);
-            }
             catch (OperationCanceledException) when (responseTimeoutTokenSource.IsCancellationRequested)
             {
                 SetConversationStatus(
                     "The AI service took too long to respond. Your prompt is still saved, so you can retry in a moment.",
                     isError: true);
-
-                if (!string.IsNullOrWhiteSpace(AIResponse) &&
-                    !AIResponse.Contains(TimedOutResponseTag, StringComparison.Ordinal))
-                {
-                    AIResponse = $"{AIResponse.TrimEnd()}{Environment.NewLine}{Environment.NewLine}{TimedOutResponseTag}";
-                }
+            }
+            catch (BrainChatException ex)
+            {
+                Console.WriteLine($"BRAIN chat error ({ex.StatusCode}): {ex.Message}");
+                SetConversationStatus(
+                    ex.Message,
+                    isError: true);
             }
             catch (Exception e)
             {
@@ -1012,7 +1038,7 @@ namespace AspireApp.Web.Components.Pages
             if (!string.IsNullOrEmpty(AIResponse))
             {
                 _chatHistory.AddAssistantMessage(AIResponse);
-                await PersistAssistantMessageAsync(AIResponse);
+                await PersistAssistantMessageAsync(AIResponse, chatResponse);
             }
 
             stopwatch.Stop();
@@ -1030,6 +1056,62 @@ namespace AspireApp.Web.Components.Pages
             {
                 _cancellationTokenSource?.Cancel();
             }
+        }
+
+        private void LoadPersistedAssistantResponses(IReadOnlyList<ChatConversationMessageRecord> messages)
+        {
+            _messageEvidence.Clear();
+
+            var assistantIndex = 0;
+            foreach (var message in messages.OrderBy(message => message.Sequence))
+            {
+                if (!string.Equals(message.Role, ChatConversationRoles.Assistant, StringComparison.OrdinalIgnoreCase))
+                {
+                    continue;
+                }
+
+                if (message.AssistantResponse is not null && ShouldTrackAssistantResponseMetadata(message.AssistantResponse))
+                {
+                    _messageEvidence[assistantIndex] = message.AssistantResponse;
+                }
+
+                assistantIndex++;
+            }
+        }
+
+        private IReadOnlyList<ConversationMessage> BuildConversationHistoryForGateway(string currentQuestion)
+        {
+            var messages = _chatHistory
+                .Where(message => message.Role == AuthorRole.User || message.Role == AuthorRole.Assistant)
+                .ToList();
+
+            if (messages.Count == 0)
+            {
+                return [];
+            }
+
+            var latestMessage = messages.LastOrDefault();
+            if (latestMessage?.Role == AuthorRole.User &&
+                string.Equals(latestMessage.Content?.Trim(), currentQuestion.Trim(), StringComparison.Ordinal))
+            {
+                messages.RemoveAt(messages.Count - 1);
+            }
+
+            var startIndex = Math.Max(0, messages.Count - MaxConversationHistoryMessages);
+            return messages
+                .Skip(startIndex)
+                .Select(message => new ConversationMessage(
+                    message.Role == AuthorRole.User ? ChatConversationRoles.User : ChatConversationRoles.Assistant,
+                    message.Content?.Trim() ?? string.Empty))
+                .Where(message => !string.IsNullOrWhiteSpace(message.Content))
+                .ToList();
+        }
+
+        private static bool ShouldTrackAssistantResponseMetadata(BrainChatResponse response)
+        {
+            return response.Confidence > 0 ||
+                   response.Evidence.Count > 0 ||
+                   response.ReasoningSteps.Count > 0;
         }
 
         private async Task CheckOllamaService()

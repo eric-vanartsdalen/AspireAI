@@ -1,0 +1,1 @@
+"""BRAIN pipeline package scaffolding."""

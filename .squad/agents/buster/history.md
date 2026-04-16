@@ -5,9 +5,328 @@
 - **Stack:** C# (.NET 9), Blazor, Minimal API, Python (FastAPI), Neo4j, Ollama, Docker, Aspire
 - **Created:** 2026-02-21T23:32:00Z
 
+## Core Context
+
+**Active Themes (as of 2026-04-15):**
+- **P2-C Vector Infrastructure:** Foundation-first scoping validated; embedding population + retriever wiring in progress
+- **Test Reliability:** Intermittent failures traced to environmental prerequisites (Playwright Chromium) and timing assumptions (Ollama latency variance). Must document setup; test infrastructure hardening in progress
+- **Aspire Orchestration:** Service dependency ordering critical; health checks prevent false-positive startup; environment variable configuration passes across service boundaries cleanly
+- **Document Processing Pipeline:** Background task queuing (fire-and-forget) must preserve status polling; async patterns require explicit event-loop management to avoid starving FastAPI
+
+**Key Technical Decisions:**
+1. Upload processing deferred to background task after response returns (status reporting via polling)
+2. Python background work must not block FastAPI event loop (`asyncio.to_thread()` pattern)
+3. Chat focus state managed via explicit render-time flags, not eager autofocus (prevents rename-typing interference)
+4. Playwright browser installation must be documented as dev prerequisite (not bundled in repo)
+5. Ollama contention serialized (defer LightRAG handoff until Python embedding work complete)
+
+**Working Relationships:**
+- Close collaboration with Jeff on timing/architecture issues
+- Bob drives Phase roadmap and architecture decisions
+- Jarvis handles Python/Neo4j implementation details
+- Eric provides user direction and design intent
+
 ## Learnings
 
 <!-- Append new learnings below. Each entry is something lasting about the project. -->
+
+### 2026-04-16 — Upload/delete Playwright flake was a test seam, not a product regression
+
+**Task:** Reproduce the reported `BasicAspireAppHostTests.DeleteUploadedTestFile` failure (`Navigation target 'Upload Documents' did not become clickable within 30000ms`).
+
+**Key findings:**
+- The failure did **not** reproduce as a stable product bug: `DeleteUploadedTestFile` passed three consecutive reruns before hardening, `FlowEndToEnd` passed, and the protected-route auth slice (`AuthUxFoundationTests.SignedInUserCanReachProtectedAppAreas`) also passed.
+- The brittle seam was the Playwright helper path, not the Upload UI. `BasicAspireAppHostTests` reached `/upload` by clicking the off-canvas `"Upload Documents"` sidebar link through `ClickByRole(...)`, while adjacent tests already used more reliable patterns: direct protected-route navigation (`AuthUxFoundationTests`) or direct mock sign-in with `returnUrl=%2Fupload` (`AuthenticatedUploadUxTests`).
+- For `BasicAspireAppHostTests`, the durable pattern is to enter the upload surface through the mock auth endpoint with `returnUrl=%2Fupload` and wait for tenant/upload controls, instead of asserting that a sidebar link becomes viewport-clickable.
+
+**Validation:**
+- `dotnet test .\src\AspireApp.WebTest\AspireApp.WebTest.csproj --no-build --filter "FullyQualifiedName~AspireApp.WebTest.Tests.BasicAspireAppHostTests.DeleteUploadedTestFile"` ✅
+- `dotnet test .\src\AspireApp.WebTest\AspireApp.WebTest.csproj --no-build --filter "FullyQualifiedName~AspireApp.WebTest.Tests.BasicAspireAppHostTests.FlowEndToEnd"` ✅
+- `dotnet test .\src\AspireApp.WebTest\AspireApp.WebTest.csproj --no-build --filter "FullyQualifiedName~AspireApp.WebTest.Tests.AuthUxFoundationTests.SignedInUserCanReachProtectedAppAreas"` ✅
+
+**Key file paths:**
+- `src\AspireApp.WebTest\Tests\BasicAspireAppHostTests.cs`
+- `src\AspireApp.WebTest\Tests\AuthenticatedUploadUxTests.cs`
+- `src\AspireApp.WebTest\Tests\AuthUxFoundationTests.cs`
+
+**Pattern:**  
+- When Playwright test failures occur, always classify as "test seam" or "product bug" before fixing
+- Use adjacent passing tests as control validation (proof that infrastructure works)
+- Sidebar nav visibility is environment-dependent (animation, viewport). Use hard redirects for upload/chat/tenant tests
+- Direct protected-route entry (`returnUrl=/upload`, `page.GotoAsync("/upload")`) is more stable than sidebar click + link-visibility wait
+
+**Decision merged:** `.squad/decisions.md` — "Direct Protected-Route Sign-In for Upload UI Tests"
+- `src\AspireApp.Web\Components\Layout\NavMenu.razor`
+- `src\AspireApp.Web\Components\Layout\MainLayout.razor`
+
+### 2026-04-16 — Team Sync: Regression Coverage for Conversation Context + Evidence Persistence
+
+**Context:** Jarvis implemented `conversation_history` support. Jeff wired gateway history + metadata persistence. Cross-service alignment proven.
+
+**What I Did:**
+- Added regression coverage proving follow-up requests carry prior turns into backend chat calls
+- Validated that evidence/confidence/reasoning metadata survives persistence and re-renders on conversation reopen
+- Closed focused test slices: gateway history carriage (9/9), metadata round-trip (44/44 .NET), critique mode state persistence (44/44)
+- Verified cross-service contract alignment (Python/C# history shapes match)
+- Identified carry-forward QA gap: E2E browser proof (Playwright/Aspire) for save → hard reload → reopen → citations visible
+
+**Coverage Status:**
+- ✅ Unit-level follow-up context proven (54 Python tests)
+- ✅ Service-level persistence proven (44 .NET tests)
+- ✅ Contract round-trip proven (cross-service serialization)
+- ⏳ E2E browser proof pending (Playwright/Aspire orchestration test)
+
+**Key Patterns Validated:**
+- **Follow-up context:** Prior turns successfully travel through retrieval + generation
+- **Metadata survival:** Evidence/confidence/reasoning persisted and rehydrated on reload
+- **Backward compatibility:** Null history normalized cleanly; older callers unaffected
+- **Chat mode persistence:** Regular ↔ Critique toggle state survives reload
+
+**Carry-Forward Gap:**
+- Honest assessment: All plumbing proven in isolation. Missing: real Playwright browser test that uploads doc → asks question → saves → hard reload → reopen → verify citations/confidence visible
+- Deferred to Phase 3b polish (Playwright Chromium installation not documented in dev prerequisites)
+
+**Key file paths validated:**
+- `src\AspireApp.WebTest\Tests\BrainGatewayPhase2Tests.cs`
+- `src\AspireApp.WebTest\Tests\ChatConversationServiceTests.cs`
+- `src\AspireApp.WebTest\Tests\ChatCritiqueModeTests.cs`
+- `src\AspireApp.PythonServices\tests\test_brain_chat.py`
+- `src\AspireApp.PythonServices\tests\test_critique_pipeline.py`
+
+### 2026-04-15 — Critique mode failures need provider-level and no-retry regression coverage
+
+**Task:** Reproduce the critique-mode 502/api-key failure, validate Jeff/Jarvis fixes, and close the most obvious regression gaps.
+
+**Key findings:**
+- `pydantic-ai==0.0.55` in this repo does **not** expose `OpenAIChatModel` or `pydantic_ai.providers.ollama`; the working Ollama seam uses `OpenAIModel` plus `OpenAIProvider(base_url=f"{OLLAMA_ENDPOINT}/v1", api_key="ollama")` so critique mode does not depend on ambient `OPENAI_API_KEY`.
+- BRAIN gateway/chat POST clients now live behind `AddBrainBackendClient()` and `AddBrainGatewayChatClient()` extension methods, and both explicitly disable retries for unsafe HTTP methods so deterministic critique-mode 503s are surfaced once instead of fanning out into Polly retry noise.
+- Saved conversation coverage needed one more seam: service tests now assert `chat_mode` persistence/normalization, and UI tests now assert switching between saved critique and regular threads flips the radio state correctly after reload.
+
+**Key file paths:**
+- `src\AspireApp.PythonServices\app\brain\reasoning\pydantic_ai_provider.py`
+- `src\AspireApp.PythonServices\tests\test_critique_pipeline.py`
+- `src\AspireApp.WebTest\Tests\BrainGatewayPhase2Tests.cs`
+- `src\AspireApp.WebTest\Tests\ChatConversationServiceTests.cs`
+- `src\AspireApp.WebTest\Tests\ChatCritiqueModeTests.cs`
+- `src\AspireApp.Web\Services\BrainChatClientServiceCollectionExtensions.cs`
+- `src\AspireApp.ApiService\Services\BrainBackendClientServiceCollectionExtensions.cs`
+
+### 2026-04-15 — Upload regression fixes were test-scaffolding, not product regressions
+
+**Task:** Reproduce and fix failing `BasicAspireAppHostTests.FlowEndToEnd` and `FileUploadControllerTests`.
+
+**Key findings:**
+- `src\AspireApp.Web\Controllers\FileUploadController.cs` now queues automatic processing on a fire-and-forget background task after a short delay so the upload response can return with `status="uploaded"` first.
+- `src\AspireApp.WebTest\Tests\FileUploadControllerTests.cs` must poll the fake coordinator for queueing instead of asserting synchronously at controller-return time.
+- `src\AspireApp.WebTest\Tests\BasicAspireAppHostTests.cs` polls the Python `processing/status/{id}` endpoint over a long overall timeout; individual `HttpClient.Timeout` cancellations can happen during cold or busy startup and should be treated as transient inside the polling helper, not as immediate test failure.
+
+**User preference:**
+- Eric explicitly said this repo does **not** use GitHub Issues for this workflow.
+
+**Key file paths:**
+- `src\AspireApp.WebTest\Tests\FileUploadControllerTests.cs`
+- `src\AspireApp.WebTest\Tests\BasicAspireAppHostTests.cs`
+- `src\AspireApp.Web\Controllers\FileUploadController.cs`
+
+### 2026-04-17 — P2-C Vector Infrastructure Review: APPROVED with Honest Foundation-First Status
+
+**Task:** Review P2-C uncommitted working tree changes for correctness and roadmap honesty.
+
+**Verdict:** ✅ **APPROVED** — P2-C foundation work is honestly scoped and correctly claimed.
+
+**What Was Reviewed:**
+1. `AppHost.cs` — Embedding config passed to Python services (OLLAMA_ENDPOINT, EMBEDDING_MODEL, EMBEDDING_DIM)
+2. `neo4j_service.py` — Vector index creation (`_ensure_vector_indexes()`) + search methods (`search_claims_vector()`, `search_pages_vector()`)
+3. `embedding_service.py` — New service with Ollama-first/local-fallback pattern
+4. `test_vector_infrastructure.py` — 11 tests validating infrastructure (all passing)
+5. `roadmap/Tasks.md` — P2-C status updated to "IN PROGRESS" with clear remaining work
+
+**Why This Is Honest:**
+- **Roadmap correctly states "foundation implemented"** — Does NOT claim vector retrieval is live
+- **Clear separation:** Infrastructure (indexes, search helpers, embedding service) vs. population pipeline (not started)
+- **Tests validate infrastructure contracts:** Index creation is idempotent; search methods use correct Neo4j 5.x vector syntax; embedding service consumes Aspire config
+- **Status wording:** "🟡 IN PROGRESS" instead of "✅ COMPLETE" — accurate signal that embedding population + retrieval integration remains
+- **No overclaim:** Tasks.md line 173 explicitly states "Remaining P2-C work: Populate embeddings ... wire vector search into retrievers"
+
+**Specific Validation:**
+- ✅ Vector indexes created with `IF NOT EXISTS` (idempotent, safe on startup)
+- ✅ Search methods use `db.index.vector.queryNodes()` with cosine similarity (Neo4j 5.x syntax)
+- ✅ Embedding dimension configurable via `EMBEDDING_DIM` env var (1024 for bge-m3, 384 for MiniLM fallback)
+- ✅ AppHost wires `OLLAMA_ENDPOINT`, `EMBEDDING_MODEL`, `EMBEDDING_DIM` to Python services
+- ✅ Python service waits for `ollama` and `embeddingmodel` before starting
+- ✅ `EmbeddingService` gracefully handles missing dependencies (returns None instead of crashing)
+- ✅ 11/11 tests pass (`test_vector_infrastructure.py`)
+- ✅ Related tests still pass (28/28 in `test_lightrag_retriever.py`, `test_knowledge_retriever.py`, `test_rag_semantic_search.py`)
+
+**Correctness Checks:**
+- **Config wiring:** `AppHost.cs` correctly retrieves `aiEmbeddings` from `AI-Embedding-Model` parameter, passes to Python via `EMBEDDING_MODEL` env var
+- **Dependency ordering:** Python service correctly waits for both Ollama container AND embedding model resource before starting
+- **Index syntax:** Vector index queries use correct Neo4j 5.x syntax (`CREATE VECTOR INDEX ... IF NOT EXISTS`, `vector.dimensions`, `vector.similarity_function: 'cosine'`)
+- **Dimension consistency:** `EMBEDDING_DIM=1024` matches bge-m3 model output; fallback to 384 for sentence-transformers/MiniLM is documented
+- **Search contract:** `search_claims_vector()` and `search_pages_vector()` return standard result shape (content, confidence, document_id, page_number, relevance_score) compatible with existing retrievers
+
+**No Bugs Found:**
+- No config mismatches
+- No missing dependencies in AppHost wiring
+- No test gaps for infrastructure contracts
+- No overclaims in roadmap wording
+
+**Contrast With Earlier P2-B Review:**
+- **P2-B (2026-11-02):** Rejected for overclaiming "done" when blocker existed (confidence scoring gap)
+- **P2-C (2026-04-17):** Approved because roadmap honestly says "foundation complete, population pending"
+- **Key difference:** P2-C uses "🟡 IN PROGRESS" with explicit remaining work list; P2-B marked items "[x] done" without flagging blockers in the section
+
+**What This Proves:**
+- Vector index infrastructure is ready for embedding population
+- Search methods are tested and will work when embeddings exist
+- AppHost correctly wires embedding config to Python services
+- Team can proceed with embedding population pipeline in parallel with Phase 3 agent work
+
+**What This Does NOT Prove:**
+- That embeddings are actually populated in Neo4j (explicitly deferred)
+- That vector search is integrated into retrievers (explicitly deferred)
+- That vector retrieval returns better results than text search (Phase 4 evaluation work)
+
+**Key Learning:**
+- **Foundation-first pattern works well:** Implementing infrastructure (indexes, helpers, config) before population pipeline enables parallel work and validates contracts early
+- **Honest "IN PROGRESS" status:** Roadmap correctly signals partial completion instead of false "done" — builds trust and prevents confusion
+- **Test-driven infrastructure:** All vector index and search methods validated without requiring live embeddings — proves correctness of contracts before integration
+
+**Related Files:**
+- `src/AspireApp.AppHost/AppHost.cs` (lines 145-157: embedding config wiring)
+- `src/AspireApp.PythonServices/app/services/neo4j_service.py` (lines 51-96: vector indexes; lines 418-505: vector search)
+- `src/AspireApp.PythonServices/app/services/embedding_service.py` (new file: Ollama-first/local-fallback embedding service)
+- `src/AspireApp.PythonServices/tests/test_vector_infrastructure.py` (new file: 11 tests)
+- `roadmap/Tasks.md` (lines 170-178: P2-C status update)
+
+### 2026-04-14 — P2-B Live Proof: Confidence Validation via Aspire Integration Test
+
+**Task:** Create live validation proof for the next Knowledge Layer slice (P2-B confidence-enrichment).
+
+**What I Did:**
+- Added `BasicAspireAppHostTests.BrainQueryReturnsConfidenceEnrichedResults` — a Priority(2) live proof that uploads a document, waits for processing + LightRAG ingestion, then queries `/brain/query` and asserts results for the uploaded document do NOT carry DEFAULT_CONFIDENCE (0.5).
+- Updated `roadmap/Tasks.md` to reflect that live proof now exists but implementation remains incomplete.
+- Test currently scaffolds the expected behavior; will FAIL until Jarvis implements confidence-enrichment in `LightRagRetriever`.
+
+**Why This Matters:**
+- **Honest proof before implementation:** Test defines what "done" means for P2-B without pretending the feature is already complete.
+- **Minimal addition to existing test suite:** Leverages the same upload → process → query workflow as `LiveLightRagNeo4jQueryRoundTrip`, adding only the confidence assertion.
+- **Clear blocker signal:** Test will fail until confidence-enrichment logic is added; failure message will pinpoint exactly which results have placeholder scores.
+
+**What This Test Proves:**
+- `/brain/query` results for uploaded documents have real confidence values (not 0.5 default).
+
+**What This Test Does NOT Prove:**
+- That confidence values are *accurate* or *calibrated* (that's Phase 4 evaluation work).
+- That all confidence-scoring paths work (only validates uploaded-document retrieval path).
+- That semantic fallback confidence works (already covered by `test_knowledge_retriever.py`).
+
+**Coordination Notes:**
+- Test uses existing `WaitForKnowledgeQueryResultAsync` helper, filters results to uploaded document via source_refs, and asserts Confidence != 0.5.
+- No new test infrastructure required; integrates cleanly with Priority ordering.
+- Marked with `[Trait("Category", "P2-B")]` for easy filtering during focused P2-B work.
+
+### 2026-11-02 — REJECT: Tasks.md Overstates Completion & Masks P2-B Blocker
+
+**Task:** Review Tasks.md against actual code/tests. Verdict: **REJECT**—roadmap marks items done that are incomplete or are misleading about completion state.
+
+**Specific Findings:**
+
+1. **Line 172 is MISLEADING**
+   - Claim: "Wire Gateway `POST /brain/query` to the current Python knowledge seam ... confirmed via `BrainGatewayPhase2Tests.QueryKnowledgeAsync_MapsContractShapedKnowledgeResult_FromPythonQueryRoute`"
+   - Reality: Test **exists and passes**, BUT endpoint maps to `/rag/query` (Python), NOT a finalized Brain gateway layer. Test verifies HTTP contract only, not production readiness.
+   - Impact: Suggests Phase 2 gateway wiring is done; in fact, gateway is only a stub that delegates to Python. No Brain-layer orchestration yet.
+
+2. **Line 176 + 182 are INCOMPLETE**
+   - Claims semantic fallback "must supply real confidence values" but code still has `DEFAULT_CONFIDENCE = 0.5` (line 14 of retrievers.py)
+   - Test `test_lightrag_retriever_falls_back_to_response_text()` confirms this: expects 0.5 when no score provided
+   - Tasks.md correctly marks P2-B as **Blocked** (line 294), but the "Knowledge Layer" section (line 169–174) marks semantic retriever as `[x] done` without flagging the blocker.
+   - **This is a documentation mismatch:** Marked done but blocked.
+
+3. **Line 169 is INCOMPLETE**
+   - Claim: "Implement `BrainKnowledgeRetriever` ... delivers ... full graph traversal, vector scoring, and confidence extraction"
+   - Reality: `BrainKnowledgeRetriever` **only does LightRAG-first + Neo4j fallback**, NOT graph traversal, vector scoring, or confidence extraction. Those are deferred to Validation Layer.
+   - Lines 169–170 are confusing: mark as done but then line 169 parenthetically admits core features are deferred.
+
+4. **Line 167–168 (Neo4j Schema) is INCOMPLETE**
+   - Tasks.md marks as `[ ]` (not started), correctly. No Claim/Evidence/Concept/Entity nodes in schema.
+   - However, this directly blocks P2-B and P2-C (lines 295–296), which are also marked Blocked.
+   - **Good:** Schema tasks are correctly marked incomplete. **Bad:** Blocked status for P2-B/P2-C not in milestone table as "why blocked."
+
+5. **Line 242 (P1 Carry-Forward) is OVERSTATED**
+   - Claim: "Covered by `BasicAspireAppHostTests.LiveLightRagNeo4jQueryRoundTrip`"
+   - Reality: No test by that name exists in provided artifacts. Likely renamed or removed. Tasks.md references a non-existent test as proof of completion.
+   - **Action needed:** Verify if this test exists; if not, remove claim.
+
+6. **Missing in Phase 2 Section: Validation Layer NOT Started**
+   - Lines 178–184 list "Validation Layer (Basic)" as phase 2, but all items are `[ ]` (not started).
+   - Yet line 294 (P2-B gate) says "Blocked — Requires Validation Layer." This is correct but **Tasks.md does not clearly state that Validation Layer work is a Phase 2 blocker, not a later phase task.**
+   - Reader looking at Phase 2 might assume Validation is Phase 3+; in fact, it's Phase 2 and blocks P2-B.
+
+**Summary of What's Actually Done (Per Code):**
+- ✅ Contracts defined (Phase 1)
+- ✅ Python retrievers implemented (LightRAG + semantic + Brain orchestration wrapper)
+- ✅ Gateway routes mapped (stub endpoints)
+- ✅ Integration tests verify HTTP contract (BrainGatewayPhase2Tests)
+- ✅ Default confidence fallback coded (but explicitly NOT production-ready)
+- ❌ Validation Layer (claim extraction, contradiction detection, confidence scoring) NOT started
+- ❌ Semantic fallback does not emit real confidence scores (still 0.5 default)
+- ❌ Neo4j schema not extended with Claim/Evidence/Concept/Entity nodes
+- ❌ Vector indexes not created
+- ❌ No graph traversal or confidence extraction implemented
+
+**The Blocker is Real:**
+- P2-B gate correctly identifies that semantic fallback must emit real confidence.
+- This REQUIRES Validation Layer (Claim extraction + evidence scoring).
+- Validation Layer is listed in Phase 2 but marked as not started.
+- **Tasks.md should flag this more explicitly: Phase 2 cannot close until Validation Layer begins and supplies confidence-aware storage.**
+
+**Verdict:**
+✅ **REJECT** — Tasks.md contains:
+1. Misleading claims about gateway wiring (overstates what tests prove).
+2. Confusing mixed signals on semantic retriever (marked done, but blocker not highlighted in section).
+3. Non-existent test reference (BasicAspireAppHostTests.LiveLightRagNeo4jQueryRoundTrip).
+4. Missing clarification that Validation Layer is a Phase 2 blocker, not a later phase task.
+
+**Action:** Correct roadmap before next commit. Clarify:
+- Line 172: "HTTP contract verified; production gateway orchestration pending Phase 2–3 checkpoint."
+- Line 169–174: Separate "retriever interface done" from "confidence scoring & graph traversal deferred to Validation Layer."
+- Line 178–184: Explicitly flag "Validation Layer blocks P2-B gate; must start Phase 2 before P2-B closure."
+- Verify/remove non-existent test reference (line 242).
+
+---
+
+### 2026-04-15 — Phase 1 Validation: Contract Parity ≠ Pipeline Completion
+
+**Clarified:**
+
+- Phase 1 gates are **contract readiness** only: definitions and serialization parity across C# ↔ Python.
+- Phase 1 is NOT blocked by pipeline incompleteness (ingestion, query, storage, retrieval).
+- Tests will fail when exercising Phase 2+ paths; these are expected failures, not Phase 1 gate failures.
+
+**Key distinction:**
+- **Phase 1-A gate:** Contract models exist, compile, have all required fields, types match (e.g., `datetime` ↔ `DateTime`)
+- **Phase 1-B gate:** Serialization round-trip test passes (Python → JSON → C# → JSON → Python)
+- **NOT P1 failures:** Integration test fails because ingestion service incomplete (Phase 2), query returns empty (Phase 2+), Neo4j empty (Phase 2+)
+
+**Implementation for Buster:**
+- Write contract definition unit tests (model instantiation, field presence, type correctness)
+- Write serialization unit tests (round-trip fidelity, JSON schema validation, DateTime formatting)
+- Skip integration tests that depend on Phase 2+ pipeline work
+- Use failure triage matrix: contract issues = P1 failure, pipeline issues = expected, skip for now
+
+**Test failure categories for P1:**
+| Symptom | P1 Action |
+|---------|-----------|
+| "Model not found" or "import fails" | FAIL (fix contract definition) |
+| "JSON key mismatch" or "type conversion fails" | FAIL (fix serialization) |
+| "Document not stored" or "query returns empty" | SKIP (expected until Phase 2+) |
+
+**Related decision:** `.squad/decisions/inbox/buster-phase1-contract-gate-clarification.md` (recorded for Scribe merge)
+
+**Key insight:** Contracts are the proof-of-concept for service integration design. Validate contract parity without waiting for full pipeline. Once contracts are locked, the pipeline work (Phase 2+) can proceed in parallel with confidence that the wire format is stable.
+
+---
 
 ### 2026-04-11 — Chat Privacy Browser Tests Must Decouple Persistence From Assistant Latency
 
@@ -28,6 +347,48 @@
 - `src\AspireApp.WebTest\Tests\ChatConversationServiceTests.cs`
 - `src\AspireApp.Web\Components\Pages\Chat.razor.cs`
 - `src\AspireApp.WebTest\Fixtures\TestFixture.cs`
+
+---
+
+### 2026-04-22 — REJECT: Critique-Mode Tests Fail to Compile — RemoveAll Pattern Not Supported by Bunit
+
+**Task:** Validate the final state of Jeff's Critique-mode UI implementation.
+
+**Verdict:** ❌ **REJECT** — Tests do not compile. Product layer implementation appears complete, but test infrastructure has a critical error.
+
+**Issue Found:**
+- `ChatCritiqueModeTests.cs` line 377 uses `testContext.Services.RemoveAll(typeof(IChatConversationService))` which does not exist in Bunit's `BunitServiceProvider`.
+- Bunit does not support replacing services after test context creation.
+- The test `ExistingConversation_LoadsWithStoredChatMode()` attempts to replace the service registered by `CreateTestContext()` but cannot.
+
+**Build Error:**
+```
+error CS1061: 'BunitServiceProvider' does not contain a definition for 'RemoveAll' and no accessible extension method 'RemoveAll' accepting a first argument of type 'BunitServiceProvider' could be found
+```
+
+**What Was Working:**
+- ✅ Chat.razor has critique toggle at line 935-943 (enabled, not disabled)
+- ✅ Reasoning steps render with proper test IDs (`chat-reasoning-panel`, `chat-reasoning-step`)
+- ✅ Mode selection wired to `SelectedChatMode` property
+- ✅ Other critique tests structurally valid (except line 377)
+
+**Root Cause:**
+- Test pattern mismatch: Other tests register all services **before** rendering via `CreateTestContext()`.
+- `ExistingConversation_LoadsWithStoredChatMode()` tries to replace a service **after** `CreateTestContext()` returns, which requires `RemoveAll()` — not available in Bunit.
+
+**Required Fix:**
+1. Option A: Refactor `CreateTestContext()` to accept optional service overrides (preferred pattern).
+2. Option B: Create separate test context factory for tests needing custom conversation services.
+3. Option C: Remove the failing test if not critical path.
+
+**File Requiring Revision:**
+- `src\AspireApp.WebTest\Tests\ChatCritiqueModeTests.cs` line 377
+
+**Reviewer Decision:**
+This is a **compilation blocker**. Cannot validate critique-mode UI behavior when test suite won't build. Jeff's product code appears correct from inspection, but tests must compile before validating runtime behavior.
+
+**Next Step:**
+Jeff or another agent must fix the test infrastructure pattern before this work can be approved.
 
 ---
 
@@ -445,6 +806,42 @@
 **Pattern:** Tenant_id is a schema concern. Multi-tenancy is implemented via column, indexes, and optional query filtering. Authentication (which tenants you're allowed to see) is Phase 6. This slice closes the infrastructure gap for data isolation.
 
 **Verdict:** ✅ **APPROVED** — Data layer is coherent, protected by validation, ready for UI implementation.
+
+---
+
+## Core Context
+
+> This section summarizes key learnings from Phase 0 & early Phase 1 (before 2026-04-01).
+> Full details are below; these notes capture the essential patterns and decisions.
+
+### Phase 0 & Early Phase 1 Summary (Entries before 2026-04-01)
+
+- **Document ingestion pipeline verified:** Docling extraction → Neo4j storage → Chat retrieval works end-to-end
+- **Aspire orchestration smoke-tested:** All services start, health-check passing, logs accessible via dashboard
+- **Test infrastructure scaffolded:** Upload controller, file storage, coordinator patterns established; async dispatch model in place
+- **Multi-tenancy foundation:** Tenant isolation via columns + indexes; auth layer deferred to Phase 6
+- **Local auth slice approved:** Mock provider pattern with pluggable factory; tests verify sign-in/sign-out flows
+- **Vector infrastructure foundation (P2-C):** Neo4j indexes created, embedding service pattern established; population pipeline deferred
+- **Python processing patterns:** Docling, Neo4j, embedding calls; event loop management critical to responsiveness
+- **Test QA discipline:** Chat persistence requires owner message + visibility seam; confidence enrichment requires fail-closed behavior; live tests deferred
+
+### Key Decision Patterns
+
+1. **Fire-and-forget async patterns:** Upload queues processing but returns immediately with `status="uploaded"`; tests must poll dispatch instead of asserting sync completion
+2. **Test scaffolding alignment:** Test assumptions (esp. timeouts, retries) must match implementation semantics; transient failures during cold startup are retryable
+3. **Event loop discipline:** FastAPI background tasks must keep event loop responsive; sync-heavy work moves to thread pool
+4. **Honest roadmaps:** Mark items "foundation-only" when infrastructure is ready but population/integration pipelines remain
+5. **Fail-closed confidence:** Return None rather than synthetic defaults; downstream consumers handle missing data
+
+### Outstanding Items (Tracked in Phase 1+)
+
+- **BRAIN pivot recording:** Complete; decision-recording gate closed 2026-04-14
+- **P2-B confidence gate:** Closed 2026-04-17 (fail-closed behavior verified)
+- **P2-C embedding population:** Blocked on time; infrastructure foundation ready for Phase 2+
+- **Phase 3 agent selection:** Decision deadline 2026-04-24 (BLOCKING gate for Phase 2→3 transition)
+- **Docker validation:** Caveat noted as outstanding quality gate (not blocking Phase 1 parallel work)
+
+---
 
 ### 2026-03-28 — Docling Smoke Gate Alignment (QA Audit Complete)
 
@@ -1038,3 +1435,579 @@ The behavior being tested (legacy schema detection with detailed diagnostics) st
 - Session logged: .squad/log/2026-04-11T17-53-25-auth-test-fixes.md
 
 ---
+
+### 2025-11-02: Phase 2 Knowledge Layer Review
+
+**Reviewed:** Jarvis's Phase 2-B Knowledge Layer implementation slice
+
+**Key Files:**
+- `src/AspireApp.PythonServices/app/brain/knowledge/retrievers.py` - Retrieval orchestration
+- `src/AspireApp.PythonServices/app/services/neo4j_service.py` - Neo4j query layer with claim support
+- `src/AspireApp.PythonServices/app/services/claim_extraction_service.py` - Claim extraction logic
+- `src/AspireApp.PythonServices/app/routers/processing.py` - Processing pipeline
+- `src/AspireApp.PythonServices/tests/test_claim_extraction.py` - Unit tests (5/5 passing)
+- `src/AspireApp.PythonServices/tests/test_knowledge_retriever.py` - Integration tests (10/10 passing)
+
+**Testing Verdict:**
+1. ✅ **Semantic fallback confidence fixed** - `SemanticKnowledgeRetriever.retrieve()` now queries Neo4j `search_claims()` first (returns `cl.confidence`), then falls back to `search_similar_content()` which returns `d.source_confidence`. No more hardcoded `DEFAULT_CONFIDENCE=0.5` when Neo4j data exists.
+   - Validated by `test_semantic_retriever_uses_real_source_confidence_from_neo4j()` - passes with 0.9 confidence from Neo4j
+   - Validated by `test_semantic_retriever_queries_claims_before_pages()` - confirms claim-first query order
+
+2. ❌ **Claims NOT persisted end-to-end** - `ClaimExtractionService` exists and is unit-tested (5/5 passing), BUT:
+   - `processing.py:process_document_task()` does NOT call `ClaimExtractionService.extract_claims()`
+   - `processing.py` does NOT call `neo4j_service.create_claim_nodes()` after page creation
+   - Claims are **scaffolded and tested in isolation only** - no live pipeline integration
+   - Real queries against Neo4j will hit empty `Claim` nodes and fall back to `Page` nodes every time
+
+3. ⚠️ **Roadmap status overstates P2-B progress** - Tasks.md line 184 says "P2-B can advance once basic claim extraction is wired into the ingestion pipeline" but also marks semantic fallback as `[x]` complete. The actual blocker (wiring claim extraction into `processing.py`) is still open at line 193.
+
+**Architecture Notes:**
+- `SemanticKnowledgeRetriever` correctly implements claim-first strategy - code is production-ready
+- `ClaimExtractionService` uses simple sentence-splitting heuristics (good for Phase 2 baseline)
+- Neo4j schema constraints for `Claim` nodes exist and are enforced at startup
+- Test coverage on retrieval layer is excellent (claim fallback, empty result handling, confidence propagation)
+
+**Blockers for P2-B Gate:**
+- **CRITICAL:** Wire claim extraction into `processing.py:process_document_task()` after line 76 (page node creation)
+- Add call: `claim_extraction_service.extract_claims(page.content, source_confidence=canonical_document.source_confidence)`
+- Add call: `neo4j_service.create_claim_nodes(claims, page_node_id, document_id, page_number)` for each page
+- Add integration test validating live claim persistence through full pipeline
+
+**Quality Standard:** If it's not tested end-to-end with real data flow, it doesn't work. The retrieval layer is solid, but claims are phantom infrastructure until the pipeline populates them.
+
+**Decision Document:** `.squad/decisions/inbox/buster-p2b-knowledge-layer-verdict.md`
+
+
+### 2026-04-14 — Test Failure Triage: Upload Status Race Condition + Python Processing Timeouts
+
+**Task:** Investigate 6 failing tests reported by user. Group by root cause and identify .NET vs Python issues.
+
+**Test Failures Reproduced:**
+
+1. ✅ **AuthenticatedUploadUxTests.SignedInTenantScopedUserCanUploadDocumentWithoutAuthenticationError** 
+   - **Error:** Expected status "uploaded", actual "processing"
+   - **Line:** AuthenticatedUploadUxTests.cs:82
+   
+2. ✅ **OperationalUploadStoreTests.UploadApiPersistsMetadataToPostgres**
+   - **Error:** Expected status "uploaded", actual "processing"
+   - **Line:** OperationalUploadStoreTests.cs:75
+
+3. ✅ **BasicAspireAppHostTests.LiveLightRagNeo4jQueryRoundTrip**
+   - **Error:** TaskCanceledException - HttpClient.Timeout of 30 seconds in PollForProcessingCompletionAsync
+   - **Line:** BasicAspireAppHostTests.cs:1418 (during polling), called from line 319
+
+4. ❌ **BasicAspireAppHostTests.BrainQueryReturnsConfidenceEnrichedResults**
+   - **Error:** Test host process crashed (likely timeout during Python processing poll)
+   - **Line:** Test doesn't reach assertion; crashes during setup/processing at line 391
+
+5. ❌ **BasicAspireAppHostTests.FlowEndToEnd**
+   - **Error:** Test host process crashed (likely timeout during Python processing poll)
+   - **Line:** Test doesn't reach assertion; crashes during setup/processing at line 273
+
+6. ✅ **ChatConversationPersistenceTests.SignedInUserCanSaveRenameResumeAndDeleteConversation**
+   - **Status:** PASSED (not a failure; user misreported or stale run)
+
+**Root Cause Analysis:**
+
+**GROUP 1: Upload Status Race Condition (.NET-side)**
+- Tests: AuthenticatedUploadUxTests, OperationalUploadStoreTests
+- **Defect:** Tests expect immediate "uploaded" status after file upload completes, but system now transitions to "processing" automatically
+- **Location:** .NET FileUploadController or FileStorageService changes upload workflow to trigger background processing immediately
+- **Impact:** Test assumptions are stale; tests written when uploads stayed in "uploaded" state until manual trigger
+- **Not a bug:** System behavior likely changed intentionally to auto-start processing; tests need updating to accept "processing" as valid post-upload state
+
+**GROUP 2: Python Processing Timeout (Python-side or Infrastructure)**
+- Tests: LiveLightRagNeo4jQueryRoundTrip, BrainQueryReturnsConfidenceEnrichedResults, FlowEndToEnd
+- **Defect:** PollForProcessingCompletionAsync times out waiting for Python service to mark document as "processed"
+- **Location:** Python processing pipeline (document ingestion, Neo4j graph creation, artifact generation)
+- **Evidence:**
+  - HttpClient.Timeout of 30s exceeded during status polling
+  - ProcessingPollTimeout = 2 minutes should be adequate, but timeouts occur at HTTP client level (30s default)
+  - Test host crashes suggest hung Python service or database lock preventing processing completion
+- **Possible Causes:**
+  1. Python service stuck waiting on Neo4j (lock, connection timeout)
+  2. Document processing logic enters infinite loop or resource starvation
+  3. Processing status endpoint not updating status field in database
+  4. Shared database file (SQLite) locked by concurrent writes from .NET upload + Python processing
+
+**TRIAGE SUMMARY:**
+
+| Group | Root Cause | Affected Component | Test Count | Severity |
+|-------|-----------|-------------------|------------|----------|
+| 1 | Upload status race | .NET upload flow | 2 | Low (test fix) |
+| 2 | Python processing timeout | Python service or DB | 3 | High (system hang) |
+
+**Recommendations:**
+
+1. **GROUP 1 (Test Fix):** Update test assertions to accept "processing" as valid post-upload status
+   - Change: Assert.Equal("uploaded", ...) → Assert.Contains(..., new[] {"uploaded", "processing"})
+   - Owner: Buster (test-only fix)
+
+2. **GROUP 2 (System Investigation):** Requires Jeff or Jarvis to diagnose Python processing hang
+   - Check Python service logs for stuck processing jobs
+   - Verify Neo4j connection pool not exhausted
+   - Review SQLite concurrent write handling (WAL mode enabled?)
+   - Confirm Python background worker is running and picking up jobs
+   - Owner: Jarvis (Python) or Jeff (.NET orchestration)
+
+**Files Reviewed:**
+- src/AspireApp.WebTest/Tests/AuthenticatedUploadUxTests.cs
+- src/AspireApp.WebTest/Tests/OperationalUploadStoreTests.cs
+- src/AspireApp.WebTest/Tests/BasicAspireAppHostTests.cs (lines 231-290, 384-425, 1409-1458)
+- src/AspireApp.WebTest/Tests/ChatConversationPersistenceTests.cs
+
+**Next Steps:**
+- Do NOT implement feature fixes for GROUP 2 (requires Jarvis/Jeff)
+- Safe to fix GROUP 1 tests if user authorizes test-only changes
+- Monitor for shared defect: If Python processing never completes, GROUP 1 tests will also eventually fail on waiting for processed status
+
+
+### 2026-04-15 — Post-Fix Test Audit: P2-B Confidence & Upload Fire-and-Forget Changes
+
+**Task:** Re-run historical failing test slice after Jarvis (Neo4j confidence enrichment), Bob (Ollama contention fix), and Jeff (upload fire-and-forget) changes.
+
+**Test Results (6 targeted tests):**
+
+✅ **PASSING (3/6):**
+- ChatConversationPersistenceTests.SignedInUserCanSaveRenameResumeAndDeleteConversation
+- OperationalUploadStoreTests.UploadApiPersistsMetadataToPostgres  
+- AuthenticatedUploadUxTests.SignedInTenantScopedUserCanUploadDocumentWithoutAuthenticationError (after expectation update)
+
+❌ **FAILING (3/6):**
+- BasicAspireAppHostTests.FlowEndToEnd — HttpClient timeout in PollForProcessingCompletionAsync (30s limit)
+- BasicAspireAppHostTests.BrainQueryReturnsConfidenceEnrichedResults — LightRAG pipeline stuck in busy state (timeout after 120s)
+- BasicAspireAppHostTests.LiveLightRagNeo4jQueryRoundTrip — Query returns empty results
+
+**AuthenticatedUploadUx Fix:**
+Jeff's fire-and-forget upload change caused immediate status transition from "uploaded" → "processing". Updated test expectation from strict Assert.Equal("uploaded") to Assert.True(status == "uploaded" || status == "processing") to accommodate asynchronous processing start.
+
+**Root Cause — LightRAG Processing Deadlock:**
+All three BasicAspireAppHost failures share a common symptom: **LightRAG pipeline gets stuck in busy state and never completes processing**. Test evidence:
+- Pipeline status remains {busy: true} for 120+ seconds
+- Processing never transitions to "processed" status
+- Knowledge queries return empty results (documents never make it into the graph)
+
+**Smoking Gun:**
+- BrainQueryReturnsConfidenceEnrichedResults timeout message shows LightRAG stuck with: "busy":true,"job_name":"000001-processing-sm...[1 files]","latest_message":"Processing d-id: doc-c02e43dc0ea33f0638d99df2dfa48834"
+- The document ID is captured, processing started, but never finishes
+
+**Likely Culprit:**
+Bob's Ollama contention fix moved LightRAG handoff after page/claim embedding work in processing.py (lines 165-169). While this prevents concurrent Ollama saturation, it may have introduced a **handoff timing or dependency issue** that blocks the LightRAG pipeline from completing.
+
+**Test File Paths:**
+- src\AspireApp.WebTest\Tests\AuthenticatedUploadUxTests.cs (line 82 — expectation updated)
+- src\AspireApp.WebTest\Tests\BasicAspireAppHostTests.cs (FlowEndToEnd, BrainQuery, LiveLightRag tests)
+- src\AspireApp.WebTest\Tests\OperationalUploadStoreTests.cs (passing)
+- src\AspireApp.WebTest\Tests\ChatConversationPersistenceTests.cs (passing)
+
+**Product Code Suspect:**
+- src\AspireApp.PythonServices\app\routers\processing.py (lines 165-169 — LightRAG handoff moved post-embedding)
+- src\AspireApp.PythonServices\app\services\lightrag_handoff_service.py (handoff implementation)
+- src\AspireApp.PythonServices\app\brain\knowledge\retrievers.py (LightRAG retriever initialization)
+
+**Verdict:** 
+✅ Jeff's upload changes validated (2/2 upload-related tests passing after expectation fix)
+❌ **REJECT Bob's Ollama contention fix** — LightRAG handoff deadlock blocks all document processing end-to-end flows
+❌ **REJECT Jarvis's confidence enrichment integration** — Cannot verify confidence enrichment because documents never complete processing due to LightRAG deadlock
+
+**Next Revision Owner:**
+**Bob** must revise the Ollama contention mitigation strategy. The current approach (defer LightRAG until after embedding) prevents saturation but creates a **processing completion blocker**. Alternative approaches:
+1. Restore original handoff timing + add Ollama request throttling/queuing
+2. Investigate why deferred LightRAG handoff doesn't complete (timeout? deadlock? missing status update?)
+3. Make LightRAG handoff truly fire-and-forget with separate completion tracking
+
+**Confidence:**
+High — Three independent test failures all exhibit the same LightRAG stuck-in-busy symptom. This is a systematic processing pipeline failure, not flaky test behavior.
+
+
+---
+
+### 2026-04-15 — Fixed Upload/E2E Test Failures: Async Dispatch and Event Loop Starvation
+
+**Task:** Reproduce and fix failing BasicAspireAppHostTests.FlowEndToEnd and FileUploadControllerTests.
+
+**Status:** ✅ COMPLETE — 8/8 tests passing
+
+**Root Causes Identified:**
+1. **Test Assumption Mismatch:**
+   - Tests expected synchronous completion; app uses fire-and-forget background processing
+   - FileUploadController.UploadFile() now queues automatic processing on a delayed task after the upload response returns with status="uploaded"
+   - FileUploadControllerTests must poll background queue dispatch instead of asserting sync completion
+
+2. **Python Event Loop Starvation (Jeff's fix):**
+   - BasicAspireAppHostTests.FlowEndToEnd was timing out while polling GET /processing/status/{id}
+   - Python process_document_task was sync-heavy (Docling extraction, Neo4j writes, embedding) on the FastAPI event loop
+   - Status polling requests hit client timeouts during busy processing
+   - Jeff moved heavy work to thread-pool via syncio.to_thread(...), restored event loop responsiveness
+
+**Test Updates:**
+- FileUploadControllerTests: Changed to poll coordinator for background queue dispatch with reasonable waits
+- BasicAspireAppHostTests: Treat transient HttpClient.Timeout during status polling as retryable within overall processing window (don't fail immediately)
+
+**Decisions Captured:**
+1. "Upload test scaffolding must respect async dispatch" — Buster
+2. "Keep Python processing off the FastAPI event loop" — Jeff
+3. "Do not use GitHub Issues for this repo" — Eric (directive)
+
+**Key Files:**
+- src\AspireApp.Web\Controllers\FileUploadController.cs
+- src\AspireApp.WebTest\Tests\FileUploadControllerTests.cs
+- src\AspireApp.WebTest\Tests\BasicAspireAppHostTests.cs
+- src\AspireApp.PythonServices\app\routers\processing.py (Jeff's fix)
+
+**Validation:** dotnet test ... --filter "FullyQualifiedName~BasicAspireAppHostTests.FlowEndToEnd|FullyQualifiedName~FileUploadControllerTests" — **8/8 passed**
+
+**Lessons:**
+- Async dispatch patterns require test-time understanding of fire-and-forget semantics, not just implementation details
+- FastAPI event loop can be easily starved by sync-heavy background tasks; always move heavy work to thread pool
+- Transient timeouts during service startup should be retryable, not fatal
+
+### 2026-04-15 — ChatConversationPersistenceTests Pass After Playwright Installation
+
+**Task:** Diagnose reported failure in `ChatConversationPersistenceTests.SignedInUserCanSaveRenameResumeAndDeleteConversation`.
+
+**Root Cause:** Missing Playwright browser binaries — not a test logic or UI regression.
+
+**What Happened:**
+- Test crashed with `Microsoft.Playwright.PlaywrightException : Driver not found`
+- Missing file: `C:\Users\ericv\source\repos\eric-vanartsdalen\AspireAI\src\AspireApp.WebTest\bin\.playwright\node\win32_x64\node.exe`
+- This is a **local environment issue**, not a code defect
+
+**Resolution:**
+1. Installed Playwright CLI: `dotnet tool update --global Microsoft.Playwright.CLI`
+2. Installed Chromium browser: `playwright install chromium`
+3. Test now passes in 107 seconds (chat conversation save, rename, resume, delete workflow validated)
+
+**Key Learning:**
+- Playwright browser binaries are **not** committed to the repository
+- After a fresh clone or environment change, must run `playwright install chromium` before running Playwright tests
+- This is standard Playwright behavior — not an AspireAI-specific issue
+
+**Test Validation:**
+- ✅ User signs in via mock authentication
+- ✅ Chat prompt sent and conversation auto-titled
+- ✅ Conversation renamed successfully
+- ✅ New conversation started (isolation verified)
+- ✅ Original conversation resumed with correct history
+- ✅ Follow-up message appended to correct conversation
+- ✅ Conversation deleted from sidebar
+
+**No Code Changes Required:**
+- Test logic is correct
+- Recent chat UI changes (mode selector, evidence display) did NOT break this test
+- Auth session establishment works correctly
+- Conversation persistence behavior is correct
+
+**Related Context:**
+- User context mentioned recent chat UI changes and prior auth UX regressions
+- This failure was purely environmental (missing browser binaries), not related to recent code changes
+- Prior learnings about hard navigation after sign-in and mock sign-in helpers remain valid but were not the issue here
+
+**Key File Paths:**
+- `src\AspireApp.WebTest\Tests\ChatConversationPersistenceTests.cs`
+- `src\AspireApp.WebTest\Fixtures\TestFixture.cs`
+
+
+
+## 2026-04-15T17-41-59 — Chat Persistence Test Investigation & Orchestration Merge (Scribe collaboration)
+
+**Role:** QA investigator (ChatConversationPersistenceTests diagnosis)
+**Outcome:** No product defect; environmental + timing issues identified
+**Output:** 
+- Diagnosed missing Playwright Chromium as test blocker
+- Test scenario passed after local browser install  
+- Collaborated with Jeff on timing race analysis (90s vs 180s AI timeout)
+- Determined issue is test infrastructure, not product code
+- Contributed to merged decision log
+
+**Learning:** Intermittent test failures often have environmental prerequisites; Playwright browser setup must be documented in dev prerequisites.
+
+**Files:** 
+- .squad/orchestration-log/2026-04-15T17-41-59-buster.md (session log)
+- .squad/decisions/inbox/buster-*.md → merged to decisions.md
+
+
+### 2026-04-22 — Critique-Mode UI/Product Test Coverage Created (Phase 3b Product Layer)
+
+**Task:** Add test coverage for Critique-mode UI/product behavior: toggle enablement, mode selection wiring, reasoning/progress rendering, and Regular mode regression.
+
+**What Was Delivered:**
+- Created `src\AspireApp.WebTest\Tests\ChatCritiqueModeTests.cs` with 8 comprehensive tests covering:
+  1. Critique toggle enabled after product implementation
+  2. Mode selection updates component state
+  3. Mode propagates to `BrainChatClient.ChatAsync` (both critique and regular)
+  4. Reasoning steps render with tool/result details
+  5. Regular mode doesn't render reasoning panel
+  6. Progress details visible in reasoning steps
+  7. Mode hint text changes based on selection
+  8. Existing conversations load with stored chat mode
+
+**Coverage Strategy:**
+- **Toggle Enablement:** `CritiqueToggle_IsEnabled_AfterProductLayerImplementation` validates the `disabled` attribute is removed from the critique radio button
+- **Mode Wiring:** `SendingMessage_InCritiqueMode_PassesCritiqueModeToClient` and `SendingMessage_InRegularMode_PassesRegularModeToClient` prove selected mode reaches the gateway
+- **Reasoning Rendering:** `CritiqueResponse_WithReasoningSteps_RendersReasoningPanel` validates reasoning step display with step/reasoning/tool/result details
+- **Regular Mode Regression:** `RegularResponse_WithoutReasoningSteps_DoesNotRenderReasoningPanel` ensures Regular mode unchanged
+- **Progress Details:** `CritiqueMode_RendersProgressDetails_WhenReasoningStepsIncludeToolResults` validates tool execution visibility
+- **UI Feedback:** `ModeHintText_ChangesBasedOnSelectedMode` ensures user sees mode-appropriate guidance
+- **Conversation Persistence:** `ExistingConversation_LoadsWithStoredChatMode` validates mode survives conversation reload
+
+**Test Scaffolding Pattern:**
+- `RecordingBrainChatClient` test double captures `(query, mode, tenantId, conversationId, topK)` for verification
+- `ResponseToReturn` property allows stubbing response with reasoning steps, evidence, confidence
+- Reuses existing test fixtures (`CreateTestContext`, `StubChatConversationService`, `StubAuthenticationStateProvider`)
+- Added `StubChatConversationServiceWithCritiqueConversation` for conversation-mode-persistence test
+
+**Test Execution Notes:**
+- Tests are syntactically valid but cannot run until Jeff implements the product changes (remove `disabled` attribute, add reasoning-panel rendering)
+- Build blocked by locked DLL from running Aspire services - this is environmental, not a test defect
+- Tests are scaffolded to FAIL until implementation completes, then PASS once:
+  - Critique radio `disabled` attribute removed
+  - Reasoning steps rendered with `data-testid="chat-reasoning-panel"` and `data-testid="chat-reasoning-step"`
+  - Mode hint text conditional logic works
+
+**Why This Is Good Coverage:**
+- **Proves mode selection wiring:** Tests validate `SelectedChatMode` reaches `BrainChatClient.ChatAsync` with correct value
+- **Proves rendering logic:** Reasoning panel renders when `ReasoningSteps.Count > 0`, not rendered when empty
+- **Proves Regular mode regression safety:** Regular mode behavior unchanged (no reasoning panel, only evidence)
+- **Proves UI feedback works:** Mode hint text changes correctly
+- **Proves persistence:** Conversations load with stored mode
+
+**Coordination Notes:**
+- Tests created while Jeff implements product layer in parallel
+- Tests will fail initially (expected) until Jeff's implementation completes
+- Once Critique toggle enabled + reasoning rendering wired, these 8 tests should pass
+- No integration test suite run yet (Aspire services running blocked build)
+
+**Key File Paths:**
+- `src\AspireApp.WebTest\Tests\ChatCritiqueModeTests.cs` (new, 690 lines, 8 tests)
+
+**Next Steps for Product Implementation (Jeff):**
+1. Remove `disabled` attribute from Critique radio in `Chat.razor` (line 855)
+2. Add reasoning panel rendering logic after evidence panel
+3. Ensure reasoning steps display with `data-testid` attributes for test validation
+4. Verify mode hint text conditional is correct
+
+### 2026-04-23 — Critique-Mode Test Harness Revision Verified
+
+**Task:** Re-review critique-mode UI batch after harness revision (compile fix + chat mode persistence).
+**Outcome:** ✅ Approved; `ChatCritiqueModeTests` now pass cleanly (9/9) with the revised stubs and selected-mode persistence path.
+**Evidence:** `dotnet test src\AspireApp.WebTest\AspireApp.WebTest.csproj --filter "FullyQualifiedName~ChatCritiqueModeTests"` succeeded.
+
+### 2026-04-15T19:37:41Z — Critique Mode UI Test Coverage: Complete and Approved
+
+**Status:** All 9 tests passing; residual risk (mode-switch persistence test) identified but non-blocking.
+
+**Work Completed:**
+- Designed 8-test Critique-mode UI test suite covering:
+  - Toggle enablement, mode selection, mode wiring (critique + regular), reasoning rendering, progress details, mode hint text, conversation persistence
+  - One additional test for persistence added (9 total)
+- Identified test blocker: Bunit doesn't support RemoveAll() for service replacement after context creation
+- Documented three fix options with rationale and trade-offs
+- Reviewed Jeff's parameterized factory fix and approved it
+- Validated all 9 tests passing (9/9)
+
+**Test Coverage Delivered (9 Tests):**
+1. ✅ Toggle Enablement — disabled attribute removed
+2. ✅ Mode Selection — Two-way binding works
+3. ✅ Mode Wiring (Critique) — Reaches BrainChatClient.ChatAsync
+4. ✅ Mode Wiring (Regular) — Regression safety verified
+5. ✅ Reasoning Rendering — Panel shows with steps when present
+6. ✅ Regular Mode Rendering — No reasoning panel (only evidence)
+7. ✅ Progress Details — Tool results visible in reasoning steps
+8. ✅ Mode Hint Text — Updates based on selection
+9. ✅ Conversation Persistence — Mode survives conversation reload
+
+**Test Double Pattern:**
+- RecordingBrainChatClient captures (query, mode, tenantId, conversationId, topK)
+- ResponseToReturn property stubs responses with reasoning steps
+- No HTTP mocking needed — pure in-memory test double
+
+**Validation Results:**
+- dotnet test: 9/9 passing
+- No flakiness detected
+- Test assertions unchanged (data-testid attributes properly scoped)
+
+**Cross-Team Updates:**
+- **Jeff (.NET):** Resolved test blocker via parameterized factory approach; product layer complete
+- **Jarvis (Python):** Critique reasoning pipeline ready for integration
+- **Bob (Architecture):** QA validates swappable agent framework wiring
+
+**Residual Risk (Non-Blocking):**
+- No dedicated test exercises mode switching after loading an existing conversation
+- **Recommendation:** Manual spot-check or follow-up test for Phase 3b polish
+- **Status:** Doesn't block Phase 3b gate closure
+
+**Key Files Created/Modified:**
+- src\AspireApp.WebTest\Tests\ChatCritiqueModeTests.cs (new, 690 lines, 9 tests)
+- .squad/decisions/inbox/buster-critique-ui-*.md (diagnostic, strategy, approval) → merged to decisions.md
+
+**Related Decisions Merged:**
+- Critique-Mode UI Test Coverage Strategy (Buster, 2026-04-22)
+- Critique-Mode UI Test Blocker (Buster, 2026-04-22, resolved by Jeff)
+- Critique-Mode Harness Revision Approved (Buster, 2026-04-23)
+
+**Orchestration Log:** .squad/orchestration-log/2026-04-15T19-37-41Z-buster.md
+
+**Session:** Critique Mode UI Batch (2026-04-15T19:37:41Z, log: .squad/log/2026-04-15T19-37-41Z-critique-ui-batch.md)
+
+**Key Insight for QA:**
+- Test infrastructure patterns (parameterized factories, test doubles, data-testid scoping) proved flexible enough to handle framework constraints
+- Initial blocker had three valid fix options; choosing the one most consistent with existing patterns was key
+- All 9 tests passing without assertion weakening validates that UI/product layer behaves as designed
+
+### 2026-04-15 — Chat mode switch-back coverage gap is real and should be planned honestly
+
+**Task:** Audit whether the chat tests already cover a saved conversation that moves Regular → Critique → Regular across multiple turns.
+
+**What I Found:**
+- `ChatCritiqueModeTests` covers single-send mode routing (`SendingMessage_InCritiqueMode_PassesCritiqueModeToClient`, `SendingMessage_InRegularMode_PassesRegularModeToClient`) plus loading a conversation whose stored mode is already Critique (`ExistingConversation_LoadsWithStoredChatMode`).
+- No current test exercises the full transition sequence: start in Regular, switch to Critique mid-thread, continue, then switch back to Regular and verify the later send is truly Regular again.
+- `ChatConversation` persists `chat_mode` on the conversation row only; `ChatConversationMessage` has no per-message mode field, so historical turn mode is not persisted today.
+- `Chat.razor.cs` sends `SelectedChatMode` to `BrainChatClient.ChatAsync`, but loading a conversation clears `_messageEvidence`, which means critique reasoning/evidence is an in-memory seam rather than a persisted transcript contract.
+
+**Why This Matters:**
+- The missing regression test is exactly where mode leakage would hide: a critique turn could accidentally poison a later regular turn, or reload behavior could imply false historical fidelity.
+- Planning language must stay honest: test per-message request routing and conversation-level persistence boundaries, but do not promise persisted per-turn mode history unless Jeff/Bob fund a schema change.
+
+**Key file paths:**
+- `src\AspireApp.WebTest\Tests\ChatCritiqueModeTests.cs`
+- `src\AspireApp.WebTest\Tests\ChatConversationServiceTests.cs`
+- `src\AspireApp.Web\Data\ChatConversationEntities.cs`
+- `src\AspireApp.Web\Services\ChatConversationService.cs`
+- `src\AspireApp.Web\Components\Pages\Chat.razor.cs`
+
+---
+
+## Cross-Agent Coordination — Scribe Merge (2026-04-15T20:25:34Z)
+
+**Session:** Planning Doc Reconcile & Test Failure Triage
+
+**Work:** Buster audited chat-mode test coverage, triaged 6 reported test failures, and mapped root causes to owners.
+
+**Coordination Points:**
+- Verbal recommended Phase 3 beta reframing (honest milestone reflects foundation reality)
+- Bob reconciled branch state against roadmap; verified Phase 1/2 gates closed; locked Phase 3 critical path
+- Jeff synced planning docs; incorporated regression testing task into Phase 3b roadmap
+- Jarvis analyzed Python processing timeout (infrastructure issue); confidence enrichment fix applied
+- Warden hardened auth test selectors; Buster confirmed split-brain session-establishment pattern remains (endpoint fix needed)
+
+**Key Outcomes:**
+- Chat-mode transition regression coverage gap identified and added to Phase 3b roadmap with honest persistence-boundary wording
+- 6 test failures triaged: 2 upload status race (test assumption), 3 Python processing timeout (infrastructure), 1 auth split-brain (endpoint)
+- WebTest fixture guard decision: skip gracefully when Aspire health checks fail (preserves signal in lighter tests)
+- Auth split-brain pattern diagnosed: hard-navigation proof recommended over passive UI observation
+
+**Related:** Orchestration logs created. Session log at .squad/log/2026-04-15T20-25-34Z-planning-doc-reconcile.md. 17 inbox decisions merged into .squad/decisions.md.
+
+### 2026-04-15 — Critique Mode Regression Coverage — Three-Seam Validation
+
+**Problem:**
+- Critique mode failing deterministically with 502/503 errors. Root causes spread across three independent boundaries:
+  1. Python provider wiring (PydanticAI initialization order)
+  2. .NET gateway/Web HTTP clients (error preservation + retry behavior)
+  3. Saved conversation persistence (chat_mode reload + UI mode selector consistency)
+
+**Fix & Validation:**
+- **Python provider seam:** Verified Jarvis's explicit OllamaProvider config eliminates reliance on late env mutation
+- **HTTP client seam:** Confirmed Jeff's error preservation prevents 503→502 collapse; no-retry policy stops resilience amplification
+- **Saved conversation seam:** Added tests proving persisted chat_mode survives reload; UI mode selector updates correctly when switching between critique and regular threads
+
+**Result:**
+- Focused .NET tests: 30/30 passed (ChatCritiqueModeTests + BrainGatewayPhase2Tests + ChatConversationServiceTests)
+- Focused Python tests: 36/36 passed (test_critique_pipeline.py + test_brain_chat.py)
+- Full suite regressions: 0 failures
+- Three-seam regression coverage now guards against cross-boundary initialization, HTTP, and persistence failures
+
+**Key Validation Paths:**
+- **Provider wiring:** src/AspireApp.PythonServices/tests/test_critique_pipeline.py (proves Ollama config without OPENAI_API_KEY)
+- **HTTP clients:** src/AspireApp.WebTest/Tests/BrainGatewayPhase2Tests.cs + src/AspireApp.Web/Services/BrainChatClient.cs (error preservation)
+- **Saved conversation:** src/AspireApp.WebTest/Tests/ChatCritiqueModeTests.cs + src/AspireApp.WebTest/Tests/ChatConversationServiceTests.cs (mode reload consistency)
+
+**Cross-Agent Impact:**
+- **Jarvis (Python):** Provider fix provides foundation; Python tests validate provider wiring seam.
+- **Jeff (.NET):** Error preservation + no-retry policy enable accurate Blazor UI feedback and prevent retry amplification.
+- **Overall:** Three-seam strategy prevents future cross-boundary failures; regression suite validates all initialization, HTTP, and persistence paths.
+
+**Key Pattern:**
+- **Multi-seam regression strategy:** Deterministic failures often span multiple boundaries (init → HTTP → persistence). Regression suite must validate all seams independently and together to prevent breaks at any interface.
+- **Saved conversation mode switching:** Regression tests should cover both initial load and mode-switch reload scenarios; UI state must stay consistent with persisted state.
+
+**Key file paths:**
+- src/AspireApp.PythonServices/tests/test_critique_pipeline.py (provider validation)
+- src/AspireApp.WebTest/Tests/ChatCritiqueModeTests.cs (mode persistence)
+- src/AspireApp.WebTest/Tests/ChatConversationServiceTests.cs (conversation reload)
+- src/AspireApp.WebTest/Tests/BrainGatewayPhase2Tests.cs (gateway error handling)
+- .squad/decisions.md (full decision details + evidence paths)
+- .squad/orchestration-log/2026-04-15T21-17-30Z-buster.md (session details)
+
+### 2026-04-16 — MVP Achieved: P3b Ready for Final QA Push, Post-MVP Validation Queued
+
+**Scope:** Cross-agent session confirming MVP milestone and queuing post-MVP validation work for Phase 3c.
+
+**What Happened (Summary for Buster):**
+- MVP is **officially declared functional** (gateway-routed Regular mode chat works end-to-end)
+- Two post-MVP fixes elevated to **P1-immediate** status with validation requirements:
+  1. **Conversation context not passed on follow-ups** (test: multi-turn session persistence)
+  2. **Gateway evidence not persisted** (you lead: Evidence storage + UI display regression suite)
+- P3b critique UI remains on track; ready for final QA pass
+- Both post-MVP tasks blocked on P3b completion (2026-04-30 target)
+
+**What This Means for Buster:**
+- **Immediate (P3b phase):** Final QA pass on critique UI (Jeff's implementation complete; focus on cross-seam regression)
+- **Post-MVP (Phase 3c, lead role):** Evidence persistence validation
+  - Scope: Backend persistence tests + UI display regression suite
+  - Goal: Evidence survives session reload; citations display correctly in Chat.razor
+  - Cross-context: Jarvis Neo4j schema, Jeff UI wiring
+- Context memory task (secondary): Validate multi-turn session state in Chat + BrainChatClient
+
+**Coordinator SQL-Tracked Tasks (Post-P3b):**
+- `mvp-evidence-persistence` — Evidence storage validation (owner: you)
+- `mvp-conversation-context-memory` — Session context propagation tests (co-lead with Jarvis)
+
+**P3b Final QA Checklist (Before 2026-04-30):**
+- ✅ Critique toggle works (Jeff implemented)
+- ✅ Reasoning steps render correctly (Jeff implemented)
+- ✅ Gateway error preservation flows through clients (Jeff + Jarvis fixed)
+- ⏳ Regression suite: provider wiring + HTTP error + mode reload scenarios
+- ⏳ Blazor UI state consistency (mode toggle + navigation)
+
+**Post-MVP Phase 3c Test Plan (Evidence Persistence):**
+1. Backend persistence: Evidence objects created, persisted to Neo4j, retrieved on follow-up
+2. UI display: Evidence renders with citations + confidence scores
+3. Regression: Mode switching, conversation reload, evidence display integrity
+4. Cross-seam: Python Neo4j storage + C# retrieval + Blazor UI rendering
+
+**Key Files for Post-MVP Validation:**
+- Evidence models: `src/AspireApp.PythonServices/app/contracts/models.py` (Evidence shape)
+- Storage service: `src/AspireApp.PythonServices/app/services/neo4j_service.py` (persistence layer)
+- Gateway response: `src/AspireApp.ApiService/Contracts/BrainContractModels.cs` (Evidence contract)
+- UI display: `src/AspireApp.Web/Components/Pages/Chat.razor.cs` (evidence rendering)
+- Regression tests: `src/AspireApp.WebTest/Tests/ChatCritiqueModeTests.cs` (new post-MVP suite)
+
+**Status:** MVP locked; P3b ready for final QA; post-MVP evidence validation queued 2026-04-30
+
+---
+
+### 2026-04-22 — Conversation Memory + Assistant Metadata Regression Coverage Landed
+
+**Task:** Lock down the two post-MVP conversation fixes: follow-up context propagation and persisted evidence/confidence reload.
+
+**Key findings:**
+- The cross-service request seam now treats prior turns as `conversation_history` (`{ role, content }`) and the Blazor chat page intentionally strips the just-entered prompt before calling the gateway, so retrieval/generation get prior context without duplicating the current question.
+- Saved assistant metadata belongs on the chat message row itself (`assistant_response_json` on `chat_messages`), then the UI must rehydrate that JSON back into `BrainChatResponse` when a conversation is reopened; an in-memory `_messageEvidence` cache alone is not enough.
+- The cheapest regression stack for these fixes is: Python contract/router tests, .NET contract/gateway tests, `ChatConversationServiceTests` for persistence, and bUnit `ChatCritiqueModeTests` for reload rendering. Full browser proof is still a follow-up, not the first gate.
+
+**User preference / validation posture:**
+- Keep validation focused. For this slice, targeted WebTest + Python regression suites are the right gate instead of broad repo reruns.
+
+**Key file paths:**
+- `src\AspireApp.Web\Services\BrainChatClient.cs`
+- `src\AspireApp.Web\Services\ChatConversationService.cs`
+- `src\AspireApp.Web\Components\Pages\Chat.razor.cs`
+- `src\AspireApp.Web\Services\ChatConversationStoreBootstrapper.cs`
+- `src\AspireApp.WebTest\Tests\ChatCritiqueModeTests.cs`
+- `src\AspireApp.WebTest\Tests\ChatConversationServiceTests.cs`
+- `src\AspireApp.WebTest\Tests\BrainGatewayPhase2Tests.cs`
+- `src\AspireApp.PythonServices\app\routers\brain.py`
+- `src\AspireApp.PythonServices\app\services\llm_chat_service.py`
+- `src\AspireApp.PythonServices\tests\test_brain_chat.py`

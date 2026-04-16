@@ -24,7 +24,7 @@ public partial class Program
         var neo4jMetricsPath = Path.Combine(neo4jRootPath, "metrics");
         var neo4jBackupPath = Path.Combine(neo4jRootPath, "backup");
 
-        // SQLite database file setup with configuration and fallback
+        // Legacy shared database file setup retained for test fixture compatibility.
         var sharedDatabaseFileName = builder.Configuration.GetValue<string>("SharedPaths:DatabaseFileName");
         if (string.IsNullOrWhiteSpace(sharedDatabaseFileName))
         {
@@ -48,7 +48,7 @@ public partial class Program
         }
 
         // Config with .NET Aspire
-        var aiChatModel = builder.AddParameterFromConfiguration("AI-Chat-Model", "AI-Chat-Model");
+        var aiModel = builder.AddParameterFromConfiguration("AI-Model", "AI-Model");
         var aiEmbeddings = builder.AddParameterFromConfiguration("AI-Embedding-Model", "AI-Embedding-Model");
         var aiEndpoint = builder.AddParameterFromConfiguration("AI-Endpoint", "AI-Endpoint");
 
@@ -86,12 +86,14 @@ public partial class Program
             .WithBindMount(redisDataPath, "/data")
             .WithRedisCommander();
 
-        // API Service
-        var apiService = builder.AddProject<Projects.AspireApp_ApiService>("apiservice")
-            .WithHttpHealthCheck("/health");
+        // BRAIN gateway service
+        var apiGateway = builder.AddProject<Projects.AspireApp_ApiService>("brain-gateway")
+            .WithEnvironment("AI-Endpoint", aiEndpoint.Resource)
+            .WithEnvironment("AI-Model", aiModel.Resource)
+            .WithHttpHealthCheck("/brain/health");
 
         // SETUP OLLAMA & MODEL CONTAINERS
-        var chatModelName = builder.Configuration["AI-Chat-Model"] ?? "phi4-mini:latest";
+        var chatModelName = builder.Configuration["AI-Model"] ?? "phi4-mini:latest";
         var embeddingModelName = builder.Configuration["AI-Embedding-Model"] ?? "nomic-embed-text:latest";
         var ollama = builder.AddOllama("ollama")
             .WithAnnotation(new ContainerImageAnnotation
@@ -142,18 +144,29 @@ public partial class Program
             .WithEnvironment("NEO4J_URI", neo4jBoltUri)                            // Pass Neo4j connection info to Python services
             .WithEnvironment("NEO4J_USER", neo4jUser.Resource)                     // Neo4j username for Python services
             .WithEnvironment("NEO4J_PASSWORD", neo4jPass.Resource)                 // Neo4j password for Python services
+            .WithEnvironment("OLLAMA_ENDPOINT", ollama.GetEndpoint("http"))        // Ollama HTTP endpoint for embeddings
+            .WithEnvironment("CHAT_MODEL", aiModel.Resource)                         // Chat model name for LLM completions
+            .WithEnvironment("EMBEDDING_MODEL", aiEmbeddings.Resource)             // Embedding model name for vector operations
+            .WithEnvironment("EMBEDDING_DIM", "1024")                              // Embedding dimension for bge-m3
             .WithEnvironment("PIP_CACHE_DIR", "/root/.cache/pip")                  // Use persistent pip cache
             .WithEnvironment("DOCKER_BUILDKIT", "1")                               // Enable BuildKit for better caching
             .WithHttpHealthCheck("/health")
             .WaitFor(postgres)  // Ensure Postgres starts before Python service
             .WaitFor(redis)     // Ensure Redis starts before Python service
-            .WaitFor(neo4jDb);  // Ensure Neo4j starts before Python service
+            .WaitFor(neo4jDb)   // Ensure Neo4j starts before Python service
+            .WaitFor(ollama)    // Ensure Ollama starts before Python (for embedding model)
+            .WaitFor(embeddingmodel)  // Ensure embedding model loads before Python service
+            .WaitFor(appmodel);  // Ensure chat model loads before Python service (brain chat)
 
         var pythonRunAsRoot = builder.Configuration.GetValue<bool>("PYTHON_RUN_AS_ROOT");
         if (pythonRunAsRoot)
         {
             pythonServices.WithContainerRuntimeArgs("--user", "0");
         }
+
+        apiGateway
+            .WithEnvironment("PYTHON_SERVICE_URL", pythonServices.GetEndpoint("http"))
+            .WaitFor(pythonServices);
 
         // SETUP CONTAINER LightRAG service
         // see: https://github.com/hkuds/LightRAG
@@ -165,7 +178,10 @@ public partial class Program
             .WithEnvironment("LIGHTRAG_DOC_STATUS_STORAGE", "JsonDocStatusStorage")
             .WithEnvironment("LIGHTRAG_GRAPH_STORAGE", "Neo4JStorage")
             .WithEnvironment("LIGHTRAG_VECTOR_STORAGE", "NanoVectorDBStorage")
-            .WithEnvironment("ENTITY_TYPES", "['Person', 'Creature', 'Organization', 'Location', 'Event', 'Concept', 'Method', 'Content', 'Data', 'Artifact', 'NaturalObject']")
+            .WithEnvironment("ENTITY_TYPES", "['Person','Organization','Location','Concept','Domain','Topic','Claim','Evidence'," +
+                "'Hypothesis','Insight','Method','Process','Workflow','Strategy','Framework','Model','Algorithm','System','Component'," +
+                "'Service','API','Tool','Technology','Data','Dataset','Metric','Parameter','Document','Work','Version','Event'," +
+                "'Task','Artifact']")
             .WithEnvironment("WORKERS", "2")
             .WithEnvironment("MAX_ASYNC", "1")
             .WithEnvironment("WEBUI_TITLE", "Local LightRAG")
@@ -175,7 +191,7 @@ public partial class Program
             .WithEnvironment("LLM_TIMEOUT", "420")
             .WithEnvironment("LLM_BINDING", "ollama")
             .WithEnvironment("LLM_BINDING_HOST", ollama.GetEndpoint("http"))
-            .WithEnvironment("LLM_MODEL", aiChatModel.Resource)
+            .WithEnvironment("LLM_MODEL", aiModel.Resource)
             .WithEnvironment("MAX_PARALLEL_INSERT", "2")
             .WithEnvironment("EMBEDDING_FUNC_MAX_ASYNC", "1")
             .WithEnvironment("EMBEDDING_BATCH_NUM", "1")
@@ -197,7 +213,10 @@ public partial class Program
             .WithEnvironment("NEO4J_LIVENESS_CHECK_TIMEOUT", "30")
             .WithEnvironment("NEO4J_KEEP_ALIVE", "true")
             .WithHttpEndpoint(port: 9621, targetPort: 9621, name: "http")
+            .WithHttpHealthCheck("/documents")
             .WaitFor(ollama)
+            .WaitFor(appmodel)
+            .WaitFor(embeddingmodel)
             .WaitFor(neo4jDb);
 
         pythonServices.WithEnvironment("LIGHTRAG_URL", lightrag.GetEndpoint("http"));
@@ -207,11 +226,12 @@ public partial class Program
             .WithExternalHttpEndpoints()
             .WithHttpHealthCheck("/health")
             .WithReference(uploadStore)
-            .WithReference(apiService)
+            .WithReference(apiGateway)
             .WithReference(ollama)
             .WithReference(appmodel)
             .WithEnvironment("AI-Endpoint", aiEndpoint.Resource)
-            .WithEnvironment("AI-Chat-Model", aiChatModel.Resource)
+            .WithEnvironment("AI-Model", aiModel.Resource)
+            .WithEnvironment("BRAIN_GATEWAY_URL", apiGateway.GetEndpoint("http"))
             .WithEnvironment("POSTGRES_USER", postgresUser.Resource)               // Pass Postgres username to Web UI services
             .WithEnvironment("POSTGRES_PASSWORD", postgresPass.Resource)           // Pass Postgres password to Web UI services
             .WithEnvironment("FileUpload__DataDirectory", sharedDataPath)          // Shared data directory for file uploads and processing
@@ -221,7 +241,7 @@ public partial class Program
             .WithEnvironment("PYTHON_SERVICE_URL", pythonServices.GetEndpoint("http")) // Get Python service endpoint
             .WaitFor(ollama)
             .WaitFor(appmodel)
-            .WaitFor(apiService)
+            .WaitFor(apiGateway)
             .WaitFor(postgres)
             .WaitFor(redis)
             .WaitFor(neo4jDb)

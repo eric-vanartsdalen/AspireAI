@@ -31,7 +31,159 @@
 
 ## Learnings
 
+### 2026-04-15 — Planning Docs Need Explicit Roles After a Pivot
+
+**Context:** Roadmap review showed three planning documents drifting in different directions: `roadmap/Roadmap.md` still read like the pre-pivot plan, `roadmap/Plan.md` was closest to the active BRAIN roadmap, and `roadmap/Tasks.md` had the best execution detail but stale Phase 3 status.
+
+**Decision Pattern:** Give each planning document an explicit job:
+- `roadmap/Plan.md` = canonical active roadmap / phase status
+- `roadmap/Tasks.md` = execution tracker with honest gate status
+- `roadmap/Roadmap.md` = historical legacy roadmap, not the current source of truth
+
+**Why This Matters:** During a product pivot, old roadmap tables survive longer than the code they describe. If we do not mark legacy docs as historical, maintainers will read contradictory summaries and prioritize the wrong next step.
+
+**Key File Paths:**
+- `roadmap/Plan.md`
+- `roadmap/Tasks.md`
+- `roadmap/Roadmap.md`
+- `CRITIQUE-MODE-UI-GUIDE.md`
+- `PHASE1_CONTRACTS_AUDIT.md`
+
+**Operational Rule:** When reconciling planning docs, verify each claim against implementation surfaces (`AppHost.cs`, gateway endpoints, Python reasoning routes, Blazor chat wiring) and validation evidence (`dotnet build`, focused tests). Mark both understatement and overstatement; do not only correct optimistic docs.
+
+### 2026-04-22 — PydanticAI Agent Framework Selection with Swappable Architecture
+
+**Context**: Phase 3b Critique mode required multi-agent orchestration (Planner → Retriever → Synthesizer → Critic). Eric directed to use PydanticAI but design for replaceability.
+
+**Decision**: Adopted PydanticAI abstracted behind `IAgentProvider` interface. Framework selection became an implementation detail, not a contract commitment.
+
+**Key Pattern — The Provider Abstraction**:
+```python
+# Abstract interface owns the contract
+class IAgentProvider(ABC):
+    @abstractmethod
+    async def reason(
+        self, 
+        request: BrainChatRequest,
+        knowledge_context: List[KnowledgeItem]
+    ) -> ReasonResponse:
+        pass
+
+# PydanticAI is just one implementation
+class PydanticAIProvider(IAgentProvider):
+    def __init__(self, ollama_endpoint, model_name):
+        self._ollama = OllamaModel(...)
+        self._agents = self._create_agents()
+    
+    async def reason(self, request, knowledge_context):
+        # PydanticAI-specific orchestration
+        return ReasonResponse(...)
+
+# Factory allows env-var swap
+def create_agent_provider() -> IAgentProvider:
+    provider = os.getenv("AGENT_PROVIDER", "pydantic-ai")
+    if provider == "pydantic-ai":
+        return PydanticAIProvider(...)
+    elif provider == "langgraph":
+        return LangGraphProvider(...)
+```
+
+**Swap Procedure**: Change `AGENT_PROVIDER` env var in AppHost, implement alternative provider. Zero changes to routers, orchestrator, or contracts.
+
+**Why This Matters**: 
+- Protects against framework abandonment (Python agent ecosystem is volatile)
+- Enables side-by-side benchmarking (test PydanticAI vs LangGraph performance)
+- Isolates framework updates to single provider class
+- BRAIN reasoning logic lives in contracts (`ReasonResponse`, `ReasoningStep`), not framework APIs
+
+**Files Updated**:
+- `.squad/decisions/inbox/bob-pydanticai-architecture.md` — Full decision document with interface design
+- `roadmap/Tasks.md` — Phase 3b work items now concrete (Jarvis owns 5 Python extension points)
+- `roadmap/Plan.md` — Updated Phase 3 framework selection + risk mitigation
+- `requirements.txt` — Added `pydantic-ai==0.0.14`
+- Session plan updated with framework decision
+
+**Team Coordination**:
+- **Jarvis**: Owns Python implementation (5 files: agent_provider.py, orchestrator.py, pydantic_ai_provider.py, agent_factory.py, brain.py updates)
+- **Jeff**: No changes required (Gateway already expects `ReasonResponse`)
+- **Buster**: Test strategy defined (contract compliance, mock swap, E2E critique mode)
+
+**Learnings**:
+1. **Defer framework commitment**: When evaluating volatile dependencies (agent frameworks, UI libs), abstract early. The "right" choice today may not exist tomorrow.
+2. **Contracts over implementations**: The `IAgentProvider → ReasonResponse` boundary is our stability. PydanticAI could disappear and we'd survive.
+3. **Factory pattern for swaps**: Environment-driven provider selection (`AGENT_PROVIDER=langgraph`) makes A/B testing trivial.
+4. **Document the seam**: The decision doc explicitly names Jarvis's extension points so implementation is unambiguous.
+
+**Anti-Pattern Avoided**: If we'd coupled directly to PydanticAI's `Agent` class in `brain.py`, a framework swap would require refactoring every router. Interface abstraction isolated the damage.
+
+**Next Application**: When choosing ANY infrastructure component (vector DB, LLM provider, auth system), ask: "What's the interface that makes this swappable?" Build that first.
+
+---
+
 <!-- Append new learnings below. Each entry is something lasting about the project. -->
+
+### 2026-04-18 — Ollama Contention: Serialize Embedding vs LightRAG Workloads
+
+**Pattern:** `process_document_task` in `processing.py` performs both Ollama embedding work (page + claim vectors) and triggers LightRAG ingestion (which also calls Ollama for LLM inference + embedding). Running these concurrently against a single Ollama instance with `MAX_ASYNC=1` causes serial queuing. With 60-second embedding timeouts, total processing time can exceed the 2-minute test polling window.
+
+**Fix:** Reordered the task to complete all Python-side Ollama calls BEFORE triggering LightRAG scan. Pure sequencing change — no logic or interface modifications. Eliminates the contention window.
+
+**Architecture Principle:** When multiple consumers share a single-instance AI model server (Ollama), orchestrate their workloads sequentially, not concurrently. This applies to any future pipeline step that calls Ollama.
+
+**Key Files:**
+- `src/AspireApp.PythonServices/app/routers/processing.py` (lines 59-170: processing task ordering)
+- `src/AspireApp.AppHost/AppHost.cs` (LightRAG config: `MAX_ASYNC=1`, `EMBEDDING_FUNC_MAX_ASYNC=1`)
+
+### 2026-04-15 (Updated 2025-11-02) — Phase 2 Knowledge Layer: P2-B Confidence Scoring Slice Scoped
+
+**Scope:** Architecture decision on smallest next slice to unblock P2-B gate (confidence scoring).
+
+**Key Finding:** Jarvis is on the right track with retrievers and Validation Layer foundation. However, P2-B gate specifically measures **confidence scoring in semantic retrieval**, not full Validation Layer completeness. These are separate concerns.
+
+**Decision:** P2-B unblocking slice = persist `source_confidence` on Neo4j `Page` nodes during ingestion + surface it in `SemanticKnowledgeRetriever.retrieve()`. This is ~90 min of work, unblocks gate measurement, and lets Phase 3 Validation Layer (claim extraction, evidence chains) proceed in parallel.
+
+**Architecture Boundary:** Page-level confidence (P2-B) vs. Claim-based confidence (Phase 3). Validate this separation before Jarvis starts; it's the seam between retrieval hardening and validation reasoning.
+
+**Key Files:**
+- `src/AspireApp.PythonServices/app/brain/knowledge/retrievers.py` (confidence extraction logic already present; just needs Neo4j to return it)
+- `src/AspireApp.PythonServices/app/services/neo4j_service.py` (schema extension: `source_confidence` on `Page` nodes)
+- `src/AspireApp.WebTest/Tests/BrainGatewayPhase2Tests.cs` (extend with semantic confidence test)
+
+**Risk Reduction:** Splits P2-B measurement from Validation Layer complexity. Gateway now returns real confidence (not defaults), unblocking P2-C vector index work.
+
+**Decision Recorded:** `.squad/decisions/inbox/bob-phase2-knowledge-layer-next-slice.md`
+
+### 2026-04-15 — Phase 2 Architecture Review: Retriever Interfaces Live, Confidence Scoring Gap Identified
+
+**Scope:** Architectural review of Phase 2 Knowledge Layer implementation against Tasks.md roadmap.
+
+**Status Summary:**
+- **Delivered:** `IKnowledgeRetriever` abstraction with three implementations: `LightRagRetriever` (legacy LightRAG path), `SemanticKnowledgeRetriever` (Neo4j semantic), `BrainKnowledgeRetriever` (LightRAG-first fallback)
+- **Gateway wiring complete:** `/brain/ingest` and `/brain/query` endpoints tested and working; `BrainBackendClient` successfully maps Python responses to C# contracts
+- **Live test proof:** `BrainGatewayPhase2Tests.QueryKnowledgeAsync_MapsContractShapedKnowledgeResult_FromPythonQueryRoute` confirms contract shape + source refs working
+
+**P2-B Blocker Identified:**
+The semantic fallback path in `BrainKnowledgeRetriever` currently **hard-codes `DEFAULT_CONFIDENCE=0.5`** when LightRAG fails. P2-B gate requires real confidence scores from Neo4j retrieval. Options:
+1. Persist `source_confidence` on `Page` nodes during ingestion, surface in `SemanticKnowledgeRetriever.retrieve()`
+2. Compute confidence from Neo4j graph structure (centrality, validation metadata)
+
+This blocks P2 completion and requires Jarvis + Neo4j schema extension.
+
+**Still TODO for Phase 2:**
+- Neo4j schema extension: `Claim`, `Evidence`, `Concept`, `Entity` labels + constraints
+- Vector index creation on `Page.content` and `Claim.text` (P2-C gate)
+- Validation layer: claim extraction + contradiction detection (Jarvis orchestration)
+- Semantic confidence scoring (P2-B blocker)
+
+**Key files referenced:**
+- Retrievers: `src/AspireApp.PythonServices/app/brain/knowledge/retrievers.py`
+- Gateway client: `src/AspireApp.ApiService/Services/BrainBackendClient.cs`
+- Test harness: `src/AspireApp.WebTest/Tests/BrainGatewayPhase2Tests.cs`
+- Contracts: `src/AspireApp.ApiService/Contracts/` + `src/AspireApp.PythonServices/app/contracts/`
+
+**Roadmap alignment:** Tasks.md updated with accurate status; P2-B marked as **Blocked** pending confidence scoring implementation. Decision logged for cross-team visibility.
+
+
 
 ### 2026-04-05 — Mock Auth UX Revision Uses Dedicated Sign-In Route + Framework Redirect
 
@@ -105,6 +257,55 @@
 
 **Key pattern from this session:** The Postgres migration was clean because (1) we kept the schema unchanged, (2) we used Aspire's `WithReference()` to wire connection strings, (3) both C# and Python respected environment variable naming conventions. Future migrations should follow this pattern: change infrastructure, keep contracts stable, use Aspire to wire parameters.
 
+### 2026-04-14T20:00Z — Phase 2 State Review: Smallest Critical Slice Identified
+
+**Scope:** Architectual assessment of Phase 2 implementation state; roadmap clarification; execution sequencing for P2-A/P2-B closure.
+
+**Current State:**
+- ✅ Gateway wiring complete: `/brain/ingest`, `/brain/query` endpoints scaffolded & tested (BrainGatewayPhase2Tests)
+- ✅ Python client: `PythonBrainBackendClient` implements resilient fallback (LightRAG → semantic-search)
+- ✅ Contract types: C# + Python `BrainIngestRequest`, `BrainQueryRequest`, `KnowledgeResult` defined & tested
+- ⚠️ **Ingestion refactor (P2-A):** Canonical shape building blocks exist (`build_canonical_document`, `resolve_source_confidence`) but ingestion router has not been refactored to emit canonical shape in production code
+- ⚠️ **Query confidence:** Returns static 0.5 scores; payload score extraction not yet implemented
+- ❌ Neo4j Knowledge Layer: Constraints exist; no claim/evidence nodes, no vector indexes, no `IKnowledgeRetriever` implementation
+- ❌ Validation Layer: Not started
+- ❌ LightRAG round-trip proof: No integration test yet
+
+**Smallest Slice for P2-A→P2-B Closure (Prioritized):**
+
+1. **Option 1 (RECOMMENDED): P2-A Ingestion Refactor** — Jarvis lead
+   - Refactor `processing.py` to call `build_canonical_document()` and emit canonical shape
+   - Update `database_service.py` to accept `CanonicalDocument` and persist `source_confidence` 
+   - Wire `/brain/ingest` end-to-end: upload → canonical shape → database
+   - **Done when:** Upload shows `source_confidence` populated, document has correct tenant/correlation IDs
+   - **Time:** ~4 hours
+   - **Why first:** Unblocks P2-B testing (LightRAG round-trip), validates Phase 1 contracts in production code
+
+2. **Option 2: LightRAG Round-Trip Gate** — Jarvis + Buster
+   - Write integration test: upload → ingest → query LightRAG → assert document in results
+   - Does not require P2-A; reuses existing paths
+   - **Done when:** Test passes cold-start Aspire; proves Neo4j persistence + LightRAG retrieval
+   - **Time:** ~6 hours
+
+3. **Option 3: Confidence Score Extraction** — Jarvis
+   - Replace static 0.5 with semantic score extraction from response payload
+   - Update `KnowledgeItem` confidence tracking
+   - **Done when:** Query test asserts actual payload confidence, not hardcoded
+   - **Time:** ~2 hours
+
+**Roadmap Corrections (Minimal):**
+- Line 159: "...emit `CanonicalDocument`" → "...call `build_canonical_document()` and emit canonical shape; persist `source_confidence` in `files` table"
+- Line 168: "...with constraints" → "...with `IS UNIQUE` constraints on `(label).id` properties"
+- Line 171–175 (note): "Baseline Note: Gateway query routing is now in place..." → "**P2-B Dependency:** Gateway query routing is scaffolded but returns static 0.5 confidence scores. Phase 2 is not complete until dynamic confidence extraction from payloads is live and the LightRAG round-trip is proven in integration tests."
+
+**Recommendation:**
+Execute Option 1 (P2-A) → Option 2 (round-trip) → Option 3 (confidence). This sequence validates contracts, proves data flow persistence, then closes the confidence gate.
+
+**Roadmap Edits Applied:**
+✅ Ingestion Refactor checkbox unchecked, wording tightened
+✅ Knowledge Layer schema note made specific
+✅ P2-B note rewritten to clarify blockers
+
 ### 2026-04-05 — Tenant-Context UI Slice - Architectural Revision
 
 **Status:** ✅ COMPLETE (Revision 2)
@@ -122,6 +323,103 @@
 **Architectural Pattern:** Tenant isolation is tenant_id column concern. Query filtering is optional (null = all tenants, for backward compat). API layer reads header once via `GetTenantId()` and propagates consistently.
 
 **Next:** Data layer now ready for Jarvis (Python schema) and Buster (QA validation) to close schema alignment and contract audit gaps.
+
+### 2026-04-16 — MVP Documentation & Post-MVP Prioritization Session
+
+**Scope:** MVP closure documentation and elevation of post-MVP fixes as highest-priority next steps (coordinated with Verbal + Coordinator).
+
+**Session Type:** Cross-agent decision consolidation (Bob lead, Verbal review, Coordinator SQL tracking)
+
+**What I Did:**
+1. Updated `README.md` to reflect AspireAI as a **functional MVP**
+   - Documented working features: document upload, chat interface, Neo4j knowledge graph integration, local auth
+   - Established clarity on product stage for future external communication
+   - Marked limitations alongside features for honest stakeholder understanding
+
+2. Updated `roadmap/Tasks.md` with post-MVP priority elevation
+   - Marked `mvp-conversation-context-memory` as **P1-immediate** 
+   - Marked `mvp-evidence-persistence` as **P1-immediate**
+   - Documented rationale: user-facing weaknesses identified post-MVP validation
+   - Sequenced: complete P3b critique UI phase → then tackle memory + evidence in Phase 3c
+
+3. Updated `roadmap/Plan.md` session plan
+   - Incorporated post-MVP learnings for future reference
+   - Documented context gaps and team transition to depth-focused work
+   - Noted shift from feature breadth to known-issue resolution
+
+**Coordination Completed:**
+- ✅ Verbal reviewed and confirmed prioritization rationale
+- ✅ Coordinator SQL-tracked memory + evidence tasks (blocked on P3b completion)
+- ✅ No blocking gates for next phase; team can proceed in parallel
+
+**Key Pattern Recognition:**
+- MVP is **live and functional**; no architectural gates prevent user engagement
+- Post-MVP priorities are **data-driven** (feedback from usage) not speculative
+- Conversation context memory and evidence persistence address real UX gaps
+- P3b critique UI completion unblocks higher-value engineering in Phase 3c
+- Team now shifts toward **depth** (fixing known issues) rather than **breadth** (new features)
+
+**Status:** MVP documentation complete; post-MVP priorities locked; ready for P3b → Phase 3c transition
+
+### 2026-04-21 — MVP Documentation Pattern: Clear State + Ordered Next Steps
+
+**Scope:** Product milestone documentation; roadmap honesty; stakeholder clarity after achieving functional MVP.
+
+**Decision:** When a product reaches MVP milestone, update all planning docs simultaneously to:
+1. Mark achievement explicitly with clear success criteria
+2. Document working features AND known limitations side-by-side
+3. Add ordered "Next Steps" with priority, technical scope, and ownership
+4. Update phase tables to reflect honest completion status (not vague "in progress")
+
+**Context:** AspireAI had reached functional MVP (gateway-routed chat with Regular mode works end-to-end: upload → knowledge graph → retrieval-augmented chat with citations), but docs still said "Phase 3 in progress" without clear milestone markers. Two critical product weaknesses identified by Eric needed explicit ordering, not buried in "remaining work."
+
+**Pattern Applied:**
+
+```markdown
+## Current State: Functional MVP ✅
+
+**What's Working:**
+- Core user flow end-to-end
+- Feature A, B, C operational
+
+**Known Limitations (Next Priorities):**
+1. Problem with user impact statement
+2. Another problem with user impact statement
+```
+
+**Files Updated:**
+- README.md: Added MVP declaration + working features + known limitations
+- roadmap/Tasks.md: "MVP ACHIEVED ✅" banner + ordered post-MVP fixes (high priority)
+- roadmap/Plan.md: Phase 3 marked "MVP Achieved"; Phase 0 marked complete
+- session plan.md: Current state reflects MVP milestone
+
+**Post-MVP Fixes (Ordered by User Impact):**
+1. **Conversation Context Not Passed on Follow-Ups** (HIGH PRIORITY) — Users can't build multi-turn reasoning. Owner: Jeff + Jarvis
+2. **Gateway Evidence Not Persisted** (HIGH PRIORITY) — Citations vanish after session ends. Owner: Jeff + Buster
+
+**Why This Pattern Matters:**
+- Honest milestone tracking: Phase tables reflect real completion
+- Prioritized work: Ordered next steps prevent drift
+- Stakeholder clarity: "MVP achieved" signals shippable product state
+- Team alignment: Technical scope + ownership eliminate ambiguity
+- Documentation hygiene: Regular reconciliation prevents code-doc drift
+
+**Anti-Patterns to Avoid:**
+- ❌ "Phase 3 still in progress" without MVP distinction
+- ❌ Flat bullet lists of "remaining work" without ordering
+- ❌ Vague problem statements ("improve memory")
+- ❌ Missing technical scope on priorities
+- ❌ MVP claims without documenting limitations side-by-side
+
+**Learnings:**
+1. **Milestone declarations need honest limitations:** If you claim MVP, document known gaps explicitly. Builds credibility, not erosion.
+2. **Prioritized work unblocks team focus:** Numbered next steps with technical scope (files affected, contracts involved) become actionable execution plans, not aspirational lists.
+3. **Documentation reconciliation is architectural work:** Planning docs drift from code during pivots. Regular audits (quarterly?) against implementation surfaces prevent maintainers from prioritizing superseded work.
+
+**Key Files:**
+- `README.md`
+- `roadmap/Plan.md`
+- `roadmap/Tasks.md`
 
 ### 2026-04-05 — BRAIN Pivot Architectural Assessment Complete
 
@@ -329,6 +627,39 @@
 
 **Key Learning:** For Blazor Server UI tests, always gate on URL settling before polling titles. The `<PageTitle>` component sets title asynchronously after the SignalR circuit completes.
 
+### 2026-04-21 — MVP Documentation Pattern & Post-MVP Fix Prioritization
+
+**Context:** AspireAI reached functional MVP state (gateway-routed chat with document upload → knowledge graph → retrieval-augmented response end-to-end). However, documentation still read "Phase 3 in progress" without declaring the milestone. Eric flagged this and identified two user-facing weaknesses that needed explicit prioritization.
+
+**Decision Pattern Established:** When product reaches MVP, simultaneously:
+1. Mark achievement clearly with criteria (what works end-to-end, what doesn't)
+2. Document known limitations side-by-side with achievements
+3. Create ordered "Next Steps" section with priority ranking, technical scope, and ownership
+4. Update phase status tables to reflect honest completion state
+
+**Implementation (2026-04-21):**
+- Updated `README.md`: Added "Current State: Functional MVP ✅" section with working features (multi-conversation chat, gateway routing, citations, auth) and known limitations
+- Updated `roadmap/Tasks.md`: Changed status from "in progress" to "MVP ACHIEVED ✅", added two ordered post-MVP fixes
+- Updated `roadmap/Plan.md`: Marked Phase 0 complete, Phase 3 "MVP Achieved" with post-MVP fixes in progress
+- Added explicit ordering of post-MVP fixes by user impact:
+  - **#1 (HIGH):** Conversation context not passed on follow-ups → prevents multi-turn reasoning
+  - **#2 (HIGH):** Gateway evidence (citations/confidence) not persisted → evidence vanishes when users return to conversations
+- Documented technical scope and ownership: Jeff + Jarvis (context), Buster + Jeff (evidence)
+
+**Why This Pattern Matters:**
+- Vague "still working" status prevents stakeholders from distinguishing beta from shippable product
+- Ordered next steps prevent priority drift that happens when "remaining work" is unranked
+- Real achievements get undersold; documentation-code drift compounds
+- Technical scope + ownership eliminate ambiguity and blocking on unclear prioritization
+
+**Key Files:**
+- `README.md` — MVP declaration
+- `roadmap/Tasks.md` — Post-MVP fixes with scope
+- `roadmap/Plan.md` — Phase status
+- `.squad/decisions.md` — Pattern decision entry
+
+**Related Decision:** `.squad/decisions.md` — "MVP Documentation Pattern — Clear State + Ordered Next Steps"
+
 **Key Files:**
 - Test: `src/AspireApp.WebTest/Tests/BasicAspireAppHostTests.cs`
 - Fixture: `src/AspireApp.WebTest/Fixtures/TestFixture.cs`
@@ -507,3 +838,57 @@ The entire codebase has a gap between C# upload and Python processing:
 - BRAIN gateway Phase 6 will propagate tenant_id header across services
 
 **Status:** Approved; recommendation ready for implementation
+
+---
+
+## Cross-Agent Coordination — Scribe Merge (2026-04-15T20:25:34Z)
+
+**Session:** Planning Doc Reconcile & Test Failure Triage
+
+**Work:** Bob reconciled branch state against roadmap reality, verified Phase 1/2 gates closed, and locked Phase 3 critical path.
+
+**Coordination Points:**
+- Verbal recommended Phase 3 beta reframing (honest milestone instead of vague framework-selection gate)
+- Buster identified chat-mode regression coverage gap and mapped test failure root causes (3 distinct issues across team)
+- Jeff synced planning docs and uploaded-status race fix; confirmed Phase 3 beta milestone alignment
+- Jarvis analyzed Python processing timeout (infrastructure issue, not code bug); confidence enrichment fix in review
+- Warden hardened Playwright form selectors; Bob/Buster confirmed split-brain auth pattern remains (endpoint wiring issue)
+
+**Key Outcome:** Phase 3 critical path locked with agent framework selection (PydanticAI) as BLOCKING GATE, decision deadline 2026-04-24. 7 gates cannot start until framework chosen.
+
+**Related:** Orchestration logs created (one per agent). Session log at `.squad/log/2026-04-15T20-25-34Z-planning-doc-reconcile.md`. 17 inbox decisions merged into `.squad/decisions.md`.
+
+
+### 2026-04-21 — MVP Documentation Update: Clear Current State and Next Priorities
+
+**Context:** Product owner Eric identified that the application had reached a functional MVP state but documentation still reflected beta/in-progress status. Two critical weaknesses were identified that needed to be captured as explicit next steps.
+
+**Action:** Updated core documentation (README, roadmap/Tasks.md, roadmap/Plan.md, session plan.md) to:
+1. Mark MVP achievement clearly (gateway-routed Regular mode chat works end-to-end with citations)
+2. Document what's working (multi-conversation persistence, authentication, knowledge graph ingestion, citation display)
+3. Add "Next Steps: Post-MVP Fixes" section with two high-priority items ordered by user impact
+4. Update phase status tables to reflect Phase 0 complete, Phases 1-2 complete, Phase 3 MVP achieved
+
+**Post-MVP Fixes Identified:**
+1. **Conversation context not passed on follow-ups** — When users reference prior questions after uploading new documents, the LLM doesn't receive conversation history to re-answer with new data
+2. **Gateway evidence not persisted** — Citations/confidence/reasoning_steps from backend brain responses are not saved with conversation messages; reopening a conversation loses the evidence metadata
+
+**Why This Matters:** 
+- Documentation-code drift erodes stakeholder confidence and misaligns priorities
+- Vague "still working on Phase 3" status masks real achievement and obscures actionable next steps
+- Unstructured fix lists become stale; ordered priorities with technical scope keep work focused
+
+**Pattern — MVP Declaration Criteria:**
+- Core user flow works end-to-end (document upload → knowledge graph → chat with citations)
+- Known limitations are documented with user impact, not hidden
+- Next steps are ordered by priority with clear ownership and technical scope
+- Phase summary tables reflect honest completion status
+
+**Files Updated:**
+- README.md — Added "Current State: Functional MVP" section with working features and known limitations
+- oadmap/Tasks.md — Updated status to MVP achieved, added "Next Steps: Post-MVP Fixes" section with ordered priorities
+- oadmap/Plan.md — Updated execution snapshot and Phase 3 status to MVP achieved with post-MVP fixes in progress
+- Session plan.md — Updated current state assessment to reflect MVP achievement and post-MVP priorities
+
+**Related Decision:** .squad/decisions/inbox/bob-mvp-docs.md — Documents the MVP declaration pattern and post-MVP fix prioritization strategy
+

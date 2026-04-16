@@ -333,6 +333,166 @@ z-index: 1;
 margin-top: 0.5rem;
 }
 
+.chat-mode-selector {
+display: flex;
+align-items: center;
+gap: 0.75rem;
+margin-bottom: 0.75rem;
+padding: 0.5rem 0.75rem;
+border: 1px solid rgba(255, 255, 255, 0.15);
+border-radius: 0.5rem;
+background-color: rgba(255, 255, 255, 0.04);
+}
+
+.chat-mode-selector label {
+margin: 0;
+font-size: 0.85rem;
+font-weight: 600;
+opacity: 0.9;
+}
+
+.chat-mode-option {
+display: inline-flex;
+align-items: center;
+gap: 0.35rem;
+font-size: 0.85rem;
+cursor: pointer;
+}
+
+.chat-mode-option input[type="radio"] {
+accent-color: #6a5acd;
+}
+
+.chat-mode-option.disabled {
+opacity: 0.45;
+cursor: not-allowed;
+}
+
+.chat-mode-option.disabled input[type="radio"] {
+cursor: not-allowed;
+}
+
+.chat-mode-hint {
+font-size: 0.75rem;
+opacity: 0.6;
+margin-left: auto;
+font-style: italic;
+}
+
+.evidence-panel {
+margin-top: 0.5rem;
+padding: 0.5rem 0.75rem;
+border-left: 3px solid rgba(106, 90, 205, 0.6);
+border-radius: 0 0.375rem 0.375rem 0;
+background-color: rgba(106, 90, 205, 0.08);
+font-size: 0.85rem;
+}
+
+.evidence-header {
+display: flex;
+align-items: center;
+gap: 0.5rem;
+margin-bottom: 0.35rem;
+}
+
+.confidence-badge {
+display: inline-block;
+padding: 0.1rem 0.5rem;
+border-radius: 1rem;
+font-size: 0.75rem;
+font-weight: 600;
+}
+
+.confidence-badge.high {
+background-color: rgba(40, 167, 69, 0.25);
+color: #28a745;
+border: 1px solid rgba(40, 167, 69, 0.4);
+}
+
+.confidence-badge.medium {
+background-color: rgba(255, 193, 7, 0.2);
+color: #ffc107;
+border: 1px solid rgba(255, 193, 7, 0.4);
+}
+
+.confidence-badge.low {
+background-color: rgba(220, 53, 69, 0.2);
+color: #dc3545;
+border: 1px solid rgba(220, 53, 69, 0.4);
+}
+
+.evidence-source {
+margin-bottom: 0.25rem;
+padding: 0.25rem 0;
+border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+}
+
+.evidence-source:last-child {
+border-bottom: none;
+}
+
+.evidence-source-name {
+font-weight: 600;
+opacity: 0.85;
+font-size: 0.8rem;
+}
+
+.evidence-source-content {
+opacity: 0.7;
+font-size: 0.8rem;
+}
+
+.reasoning-panel {
+margin-top: 0.75rem;
+padding: 0.5rem 0.75rem;
+border-left: 3px solid rgba(128, 90, 213, 0.6);
+border-radius: 0 0.375rem 0.375rem 0;
+background-color: rgba(128, 90, 213, 0.08);
+font-size: 0.85rem;
+}
+
+.reasoning-header {
+display: flex;
+align-items: center;
+gap: 0.5rem;
+margin-bottom: 0.5rem;
+font-weight: 600;
+opacity: 0.9;
+}
+
+.reasoning-step {
+margin-bottom: 0.5rem;
+padding: 0.35rem 0;
+border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+}
+
+.reasoning-step:last-child {
+border-bottom: none;
+}
+
+.reasoning-step-title {
+font-weight: 600;
+opacity: 0.9;
+font-size: 0.8rem;
+margin-bottom: 0.2rem;
+}
+
+.reasoning-step-content {
+opacity: 0.75;
+font-size: 0.8rem;
+margin-left: 0.5rem;
+}
+
+.reasoning-step-tool {
+display: inline-block;
+padding: 0.1rem 0.4rem;
+border-radius: 0.25rem;
+background-color: rgba(255, 255, 255, 0.1);
+font-size: 0.7rem;
+margin-left: 0.3rem;
+opacity: 0.8;
+}
+
 .speech-status {
 margin-left: 1rem;
 display: inline-flex;
@@ -600,8 +760,10 @@ else
                             </tr>
                         </thead>
                         <tbody>
+                            @{ var assistantIdx = 0; }
                             @foreach (var message in ChatHistoryService.GetFormattedMessages(_chatHistory))
                             {
+                                var currentAssistantIdx = message.User == "Assistant" ? assistantIdx++ : -1;
                                 <tr data-testid="chat-message-row">
                                     <td class="user-column"><span>@message.User</span></td>
                                     <td class="message-column">
@@ -615,6 +777,71 @@ else
                                                 <img src="/images/@(IsMessageBeingSpoken(message.Message) ? "stop.png" : "playback.png")"
                                                      alt="@(IsMessageBeingSpoken(message.Message) ? "Stop" : "Play")" />
                                             </button>
+                                        }
+                                        @if (message.User == "Assistant" && currentAssistantIdx >= 0 && _messageEvidence.TryGetValue(currentAssistantIdx, out var evidence))
+                                        {
+                                            <div class="evidence-panel" data-testid="chat-evidence-panel">
+                                                <div class="evidence-header">
+                                                    <span class="confidence-badge @FormatConfidenceBadge(evidence.Confidence)" data-testid="chat-confidence-badge">
+                                                        @($"{evidence.Confidence:P0}") confidence
+                                                    </span>
+                                                    @if (evidence.Evidence.Count > 0)
+                                                    {
+                                                        <span style="opacity: 0.7; font-size: 0.8rem;">
+                                                            @evidence.Evidence.Count source@(evidence.Evidence.Count == 1 ? "" : "s")
+                                                        </span>
+                                                    }
+                                                </div>
+                                                @foreach (var src in evidence.Evidence.Take(3))
+                                                {
+                                                    <div class="evidence-source" data-testid="chat-evidence-source">
+                                                        <span class="evidence-source-name">📄 @src.Source</span>
+                                                        @if (!string.IsNullOrWhiteSpace(src.Content))
+                                                        {
+                                                            <div class="evidence-source-content">@(src.Content.Length > 200 ? src.Content[..200] + "…" : src.Content)</div>
+                                                        }
+                                                    </div>
+                                                }
+                                                @if (evidence.Evidence.Count > 3)
+                                                {
+                                                    <div style="opacity: 0.6; font-size: 0.75rem; margin-top: 0.25rem;">
+                                                        + @(evidence.Evidence.Count - 3) more source@(evidence.Evidence.Count - 3 == 1 ? "" : "s")
+                                                    </div>
+                                                }
+                                            </div>
+                                        }
+                                        @if (message.User == "Assistant" && currentAssistantIdx >= 0 && _messageEvidence.TryGetValue(currentAssistantIdx, out var reasoningData))
+                                        {
+                                            @if (reasoningData.ReasoningSteps.Count > 0)
+                                            {
+                                                <div class="reasoning-panel" data-testid="chat-reasoning-panel">
+                                                    <div class="reasoning-header">
+                                                        🧠 Reasoning Steps (@reasoningData.ReasoningSteps.Count)
+                                                    </div>
+                                                    @foreach (var step in reasoningData.ReasoningSteps)
+                                                    {
+                                                        <div class="reasoning-step" data-testid="chat-reasoning-step">
+                                                            <div class="reasoning-step-title">
+                                                                @step.Step
+                                                                @if (!string.IsNullOrWhiteSpace(step.Tool))
+                                                                {
+                                                                    <span class="reasoning-step-tool">@step.Tool</span>
+                                                                }
+                                                            </div>
+                                                            @if (!string.IsNullOrWhiteSpace(step.Reasoning))
+                                                            {
+                                                                <div class="reasoning-step-content">@step.Reasoning</div>
+                                                            }
+                                                            @if (!string.IsNullOrWhiteSpace(step.Result))
+                                                            {
+                                                                <div class="reasoning-step-content" style="font-style: italic; opacity: 0.65;">
+                                                                    → @step.Result
+                                                                </div>
+                                                            }
+                                                        </div>
+                                                    }
+                                                </div>
+                                            }
                                         }
                                     </td>
                                 </tr>
@@ -690,6 +917,37 @@ else
                     </div>
                 </div>
             }
+
+            <div class="chat-mode-selector" data-testid="chat-mode-selector">
+                <label>Mode:</label>
+                <span class="chat-mode-option">
+                    <input type="radio"
+                           id="mode-regular"
+                           name="chatMode"
+                           value="@ChatConversationModes.Regular"
+                           checked="@(SelectedChatMode == ChatConversationModes.Regular)"
+                           @onchange="@(() => OnChatModeChangedAsync(ChatConversationModes.Regular))"
+                           disabled="@IsAIResponsing"
+                           data-testid="chat-mode-regular" />
+                    <label for="mode-regular">Regular</label>
+                </span>
+                <span class="chat-mode-option">
+                    <input type="radio"
+                           id="mode-critique"
+                           name="chatMode"
+                           value="@ChatConversationModes.Critique"
+                           checked="@(SelectedChatMode == ChatConversationModes.Critique)"
+                           @onchange="@(() => OnChatModeChangedAsync(ChatConversationModes.Critique))"
+                           disabled="@IsAIResponsing"
+                           data-testid="chat-mode-critique" />
+                    <label for="mode-critique">Critique</label>
+                </span>
+                <span class="chat-mode-hint">
+                    @(SelectedChatMode == ChatConversationModes.Regular
+                        ? "Fast, knowledge-enhanced responses"
+                        : "Thorough, agent-verified answers")
+                </span>
+            </div>
 
             <div class="input-container">
                 <div class="input-group">
