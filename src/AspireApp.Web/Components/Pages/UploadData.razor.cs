@@ -813,6 +813,27 @@ public partial class UploadData : ComponentBase, IAsyncDisposable, IDisposable
         };
     }
 
+    private static bool IsWebSource(string? sourceType) =>
+        UrlSourceTypeClassifier.IsWebSourceType(sourceType);
+
+    private static string GetSourceBadgeClass(string? sourceType) =>
+        IsWebSource(sourceType) ? "source-type-url" : "source-type-upload";
+
+    private static string GetSourceBadgeLabel(string? sourceType) =>
+        IsWebSource(sourceType) ? "WEB" : "FILE";
+
+    private static string GetSourceValueClass(string? sourceType) =>
+        IsWebSource(sourceType) ? "url-cell" : "file-size-cell";
+
+    private static string GetSourceIconTitle(string? sourceType) =>
+        sourceType?.Trim().ToLowerInvariant() switch
+        {
+            UrlSourceTypeClassifier.YouTubeVideo => "YouTube Video",
+            UrlSourceTypeClassifier.YouTubeChannel => "YouTube Channel",
+            UrlSourceTypeClassifier.GenericUrl => "Website/Web Resource",
+            _ => "Uploaded File"
+        };
+
     public class FileUploadResult
     {
         public bool Success { get; set; }

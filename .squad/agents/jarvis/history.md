@@ -9,6 +9,28 @@
 
 <!-- Append new learnings below. Each entry is something lasting about the project. -->
 
+### 2026-04-22 — Child URL Expansion Must Reuse the Main Processing Pipeline
+
+**Problem:**
+- Expanding a parent URL source (for example, a YouTube channel) can create child URL rows in `files`, but an ad-hoc child thread launcher is not a durable ingestion seam and made child processing behavior hard to reason about.
+- Retryable duplicate child URLs (`uploaded` / `error`) also need to resume through the same document pipeline instead of being skipped forever as “duplicates”.
+
+**Fix:**
+- Updated `app/routers/processing.py` so channel expansion collects child document IDs, reuses existing retryable child rows, and then runs those children through the same `_process_document_task_sync` path used by normal document processing.
+- Child failures stay explicit on the child row (`error`), while parent channel processing continues independently.
+
+**Result:**
+- Child YouTube video rows no longer depend on a second queueing mechanism; they are kicked directly into the established processing pipeline.
+- Reprocessing a channel can now resume previously stuck child rows when their status is still retryable.
+
+**Key Pattern:**
+- **Pipeline reuse over side threads:** When a parent ingestion step materializes child documents, collect their IDs and invoke the same processing path the rest of the system uses instead of inventing a parallel trigger mechanism.
+- **Retryable duplicate reuse:** Duplicate child URLs should only be skipped when already `processing` or `processed`; `uploaded` and `error` rows should be resumed.
+
+**Key file paths:**
+- `src/AspireApp.PythonServices/app/routers/processing.py`
+- `src/AspireApp.PythonServices/tests/test_processing_pipeline_regression.py`
+
 ### 2026-04-22 — YouTube Channel Ingestion Needs Consent-Resilient Resolution + Feed-First Expansion
 
 **Problem:**

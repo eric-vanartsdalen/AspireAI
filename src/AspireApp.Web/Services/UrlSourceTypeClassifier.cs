@@ -47,6 +47,16 @@ public static partial class UrlSourceTypeClassifier
             _ => "text/html"
         };
 
+    public static bool IsWebSourceType(string? sourceType) =>
+        NormalizeSourceType(sourceType) switch
+        {
+            GenericUrl or YouTubeVideo or YouTubeChannel => true,
+            _ => false
+        };
+
+    private static string NormalizeSourceType(string? sourceType) =>
+        sourceType?.Trim().ToLowerInvariant() ?? string.Empty;
+
     private static bool IsYouTubeHost(string host) =>
         YouTubeHosts.Contains(host, StringComparer.OrdinalIgnoreCase);
 

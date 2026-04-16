@@ -891,24 +891,24 @@ else
                         {
                             <tr style="width:max()">
                                 <td class="file-name-cell">
-                                    <span class="source-type-badge @(file.SourceType == "url" ? "source-type-url" : "source-type-upload")">
-                                        @(file.SourceType == "url" ? "WEB" : "FILE")
+                                    <span class="source-type-badge @GetSourceBadgeClass(file.SourceType)">
+                                        @GetSourceBadgeLabel(file.SourceType)
                                     </span>
                                     @file.FileName
                                     <span class="file-name-full">@file.FileName</span>
                                 </td>
                                 <td class="status-cell">
-                                    @if (file.SourceType == "url")
+                                    @if (IsWebSource(file.SourceType))
                                     {
-                                        <i class="bi bi-globe" title="Website/Web Resource"></i>
+                                        <i class="bi bi-globe" title="@GetSourceIconTitle(file.SourceType)"></i>
                                     }
                                     else
                                     {
                                         <i class="bi bi-file-earmark" title="Uploaded File"></i>
                                     }
                                 </td>
-                                <td class="@(file.SourceType == "url" ? "url-cell" : "file-size-cell")">
-                                    @if (file.SourceType == "url")
+                                <td class="@GetSourceValueClass(file.SourceType)">
+                                    @if (IsWebSource(file.SourceType))
                                     {
                                         @if (!string.IsNullOrEmpty(file.SourceUrl))
                                         {

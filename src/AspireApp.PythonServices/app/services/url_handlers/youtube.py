@@ -12,7 +12,9 @@ Uses yt-dlp or httpx for channel/playlist video listing.
 
 import logging
 import re
-from typing import Optional, List, Dict, Any
+import xml.etree.ElementTree as ET
+from html import unescape
+from typing import Optional, List, Dict, Any, Tuple
 from urllib.parse import urlparse, parse_qs
 
 from .base import UrlHandler, FetchedContent
@@ -202,6 +204,32 @@ class YouTubeChannelHandler(UrlHandler):
         r"youtube\.com\/c\/([a-zA-Z0-9_-]+)",
         r"youtube\.com\/user\/([a-zA-Z0-9_-]+)",
     ]
+    CHANNEL_ID_PATTERNS = [
+        r'"externalId":"(UC[a-zA-Z0-9_-]{22})"',
+        r'"channelId":"(UC[a-zA-Z0-9_-]{22})"',
+        r'"browseId":"(UC[a-zA-Z0-9_-]{22})"',
+        r"youtube\.com/channel/(UC[a-zA-Z0-9_-]{22})",
+    ]
+    CHANNEL_TITLE_PATTERNS = [
+        r'"channelMetadataRenderer":\{"title":"([^"]+)"',
+        r"<title>([^<]+?)</title>",
+    ]
+    VIDEO_ID_PATTERNS = [
+        r'"videoId":"([a-zA-Z0-9_-]{11})"',
+        r'/watch\?v=([a-zA-Z0-9_-]{11})',
+    ]
+    YOUTUBE_HEADERS = {
+        "User-Agent": (
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+            "AppleWebKit/537.36 (KHTML, like Gecko) "
+            "Chrome/135.0.0.0 Safari/537.36"
+        ),
+        "Accept-Language": "en-US,en;q=0.9",
+    }
+    YOUTUBE_COOKIES = {
+        "SOCS": "CAI",
+        "CONSENT": "YES+cb.20210328-17-p0.en+FX+471",
+    }
     
     def __init__(self, max_videos: int = 50):
         """
@@ -224,6 +252,119 @@ class YouTubeChannelHandler(UrlHandler):
             if match:
                 return match.group(1)
         return None
+
+    def _extract_resolved_channel_id(self, url: str, html_content: str) -> Optional[str]:
+        """Extract the canonical UC... channel ID from URL or page HTML."""
+        parsed = urlparse(url)
+        channel_path = parsed.path.rstrip("/").split("/")
+        if len(channel_path) >= 3 and channel_path[1] == "channel":
+            candidate = channel_path[2]
+            if re.fullmatch(r"UC[a-zA-Z0-9_-]{22}", candidate):
+                return candidate
+
+        for pattern in self.CHANNEL_ID_PATTERNS:
+            match = re.search(pattern, html_content)
+            if match:
+                return match.group(1)
+
+        return None
+
+    def _extract_channel_title(self, html_content: str) -> Optional[str]:
+        """Extract the channel title from page HTML when available."""
+        for pattern in self.CHANNEL_TITLE_PATTERNS:
+            match = re.search(pattern, html_content)
+            if match:
+                return unescape(match.group(1)).replace(" - YouTube", "").strip()
+        return None
+
+    def _normalize_channel_videos_url(self, channel_url: str) -> str:
+        """Normalize a channel URL to the videos tab without query or fragment noise."""
+        parsed = urlparse(channel_url)
+        path = parsed.path.rstrip("/")
+        if not path.endswith("/videos"):
+            path = f"{path}/videos"
+        return parsed._replace(path=path, query="", fragment="").geturl()
+
+    def _looks_like_consent_page(self, response) -> bool:
+        """Detect YouTube consent interstitials that block page parsing."""
+        response_url = str(response.url).lower()
+        if "consent.youtube.com" in response_url:
+            return True
+
+        html_content = response.text.lower()
+        return "before you continue to youtube" in html_content or "consent.youtube.com" in html_content[:500]
+
+    def _create_http_client(self):
+        """Create an HTTP client configured for public YouTube page access."""
+        return httpx.AsyncClient(
+            follow_redirects=True,
+            timeout=30.0,
+            headers=self.YOUTUBE_HEADERS,
+            cookies=self.YOUTUBE_COOKIES,
+        )
+
+    async def _fetch_channel_page(self, client, channel_url: str):
+        """Fetch a YouTube channel page and retry once if YouTube serves a consent page."""
+        response = await client.get(channel_url)
+        response.raise_for_status()
+
+        if not self._looks_like_consent_page(response):
+            return response
+
+        continue_url = parse_qs(urlparse(str(response.url)).query).get("continue", [channel_url])[0]
+        logger.info("Retrying YouTube channel fetch after consent interstitial for %s", channel_url)
+        response = await client.get(continue_url)
+        response.raise_for_status()
+        return response
+
+    async def _fetch_feed_video_urls(self, client, channel_id: str) -> Tuple[List[str], Optional[str]]:
+        """Fetch recent channel videos from the public YouTube RSS feed."""
+        feed_url = f"https://www.youtube.com/feeds/videos.xml?channel_id={channel_id}"
+        response = await client.get(feed_url)
+        response.raise_for_status()
+
+        try:
+            root = ET.fromstring(response.text)
+        except ET.ParseError as exc:
+            logger.warning("Failed to parse YouTube feed for channel %s: %s", channel_id, exc)
+            return [], None
+
+        namespaces = {
+            "atom": "http://www.w3.org/2005/Atom",
+            "yt": "http://www.youtube.com/xml/schemas/2015",
+        }
+
+        title = root.findtext("atom:title", default=None, namespaces=namespaces)
+        video_urls: list[str] = []
+        seen_urls: set[str] = set()
+
+        for entry in root.findall("atom:entry", namespaces):
+            video_id = entry.findtext("yt:videoId", default=None, namespaces=namespaces)
+            if video_id:
+                video_url = f"https://www.youtube.com/watch?v={video_id}"
+            else:
+                link = entry.find("atom:link[@rel='alternate']", namespaces)
+                video_url = link.get("href") if link is not None else None
+
+            if video_url and video_url not in seen_urls:
+                seen_urls.add(video_url)
+                video_urls.append(video_url)
+
+        return video_urls, title
+
+    def _extract_video_urls_from_html(self, html_content: str) -> List[str]:
+        """Extract video URLs directly from channel HTML as a fallback/supplement."""
+        video_urls: list[str] = []
+        seen_urls: set[str] = set()
+
+        for pattern in self.VIDEO_ID_PATTERNS:
+            for match in re.findall(pattern, html_content):
+                video_url = f"https://www.youtube.com/watch?v={match}"
+                if video_url not in seen_urls:
+                    seen_urls.add(video_url)
+                    video_urls.append(video_url)
+
+        return video_urls
     
     async def fetch(self, url: str, data_path: str) -> FetchedContent:
         """
@@ -231,77 +372,85 @@ class YouTubeChannelHandler(UrlHandler):
         
         Returns child_urls for each video to be ingested separately.
         """
-        channel_id = self._extract_channel_id(url)
+        channel_reference = self._extract_channel_id(url) or url
         
         if not HTTPX_AVAILABLE:
             raise RuntimeError("httpx is required for YouTube channel expansion")
         
         try:
-            # Fetch channel page to find video links
-            video_urls = await self._fetch_channel_videos(url)
-            
+            video_urls, resolved_channel_id, channel_title = await self._fetch_channel_videos(url)
+
+            if not resolved_channel_id and not video_urls:
+                raise RuntimeError(f"Could not resolve YouTube channel {channel_reference}")
+
             if not video_urls:
-                raise RuntimeError(f"No videos found on YouTube channel {channel_id}")
-            
+                raise RuntimeError(f"No videos found on YouTube channel {channel_reference}")
+
             # Limit to max_videos
             video_urls = video_urls[:self.max_videos]
-            
+
+            metadata: Dict[str, Any] = {
+                "channel_id": resolved_channel_id or channel_reference,
+                "channel_reference": channel_reference,
+                "url": url,
+                "video_count": len(video_urls),
+            }
+            if channel_title:
+                metadata["title"] = channel_title
+
             return FetchedContent(
                 text=f"YouTube channel with {len(video_urls)} videos queued for processing.",
                 content_type="youtube_channel",
-                metadata={
-                    "channel_id": channel_id,
-                    "url": url,
-                    "video_count": len(video_urls)
-                },
+                metadata=metadata,
                 child_urls=video_urls
             )
-            
+
+        except RuntimeError:
+            raise
         except Exception as e:
-            logger.error(f"Error fetching YouTube channel {channel_id}: {e}")
-            raise RuntimeError(f"Error fetching YouTube channel {channel_id}: {e}") from e
+            logger.error(f"Error fetching YouTube channel {channel_reference}: {e}")
+            raise RuntimeError(f"Error fetching YouTube channel {channel_reference}: {e}") from e
     
-    async def _fetch_channel_videos(self, channel_url: str) -> List[str]:
+    async def _fetch_channel_videos(self, channel_url: str) -> Tuple[List[str], Optional[str], Optional[str]]:
         """
         Fetch video URLs from a YouTube channel page.
         
-        This is a simplified implementation that parses the channel page HTML.
-        For production use, consider using the YouTube Data API or yt-dlp.
+        Uses the public RSS feed when the canonical channel ID is available,
+        then supplements from page HTML to stay resilient to modern YouTube
+        page shapes without requiring an API key.
         """
-        async with httpx.AsyncClient(follow_redirects=True, timeout=30.0) as client:
-            # Append /videos to get the videos page
-            if not channel_url.endswith("/videos"):
-                videos_url = channel_url.rstrip("/") + "/videos"
-            else:
-                videos_url = channel_url
-            
-            response = await client.get(videos_url)
-            response.raise_for_status()
-            
+        videos_url = self._normalize_channel_videos_url(channel_url)
+
+        async with self._create_http_client() as client:
+            response = await self._fetch_channel_page(client, videos_url)
+
+            if self._looks_like_consent_page(response):
+                raise RuntimeError("YouTube consent interstitial prevented channel resolution")
+
             html_content = response.text
-            
-            # Extract video IDs from the page
-            # YouTube embeds video data in JSON within the page
-            video_ids: list[str] = []
-            seen_ids: set[str] = set()
-            
-            # Pattern for video IDs in various contexts
-            patterns = [
-                r'"videoId":"([a-zA-Z0-9_-]{11})"',
-                r'/watch\?v=([a-zA-Z0-9_-]{11})',
-            ]
-            
-            for pattern in patterns:
-                matches = re.findall(pattern, html_content)
-                for match in matches:
-                    if match not in seen_ids:
-                        seen_ids.add(match)
-                        video_ids.append(match)
-            
-            # Convert to full URLs
-            video_urls = [f"https://www.youtube.com/watch?v={vid}" for vid in video_ids]
-            
-            return video_urls
+            resolved_channel_id = self._extract_resolved_channel_id(channel_url, html_content) or self._extract_resolved_channel_id(
+                str(response.url), html_content
+            )
+
+            channel_title = self._extract_channel_title(html_content)
+            video_urls: list[str] = []
+            seen_urls: set[str] = set()
+
+            if resolved_channel_id:
+                feed_video_urls, feed_title = await self._fetch_feed_video_urls(client, resolved_channel_id)
+                if feed_title and not channel_title:
+                    channel_title = feed_title
+                for video_url in feed_video_urls:
+                    if video_url not in seen_urls:
+                        seen_urls.add(video_url)
+                        video_urls.append(video_url)
+
+            for video_url in self._extract_video_urls_from_html(html_content):
+                if video_url not in seen_urls:
+                    seen_urls.add(video_url)
+                    video_urls.append(video_url)
+
+            return video_urls, resolved_channel_id, channel_title
     
     @property
     def handler_name(self) -> str:

@@ -52,11 +52,102 @@ async def process_document_task(
     )
 
 
-def _fetch_url_content_sync(document, db: DatabaseService) -> Path:
+def _normalize_processing_status(status: str | None) -> str:
+    normalized = (status or "uploaded").lower()
+    status_map = {
+        "pending": "uploaded",
+        "uploaded": "uploaded",
+        "processing": "processing",
+        "completed": "processed",
+        "processed": "processed",
+        "failed": "error",
+        "error": "error",
+    }
+    return status_map.get(normalized, normalized)
+
+
+def _collect_child_document_ids(document, content, db: DatabaseService, fetcher) -> list[int]:
+    child_document_ids: list[int] = []
+
+    for child_url in content.child_urls or []:
+        try:
+            existing = db.find_duplicate_by_url(child_url, document.tenant_id)
+            if existing:
+                existing_status = _normalize_processing_status(existing.get("status"))
+                existing_id = existing.get("id")
+                if existing_status in {"processing", "processed"}:
+                    logger.info(
+                        "Skipping child URL %s because existing document %s is already %s",
+                        child_url,
+                        existing_id,
+                        existing_status,
+                    )
+                    continue
+                if existing_id is not None:
+                    logger.info(
+                        "Reusing existing child URL %s as document %s with status %s",
+                        child_url,
+                        existing_id,
+                        existing_status,
+                    )
+                    child_document_ids.append(existing_id)
+                    continue
+
+            child_document_id = db.add_url_datasource(
+                source_name=_build_source_name_from_url(child_url),
+                source_url=child_url,
+                source_type=_classify_url_source_type(fetcher, child_url),
+                status="uploaded",
+                tenant_id=document.tenant_id,
+            )
+            child_document_ids.append(child_document_id)
+            logger.info("Queued child URL for processing: %s (document %s)", child_url, child_document_id)
+        except Exception as e:
+            logger.warning(f"Failed to queue child URL {child_url}: {e}")
+
+    return child_document_ids
+
+
+def _process_child_documents(
+    *,
+    parent_document_id: int,
+    child_document_ids: list[int],
+    db: DatabaseService,
+    docling,
+    neo4j: Neo4jService,
+    lightrag_handoff: LightRagHandoffService | None = None,
+) -> None:
+    for child_document_id in child_document_ids:
+        try:
+            logger.info(
+                "Automatically starting child URL document %s from parent %s",
+                child_document_id,
+                parent_document_id,
+            )
+            _process_document_task_sync(
+                child_document_id,
+                db,
+                docling,
+                neo4j,
+                lightrag_handoff,
+            )
+        except Exception as exc:
+            logger.warning(
+                "Automatic processing failed for child URL document %s from parent %s: %s",
+                child_document_id,
+                parent_document_id,
+                exc,
+            )
+
+
+def _fetch_url_content_sync(
+    document,
+    db: DatabaseService,
+) -> tuple[Path, list[int]]:
     """
     Fetch content from a URL source and save it as a text file for processing.
     
-    Returns the path to the saved content file.
+    Returns the saved content file path plus queued child document IDs.
     """
     import asyncio
     
@@ -70,28 +161,10 @@ def _fetch_url_content_sync(document, db: DatabaseService) -> Path:
     content = asyncio.run(_fetch_async())
     
     # Handle child URLs (e.g., from YouTube channels)
+    child_document_ids: list[int] = []
     if content.has_children:
         logger.info(f"URL {document.source_url} has {len(content.child_urls)} child URLs to ingest")
-        # Create new files entries for each child URL
-        for child_url in content.child_urls:
-            try:
-                # Check for duplicates
-                existing = db.find_duplicate_by_url(child_url, document.tenant_id)
-                if existing:
-                    logger.info(f"Skipping duplicate child URL: {child_url}")
-                    continue
-                
-                # Create new file entry for child URL
-                db.add_url_datasource(
-                    source_name=_build_source_name_from_url(child_url),
-                    source_url=child_url,
-                    source_type=_classify_url_source_type(fetcher, child_url),
-                    status="uploaded",
-                    tenant_id=document.tenant_id,
-                )
-                logger.info(f"Queued child URL for processing: {child_url}")
-            except Exception as e:
-                logger.warning(f"Failed to queue child URL {child_url}: {e}")
+        child_document_ids = _collect_child_document_ids(document, content, db, fetcher)
     
     # Save fetched content to a text file for docling processing
     data_path = Path(os.getenv("ASPIRE_DATA_PATH", "/app/data"))
@@ -118,7 +191,7 @@ def _fetch_url_content_sync(document, db: DatabaseService) -> Path:
     
     logger.info(f"Saved URL content to {content_file} ({len(content_text)} chars)")
     
-    return content_file
+    return content_file, child_document_ids
 
 
 def _process_document_task_sync(
@@ -130,6 +203,7 @@ def _process_document_task_sync(
     mark_processing_started: bool = True,
 ):
     """Background task to process a document"""
+    child_document_ids: list[int] = []
     try:
         logger.info(f"Starting processing for document {document_id}")
 
@@ -145,7 +219,7 @@ def _process_document_task_sync(
         document_source_url = getattr(document, "source_url", None)
         document_file_path = getattr(document, "file_path", None)
         if document_source_url and not document_file_path:
-            resolved_file_path = _fetch_url_content_sync(document, db)
+            resolved_file_path, child_document_ids = _fetch_url_content_sync(document, db)
         else:
             resolved_file_path = db.resolve_upload_path(document)
         
@@ -297,6 +371,16 @@ def _process_document_task_sync(
         logger.error(f"Error processing document {document_id}: {e}")
         db.update_file_status(document_id, "error", str(e))
         raise
+    finally:
+        if child_document_ids:
+            _process_child_documents(
+                parent_document_id=document_id,
+                child_document_ids=child_document_ids,
+                db=db,
+                docling=docling,
+                neo4j=neo4j,
+                lightrag_handoff=lightrag_handoff,
+            )
 
 
 def _attempt_lightrag_handoff(document, processed_doc, lightrag_handoff: LightRagHandoffService) -> None:

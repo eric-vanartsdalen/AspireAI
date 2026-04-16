@@ -2053,3 +2053,20 @@ High — Three independent test failures all exhibit the same LightRAG stuck-in-
 - `src\AspireApp.PythonServices\app\routers\brain.py`
 - `src\AspireApp.PythonServices\app\services\llm_chat_service.py`
 - `src\AspireApp.PythonServices\tests\test_brain_chat.py`
+
+### 2026-04-16 — Child URL Auto-Processing Regression Coverage
+
+**Task:** Audit the queue/trigger gap where YouTube child video URLs created during channel processing stayed in `Uploaded` instead of entering processing automatically.
+
+**What QA locked down:**
+- `src\AspireApp.PythonServices\app\routers\processing.py` now treats channel-expanded child URLs as immediately queued work: create the URL datasource row, move it to `processing`, and dispatch processing with the same pipeline collaborators instead of leaving it waiting for a second trigger.
+- `src\AspireApp.PythonServices\tests\test_processing_pipeline_regression.py` now asserts the child rows are kicked into `processing` and that background dispatch is attempted for each child ID created during channel expansion.
+- Focus stayed narrow on the regression seam; no broadening into unrelated ingestion behavior.
+
+**Verification:**
+- `python -m pytest tests\test_processing_pipeline_regression.py -q` from `src\AspireApp.PythonServices` passed (9/9).
+
+**Key File Paths:**
+- `src\AspireApp.PythonServices\app\routers\processing.py`
+- `src\AspireApp.PythonServices\tests\test_processing_pipeline_regression.py`
+- `src\AspireApp.PythonServices\app\services\database_service.py`

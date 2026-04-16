@@ -85,6 +85,58 @@ public sealed class UploadDataTests : IDisposable
         }
     }
 
+    [Theory]
+    [InlineData("url", "https://contoso.example/docs")]
+    [InlineData("youtube_video", "https://youtu.be/dQw4w9WgXcQ")]
+    [InlineData("youtube_channel", "https://www.youtube.com/@happy-gilmore/videos")]
+    public async Task UploadData_RendersWebSemantics_ForWebBackedSourceTypes(string sourceType, string sourceUrl)
+    {
+        await using var context = CreateDbContext();
+        var tenantId = "tenant-allowed";
+        var currentUser = SeedTenantMembership(context, tenantId);
+        var dataDirectory = CreateDataDirectory();
+
+        try
+        {
+            context.Datasources.Add(new web::AspireApp.Web.Data.FileMetadata
+            {
+                FileName = "web-source",
+                OriginalFileName = "web-source",
+                FilePath = string.Empty,
+                FileHash = "HASH-WEB",
+                SourceType = sourceType,
+                SourceUrl = sourceUrl,
+                Status = "uploaded",
+                TenantId = tenantId
+            });
+            await context.SaveChangesAsync(XunitTestContext.Current.CancellationToken);
+
+            var cut = await RenderUploadDataAsync(context, currentUser, dataDirectory);
+
+            cut.WaitForAssertion(() =>
+            {
+                var row = cut.Find("tbody tr");
+                var badge = row.QuerySelector(".source-type-badge");
+                var icon = row.QuerySelector("td.status-cell i");
+                var urlCell = row.QuerySelector("td.url-cell");
+
+                Assert.NotNull(badge);
+                Assert.Contains("source-type-url", badge!.ClassName);
+                Assert.Equal("WEB", badge.TextContent.Trim());
+
+                Assert.NotNull(icon);
+                Assert.Contains("bi-globe", icon!.ClassName);
+
+                Assert.NotNull(urlCell);
+                Assert.Contains(sourceUrl, urlCell!.TextContent);
+            });
+        }
+        finally
+        {
+            DeleteDirectoryIfPresent(dataDirectory);
+        }
+    }
+
     public void Dispose()
     {
         _testContext.Dispose();
@@ -97,6 +149,45 @@ public sealed class UploadDataTests : IDisposable
 
         await cut.InvokeAsync(() => (Task)method.Invoke(cut.Instance, [])!);
         cut.Render();
+    }
+
+    private async Task<IRenderedComponent<UploadData>> RenderUploadDataAsync(
+        UploadDbContext context,
+        AuthenticatedUser currentUser,
+        string dataDirectory,
+        IDocumentProcessingCoordinator? processingCoordinator = null)
+    {
+        processingCoordinator ??= new FakeDocumentProcessingCoordinator();
+
+        var authenticationContext = new AuthenticationContext();
+        authenticationContext.SetCurrentUser(currentUser);
+
+        var tenantManagement = new TenantManagementService(
+            context,
+            NullLogger<TenantManagementService>.Instance);
+        var tenantContext = new TenantContextService(tenantManagement, authenticationContext);
+        await tenantContext.InitializeForUserAsync(currentUser, XunitTestContext.Current.CancellationToken);
+
+        var configuration = new ConfigurationBuilder()
+            .AddInMemoryCollection(new Dictionary<string, string?>
+            {
+                ["FileUpload:MaxFileSize"] = "10485760"
+            })
+            .Build();
+
+        var fileStorageService = new FileStorageService(
+            context,
+            NullLogger<FileStorageService>.Instance,
+            dataDirectory,
+            processingCoordinator);
+
+        _testContext.Services.AddSingleton<IConfiguration>(configuration);
+        _testContext.Services.AddSingleton(authenticationContext);
+        _testContext.Services.AddSingleton(fileStorageService);
+        _testContext.Services.AddSingleton(tenantContext);
+        _testContext.Services.AddSingleton<Microsoft.Extensions.Logging.ILogger<UploadData>>(NullLogger<UploadData>.Instance);
+
+        return _testContext.Render<UploadData>();
     }
 
     private static void SetSelectedBrowserFile(UploadData component, IBrowserFile browserFile)
