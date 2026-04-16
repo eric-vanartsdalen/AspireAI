@@ -1051,3 +1051,26 @@ eo4j_service to LightRagRetriever for enrichment when LightRAG lacks scores
 - Phase 3: YouTube handlers (conditional on API key decision)
 - Update C# contracts in BrainContractModels.cs for URL ingestion requests
 
+
+### 2026-04-16 — YouTube transcript dependency recovery
+
+**Context:** The lightweight Python container failed during `pip install -r requirements.txt` because `youtube-transcript-api==0.8.*` no longer resolves on PyPI.
+
+**Architecture Decision:**
+- Standardize the Python service on `youtube-transcript-api==1.2.*`, the current installable release line.
+- Keep the YouTube transcript handler tolerant of both API shapes while the branch converges: use the v1 instance `.list(...)` path when available, otherwise fall back to the legacy class-level `list_transcripts(...)` call.
+- Normalize fetched transcript results so both dict-style segments and v1 transcript snippet objects flow into the same text assembly step.
+
+**Key File Paths:**
+- Dependency pin: `src/AspireApp.PythonServices/requirements.txt`
+- Compatibility shim: `src/AspireApp.PythonServices/app/services/url_handlers/youtube.py`
+- Broken build path validated after fix: `src/AspireApp.PythonServices/Dockerfile.lightweight`
+
+**Patterns:**
+- For third-party dependency bumps, verify the package exists on PyPI before editing pins.
+- If a package API moved during the version bump, add a small compatibility seam at the ingestion boundary instead of spreading version checks through the pipeline.
+- Validate the actual container install path that failed, not just a local import.
+
+**User Preferences:**
+- Keep the fix surgical.
+- Prove the dependency-install path works again with minimal, concrete validation.

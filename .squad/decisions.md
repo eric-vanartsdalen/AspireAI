@@ -1,4 +1,4 @@
-﻿# Decisions
+# Decisions
 
 > Shared decision log. All agents read this before starting work.
 > Scribe merges new decisions from `.squad/decisions/inbox/` after each session.
@@ -3148,3 +3148,28 @@ The failing seam was infrastructure-specific; the product navigation UI was func
 
 - Pre-existing 90s timeout in `BrainQueryReturnsConfidenceEnrichedResults` remains (unrelated to navigation seam, flagged for future investigation)
 - Broader test infrastructure now uses explicit-seam pattern for all protected-route entry
+
+
+## YouTube Transcript Dependency Pin and Compatibility Seam — Jarvis — 2026-04-16
+
+# YouTube transcript dependency pin and compatibility seam
+
+- **Date:** 2026-04-16
+- **Owner:** Jarvis
+- **Status:** Accepted
+
+## Context
+The lightweight Python container failed before startup because `youtube-transcript-api==0.8.*` no longer exists on PyPI. The service also had code written against the older class-method API.
+
+## Decision
+- Pin `youtube-transcript-api` to `1.2.*` in `src/AspireApp.PythonServices/requirements.txt`.
+- Keep `app/services/url_handlers/youtube.py` compatible with the current instance-based API (`YouTubeTranscriptApi().list(...)`) while preserving a legacy fallback.
+- Normalize fetched transcript payloads so both raw dict segments and newer snippet objects are accepted by the same assembly path.
+
+## Why
+This keeps the startup fix surgical: the broken dependency pin is corrected, and the directly coupled runtime compatibility issue is handled in one place at the YouTube ingestion boundary.
+
+## Validation
+- `python -m pip install --dry-run -r src/AspireApp.PythonServices/requirements.txt`
+- `docker build --no-cache -f src\AspireApp.PythonServices\Dockerfile.lightweight -t aspireapp-python-lightweight-validate src\AspireApp.PythonServices`
+
