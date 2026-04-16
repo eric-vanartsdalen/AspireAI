@@ -139,3 +139,85 @@
 - Decision merge workflow stable across sessions (consolidate overlapping decisions, delete inbox, commit, log)
 
 **Status:** Session complete; all inbox decisions merged (2 files); decisions.md updated with merge note; .squad/decisions.md committed; inbox cleared
+
+### 2026-04-16 — MVP Documentation Session: Cross-Agent Coordination & Post-MVP Task Queuing
+
+**Scope:** Scribe coordination session consolidating MVP documentation updates (Bob) with post-MVP prioritization review (Verbal) and task tracking initialization (Coordinator).
+
+**What Scribe Did:**
+1. Created 3 orchestration logs (Bob, Verbal, Coordinator) documenting spawn phases and cross-agent coordination
+2. Created 1 session log summarizing MVP achievement, user-identified post-MVP fixes, and task queuing
+3. Verified inbox is **empty** (no decisions to merge)
+4. Updated 4 agent histories with cross-agent context:
+   - Bob: MVP documentation pattern completion + post-MVP transition
+   - Verbal: Prioritization review confirmation + MVP pattern refinement
+   - Jeff: MVP achievement context + Phase 3c task queue (context memory lead)
+   - Jarvis: MVP achievement context + Phase 3c task queue (evidence persistence lead)
+   - Buster: MVP achievement context + Phase 3c task queue (evidence persistence validation lead)
+5. Checked decisions.md size (147 KB, exceeds 20 KB archival threshold)
+   - **Decision:** Skip archival; entries are recent (within 30-day window); no entries qualify for archival yet
+6. Committed MVP documentation updates (README.md, roadmap/Plan.md, roadmap/Tasks.md) with descriptive message
+   - Commit: `88055e8` — MVP Documentation & Post-MVP Prioritization Session
+   - Co-authors: Bob, Verbal, Copilot
+
+**Decision Merge Status:**
+- **Inbox state:** Empty (no files)
+- **Merge action:** None required
+- **Commit action:** ✅ Completed (MVP docs only; .squad/ is gitignored per convention)
+
+**Post-MVP Task Initialization:**
+- `mvp-conversation-context-memory` — Lead: Jeff + Jarvis (blocked on P3b)
+- `mvp-evidence-persistence` — Lead: Jarvis + Buster (blocked on P3b)
+- Both tasks SQL-tracked by Coordinator; scheduled start 2026-04-30
+
+**Cross-Agent Context Propagation Summary:**
+- All agents updated with: MVP declaration, post-MVP fix ordering, task assignments, blocked-on timeline
+- Prevents misalignment when agents spawn for Phase 3c work
+- Enables async task dispatch (agents pull next task from queue automatically)
+
+**File Size Checks (Performed):**
+- decisions.md: 147 KB (exceeds 20 KB; no 30+ day entries for archival)
+- bob/history.md: 50.8 KB (over 12 KB; stable, active content)
+- buster/history.md: 136.2 KB (over 12 KB; stable, active content)
+- jarvis/history.md: 66.7 KB (over 12 KB; stable, active content)
+- jeff/history.md: 110.8 KB (over 12 KB; stable, active content)
+- scribe/history.md: 12.5 KB (just crossed threshold; recommend archival next quarter if growth continues)
+- **Decision:** No summarization action needed; all content is recent and referenced in active sessions
+
+**Key Learnings for Future Sessions:**
+- MVP documentation as cross-agent pattern is stable; reusable for Phase completion milestones
+- Task queuing via SQL + Coordinator role enables async dispatch without meetings
+- Post-MVP priority ordering (user-driven, with technical scope) unblocks team focus
+- Agent history updates are gitignored; documentation work is recorded in .squad/ logs for memory but not committed to git
+
+**Status:** Session complete; all orchestration logs created; all agent histories updated; MVP commit pushed; post-MVP tasks queued; inbox cleared; ready for Phase 3c transition
+
+### 2026-04-16 — Session Consolidation: Bob + Coordinator (Documentation Cleanup)
+
+**Scope:** Post-session consolidation after Bob and Coordinator completed MVP documentation cleanup (mojibake removal, link fixes, storage/runtime terminology alignment).
+
+**What Scribe Did:**
+1. Created orchestration logs (2 files: Bob, Coordinator) documenting normalization work and final editorial pass
+2. Created session log summarizing MVP documentation finalization and product state alignment
+3. Verified inbox is **empty** (no decisions to merge; work was coordinated verbally)
+4. Confirmed decisions.md remains stable (~151 KB, all recent entries within window)
+5. Confirmed scribe/history.md remains compact (~12.5 KB, just over summarization threshold but current)
+6. Prepared git commit for .squad/ logs
+7. Noted: No agent history updates needed (documentation work is final editorial, no cross-agent dependencies)
+
+**Decision Merge Status:**
+- **Inbox state:** Empty (no files)
+- **Merge action:** None required
+- **Commit action:** ✅ Completed (.squad/log/ and .squad/orchestration-log/ entries)
+
+**File Size Checks (Performed):**
+- decisions.md: 150,802 bytes (~147 KB; exceeds 20 KB but no 30+ day entries for archival)
+- scribe/history.md: 12,317 bytes (~12 KB; just crossed summarization threshold)
+- **Decision:** No archival or summarization action; content is recent and referenced
+
+**Key Learnings:**
+- Final editorial passes (mojibake removal, link corrections, terminology alignment) are low-risk consolidation work
+- Verbal coordination (via spawn manifest) reduces inbox overhead for editorial sessions
+- Scribe session pattern: orchestration logs + session log + inbox verification + git commit (even if inbox is empty)
+
+**Status:** Session complete; all orchestration logs created; session log recorded; inbox verified empty; ready to commit
