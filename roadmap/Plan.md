@@ -2,7 +2,7 @@
 
 Phased roadmap for the BRAIN pivot. Each phase is an epic with clear acceptance gates. This document tracks the active BRAIN roadmap against the current branch state.
 
-**Last Updated:** 2026-04-15
+**Last Updated:** 2026-04-21
 **Active Branch:** `task/P0-brain-pivot`
 **Decision Authority:** Eric Van Artsdalen + adversarial review by Kujan and Verbal
 
@@ -16,10 +16,12 @@ BRAIN is a domain-agnostic agentic knowledge assistant. It ingests diverse sourc
 
 ## Current Execution Snapshot
 
-- **Done on this branch:** Legacy phases 0–3, BRAIN Phase 1 (shared contracts), BRAIN Phase 2 (gateway ingest/query, retrieval foundations, vector population/search), and a Phase 3 beta chat slice (regular + critique routes, gateway-routed chat, Web UI confidence/citations, and critique reasoning display).
-- **Still active:** Phase 3 is in beta, not complete. Live end-to-end Aspire validation, session memory, contradiction/proactive monitoring, proactive suggestions, MEai cleanup, and the chat-mode regression gap below remain open.
-- **Administrative drift:** Phase 0 setup is already in place; the remaining drift is product framing/documentation. `README.md` still describes AspireAI as a modular chat assistant and still calls `AspireApp.ApiService` a placeholder gateway.
-- **Next:** Phase 3 beta proof — one end-to-end Aspire flow from ingested document to gateway-routed chat with citations/confidence in the Web UI. Critique mode remains experimental until live-validated.
+- **MVP ACHIEVED ✅** (2026-04-21): Gateway-routed chat with Regular mode works end-to-end (document upload → knowledge graph → retrieval-augmented chat with citations). Multi-conversation persistence and authentication are operational. Critique mode is implemented but experimental.
+- **Done on this branch:** Legacy phases 0–3, BRAIN Phase 1 (shared contracts), BRAIN Phase 2 (gateway ingest/query, retrieval foundations, vector population/search), and a Phase 3a/3b chat slice (regular + critique routes, gateway-routed chat, Web UI confidence/citations, and critique reasoning display).
+- **Post-MVP Fixes (High Priority):** (1) Conversation context not passed to backend on follow-up questions — LLM doesn't receive prior conversation history for multi-turn reasoning. (2) Gateway evidence not persisted with messages — citations/confidence lost when reopening saved conversations.
+- **Still active (Phase 3 gaps):** Session memory integration, contradiction/proactive monitoring beyond critique pipeline, proactive suggestions UI, MEai cleanup, chat-mode transition regression coverage.
+- **Administrative drift:** Phase 0 setup is complete; README now reflects BRAIN MVP status and gateway role.
+- **Next:** Close the two post-MVP fixes (conversation context + evidence persistence), then Phase 4 evaluation/hardening.
 
 ---
 
@@ -29,10 +31,10 @@ BRAIN is a domain-agnostic agentic knowledge assistant. It ingests diverse sourc
 |-------|-------|--------|
 | Legacy 0–2 | Repo Setup, Chat UI, Speech I/O | ✅ Complete (pre-pivot) |
 | Legacy 3 | Document Upload & Ingestion (stabilization) | ✅ Complete (pre-pivot) |
-| 0 | Reframe Product | 🚧 Mostly complete (engineering done; branding/docs cleanup remains) |
+| 0 | Reframe Product | ✅ Complete |
 | 1 | Core Contracts | ✅ Complete |
 | 2 | Ingestion + Knowledge Baseline | ✅ Complete |
-| 3 | Ship MVP Agentic Slice | 🚧 In progress |
+| 3 | Ship MVP Agentic Slice | ✅ **MVP Achieved** (post-MVP fixes in progress) |
 | 4 | Evaluate + Harden | 🔜 Planned |
 | 5 | Prove Reusability | 🔮 Future |
 | 6 | Scale Deliberately | 🔮 Future |
@@ -155,15 +157,18 @@ Work completed before the BRAIN pivot. These are foundations that survive:
 
 **Objective:** BRAIN becomes agentic. The Reasoning Layer orchestrates agents that retrieve knowledge, validate claims, synthesize answers, and proactively suggest related context. This is the slice that proves BRAIN is more than RAG.
 
+**Status:** MVP achieved ✅ — gateway-routed Regular mode chat is functional with citations/confidence. Critique mode implemented but experimental. Post-MVP fixes needed for conversation context memory and evidence persistence.
+
 ### Deliverables
 
 - [x] Choose and integrate agent framework → **PydanticAI** (swappable via the agent-provider seam)
 - [x] Implement the first critique pipeline slice (planning → retrieval → synthesis → critique) with user-visible reasoning steps
 - [x] Implement `POST /brain/chat` — conversational interface through Gateway → Python reasoning/knowledge paths
-- [ ] Session memory — conversation context persists across turns within a session
+- [ ] **[POST-MVP FIX 1]** Session memory — conversation context persists and is passed to backend reasoning on follow-up questions
 - [ ] Chat mode transition regression coverage - prove Regular -> Critique -> Regular mode changes do not leak critique behavior into later Regular turns, and document the persistence boundary between conversation-level mode state and non-persisted per-message critique metadata.
 - [x] Confidence indicators in chat UI — responses render confidence badges
 - [x] Source citations in chat UI — responses render evidence/source snippets
+- [ ] **[POST-MVP FIX 2]** Persist gateway evidence with conversation messages — citations/confidence survive conversation reload
 - [ ] Proactive suggestion panel in Blazor UI — display unsolicited insights from Proactive Monitor
 - [x] Migrate Blazor from direct Ollama/SK chat to Gateway-routed BRAIN chat
 - [ ] Replace remaining Semantic Kernel usage with Microsoft.Extensions.AI in the C# chat path
@@ -173,15 +178,17 @@ Work completed before the BRAIN pivot. These are foundations that survive:
 
 | Gate | Criteria |
 |------|----------|
-| P3-A | `POST /brain/chat` returns evidence-backed response with confidence score |
-| P3-B | Multi-step reasoning visible (Retriever → Synthesizer → Critic chain) |
-| P3-C | Proactive Monitor flags at least one contradiction when conflicting documents are ingested |
-| P3-D | Blazor chat no longer talks directly to Ollama — all through Gateway → BRAIN |
-| P3-E | Session memory works — follow-up questions reference prior context |
-| P3-F | UI shows confidence indicators and source citations |
-| P3-G | Proactive suggestion appears without user prompting |
+| P3-A | `POST /brain/chat` returns evidence-backed response with confidence score | ✅ Complete |
+| P3-B | Multi-step reasoning visible (Retriever → Synthesizer → Critic chain) | ✅ Complete |
+| P3-C | Proactive Monitor flags at least one contradiction when conflicting documents are ingested | ⏳ Remaining |
+| P3-D | Blazor chat no longer talks directly to Ollama — all through Gateway → BRAIN | ✅ Complete |
+| P3-E | Session memory works — follow-up questions reference prior context | ⚠️ **POST-MVP FIX 1** |
+| P3-F | UI shows confidence indicators and source citations | ✅ Complete |
+| P3-G | Proactive suggestion appears without user prompting | ⏳ Remaining |
+| **P3-MVP** | **Gateway-routed chat with Regular mode works end-to-end with citations** | ✅ **ACHIEVED** |
+| **P3-H** | **Evidence metadata persists with conversation messages** | ⚠️ **POST-MVP FIX 2** |
 
-**Review result:** P3-A, P3-B, P3-D, and P3-F are satisfied on this branch. P3-C, P3-E, and P3-G remain open and define the real remaining Phase 3 work. A separate beta regression gap also remains around saved-conversation mode switching.
+**Review result:** MVP gates (P3-A, P3-B, P3-D, P3-F, P3-MVP) satisfied. Post-MVP fixes (P3-E conversation context, P3-H evidence persistence) are highest priority. P3-C and P3-G remain future work.
 
 ---
 

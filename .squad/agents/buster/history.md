@@ -1876,3 +1876,49 @@ High — Three independent test failures all exhibit the same LightRAG stuck-in-
 - src/AspireApp.WebTest/Tests/BrainGatewayPhase2Tests.cs (gateway error handling)
 - .squad/decisions.md (full decision details + evidence paths)
 - .squad/orchestration-log/2026-04-15T21-17-30Z-buster.md (session details)
+
+### 2026-04-16 — MVP Achieved: P3b Ready for Final QA Push, Post-MVP Validation Queued
+
+**Scope:** Cross-agent session confirming MVP milestone and queuing post-MVP validation work for Phase 3c.
+
+**What Happened (Summary for Buster):**
+- MVP is **officially declared functional** (gateway-routed Regular mode chat works end-to-end)
+- Two post-MVP fixes elevated to **P1-immediate** status with validation requirements:
+  1. **Conversation context not passed on follow-ups** (test: multi-turn session persistence)
+  2. **Gateway evidence not persisted** (you lead: Evidence storage + UI display regression suite)
+- P3b critique UI remains on track; ready for final QA pass
+- Both post-MVP tasks blocked on P3b completion (2026-04-30 target)
+
+**What This Means for Buster:**
+- **Immediate (P3b phase):** Final QA pass on critique UI (Jeff's implementation complete; focus on cross-seam regression)
+- **Post-MVP (Phase 3c, lead role):** Evidence persistence validation
+  - Scope: Backend persistence tests + UI display regression suite
+  - Goal: Evidence survives session reload; citations display correctly in Chat.razor
+  - Cross-context: Jarvis Neo4j schema, Jeff UI wiring
+- Context memory task (secondary): Validate multi-turn session state in Chat + BrainChatClient
+
+**Coordinator SQL-Tracked Tasks (Post-P3b):**
+- `mvp-evidence-persistence` — Evidence storage validation (owner: you)
+- `mvp-conversation-context-memory` — Session context propagation tests (co-lead with Jarvis)
+
+**P3b Final QA Checklist (Before 2026-04-30):**
+- ✅ Critique toggle works (Jeff implemented)
+- ✅ Reasoning steps render correctly (Jeff implemented)
+- ✅ Gateway error preservation flows through clients (Jeff + Jarvis fixed)
+- ⏳ Regression suite: provider wiring + HTTP error + mode reload scenarios
+- ⏳ Blazor UI state consistency (mode toggle + navigation)
+
+**Post-MVP Phase 3c Test Plan (Evidence Persistence):**
+1. Backend persistence: Evidence objects created, persisted to Neo4j, retrieved on follow-up
+2. UI display: Evidence renders with citations + confidence scores
+3. Regression: Mode switching, conversation reload, evidence display integrity
+4. Cross-seam: Python Neo4j storage + C# retrieval + Blazor UI rendering
+
+**Key Files for Post-MVP Validation:**
+- Evidence models: `src/AspireApp.PythonServices/app/contracts/models.py` (Evidence shape)
+- Storage service: `src/AspireApp.PythonServices/app/services/neo4j_service.py` (persistence layer)
+- Gateway response: `src/AspireApp.ApiService/Contracts/BrainContractModels.cs` (Evidence contract)
+- UI display: `src/AspireApp.Web/Components/Pages/Chat.razor.cs` (evidence rendering)
+- Regression tests: `src/AspireApp.WebTest/Tests/ChatCritiqueModeTests.cs` (new post-MVP suite)
+
+**Status:** MVP locked; P3b ready for final QA; post-MVP evidence validation queued 2026-04-30

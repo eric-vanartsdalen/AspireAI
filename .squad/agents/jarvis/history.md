@@ -908,3 +908,40 @@ eo4j_service to LightRagRetriever for enrichment when LightRAG lacks scores
 - src/AspireApp.PythonServices/tests/test_critique_pipeline.py (provider validation)
 - .squad/decisions.md (full decision details + validation)
 - .squad/orchestration-log/2026-04-15T21-17-30Z-jarvis.md (session details)
+
+### 2026-04-16 — MVP Achieved: P3b on Track, Post-MVP Schema Investigation Queued
+
+**Scope:** Cross-agent session confirming MVP milestone and queuing post-MVP fixes for Phase 3c.
+
+**What Happened (Summary for Jarvis):**
+- MVP is **officially declared functional** (gateway-routed Regular mode chat end-to-end)
+- Two post-MVP fixes elevated to **P1-immediate** status:
+  1. **Conversation context not passed on follow-ups** (you + Jeff: Python routing + context preservation)
+  2. **Gateway evidence not persisted** (you lead: Neo4j schema enrichment for reasoning steps)
+- P3b critique UI remains on track; no blocking gates
+- Both tasks blocked on P3b completion (2026-04-30 target)
+
+**What This Means for Jarvis:**
+- Continue P3b validation pipeline work without interruption
+- Post-MVP evidence persistence task is **your lead** work in Phase 3c
+  - Scope: Neo4j schema review for persisting reasoning steps + evidence links
+  - Goal: Backend evidence survives session reload (user pain point)
+  - Cross-context: Works with Buster for UI validation
+- Context memory task (secondary): Work with Jeff on Python routing for multi-turn session state
+
+**Coordinator SQL-Tracked Tasks (Your Queue Post-P3b):**
+- `mvp-evidence-persistence` — Neo4j schema investigation + enrichment (owner: you)
+- `mvp-conversation-context-memory` — Python multi-turn routing (co-lead with Jeff)
+
+**Coordination Notes:**
+- Bob/Verbal confirmed user-driven prioritization
+- Both tasks queued pending P3b gate closure (2026-04-30)
+- No architectural decisions needed; purely implementation scope
+
+**Key Files to Review (post-MVP phase):**
+- Reasoning steps model: `src/AspireApp.PythonServices/app/contracts/models.py` (ReasoningStep shape)
+- Evidence storage: `src/AspireApp.PythonServices/app/brain/reasoning/` (currently in-memory only)
+- Neo4j schema: `src/AspireApp.PythonServices/app/services/neo4j_service.py` (current constraints/labels)
+- Python gateway: `src/AspireApp.ApiService/Services/BrainBackendClient.cs` (response contracts)
+
+**Status:** MVP locked; post-MVP priorities ordered; Neo4j schema investigation begins 2026-04-30

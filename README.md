@@ -4,11 +4,26 @@ A modular, Blazor-based chat assistant platform that ingests documents, builds k
 
 > **Disclaimer:** This is an experimental learning project. Expect rough edges and areas to improve. Use at your own risk!
 
+## Current State: Functional MVP ✅
+
+**What's Working:**
+- **Multi-conversation chat** with persistent conversation history saved to Postgres
+- **Gateway-routed BRAIN chat** with Regular mode knowledge-augmented responses
+- **Document ingestion** via Docling (PDF/DOCX) to Neo4j knowledge graph through BRAIN contracts
+- **Multi-provider authentication** (Microsoft Entra ID, local demo providers) with tenant isolation
+- **Citation display** showing confidence scores and evidence snippets in chat responses
+- **Speech I/O** with Web Speech API for voice input/output
+- **Cross-service orchestration** via .NET Aspire with health monitoring
+
+**Known Limitations (Next Priorities):**
+1. **Conversation context not passed on follow-ups** � If you reference a prior question after uploading new documents, the LLM doesn't receive the earlier conversation context to re-answer with new data
+2. **Gateway evidence not persisted** � Backend brain evidence/citations are not saved with conversation messages; reopening a conversation loses the evidence metadata
+
 ## What It Does
 
-1. **Chat** � Conversational UI powered by local LLMs (Ollama) via Semantic Kernel, with speech-to-text and text-to-speech support.
-2. **Ingest** � Upload documentation - a Python/Docling pipeline extracts page-level content and persists output.
-3. **Retrieve** � LightRAG + Neo4j turn extracted content into a queryable knowledge graph, surfacing cited answers in chat.
+1. **Chat** � Conversational UI powered by local LLMs (Ollama) via gateway-routed BRAIN reasoning layer, with speech-to-text and text-to-speech support.
+2. **Ingest** � Upload documentation through BRAIN API Gateway - a Python/Docling pipeline extracts page-level content and persists output to Neo4j knowledge graph.
+3. **Retrieve** � LightRAG + Neo4j turn extracted content into a queryable knowledge graph, surfacing cited answers in chat with confidence scores.
 
 ## Technology Stack
 
@@ -53,9 +68,9 @@ The Aspire dashboard opens automatically. All services � Web UI, Python proces
 | Path | Purpose |
 |------|---------|
 | `src/AspireApp.AppHost/` | Aspire orchestration � wires all services, containers, and config |
-| `src/AspireApp.Web/` | Blazor UI � chat, file upload, speech I/O |
-| `src/AspireApp.ApiService/` | Minimal API (placeholder for future gateway) |
-| `src/AspireApp.PythonServices/` | FastAPI � document processing, RAG retrieval, Neo4j integration |
+| `src/AspireApp.Web/` | Blazor UI � chat, file upload, speech I/O, conversation management |
+| `src/AspireApp.ApiService/` | BRAIN API Gateway � `/brain/chat`, `/brain/ingest`, `/brain/query` endpoints |
+| `src/AspireApp.PythonServices/` | FastAPI � document processing (Docling), RAG retrieval, Neo4j knowledge graph integration |
 | `src/AspireApp.Neo4JService/` | Neo4j Docker build context and config |
 | `src/AspireApp.ServiceDefaults/` | Shared .NET service configuration and health checks |
 | `data/` | Bind-mounted volume for uploaded documents |

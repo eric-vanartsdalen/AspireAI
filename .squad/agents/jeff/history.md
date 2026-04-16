@@ -1595,3 +1595,35 @@ The failing UI test checks `Assert.Equal("uploaded", uploadedFile.Status)` at li
 - src/AspireApp.WebTest/Tests/BrainGatewayPhase2Tests.cs (validation)
 - .squad/decisions.md (full decision details + validation)
 - .squad/orchestration-log/2026-04-15T21-17-30Z-jeff.md (session details)
+
+### 2026-04-16 — MVP Achieved: P3b Critique UI on Track, P1-Immediate Post-MVP Tasks Queued
+
+**Scope:** Cross-agent session confirming MVP milestone and elevating two post-MVP fixes for Phase 3c.
+
+**What Happened (Summary for Jeff):**
+- MVP is **officially declared functional** (gateway-routed chat Regular mode works end-to-end)
+- Documentation updated across README + roadmap to reflect this milestone
+- Two post-MVP fixes identified by user feedback and elevated to **P1-immediate** status:
+  1. **Conversation context not passed on follow-ups** (affects you + Jarvis: session lifecycle + Python routing)
+  2. **Gateway evidence not persisted** (affects you + Buster: message storage + UI validation)
+- P3b critique UI remains on track (no blocking gates)
+- Both post-MVP fixes blocked on P3b completion (2026-04-30 target)
+
+**What This Means for Jeff:**
+- Continue P3b critique UI work without interruption
+- Post-MVP context memory task will be your lead work in Phase 3c (alongside Jarvis)
+  - Scope: Investigate current session lifecycle in Chat.razor.cs + BrainChatClient
+  - Goal: Pass multi-turn context on follow-up queries (user pain point)
+- Evidence persistence task is secondary (Buster lead, you supporting): persisted backend results + UI display
+
+**Coordination Notes:**
+- Coordinator SQL-tracked both tasks; queued pending P3b gate closure
+- Verbal confirmed prioritization is user-driven and high-ROI
+- No architectural decisions needed; purely implementation scope
+
+**Key Files to Know (post-MVP phase):**
+- Session management: `src/AspireApp.Web/Services/BrainChatClient.cs` (context passing)
+- Chat component: `src/AspireApp.Web/Components/Pages/Chat.razor.cs` (UI state)
+- Python gateway: `src/AspireApp.ApiService/Services/BrainBackendClient.cs` (request routing)
+
+**Status:** MVP locked; post-MVP priorities ordered; ready for Phase 3c investigation kickoff after P3b (2026-04-30)

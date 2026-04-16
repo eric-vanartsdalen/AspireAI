@@ -6,7 +6,60 @@ Working task breakdown for the [BRAIN Plan](Plan.md). Tracks what's been accompl
 
 Note: This will be a living document.
 
-**Last Updated:** 2026-04-15 — Legacy 0–3, BRAIN Phases 1–2, and the first Phase 3 beta chat slice are implemented on this branch. **ACTIVE NOW:** prove one end-to-end Aspire flow from ingested document to gateway-routed chat with citations/confidence in the Web UI. **NEXT:** close the remaining Phase 3 gaps (session memory, contradiction/proactive monitoring, proactive suggestions, chat mode transition regression coverage, and MEai cleanup). Critique mode remains experimental until live-validated.
+**Last Updated:** 2026-04-21 — **MVP ACHIEVED ✅**: Gateway-routed chat with Regular mode works end-to-end (document upload → knowledge graph → retrieval-augmented chat with citations). Multi-conversation persistence and authentication are operational. **NEXT PRIORITIES:** Fix conversation context memory and persist gateway evidence with messages (see "Next Steps: Post-MVP Fixes" section below).
+
+---
+
+## Next Steps: Post-MVP Fixes
+
+These are the critical fixes identified by the product owner to elevate the MVP to production quality. Prioritized in order of user impact.
+
+### 1. Conversation Context Memory on Follow-Up Questions (HIGH PRIORITY)
+
+**Problem:** When a user references a prior question after uploading new documents, the conversation context is not passed to the backend reasoning layer. The LLM receives only the current question, not the earlier conversation history, so it cannot re-answer the earlier question with the newly available document data.
+
+**Impact:** Users cannot build multi-turn reasoning ("What did the Q2 report say?" → upload Q3 report → "What changed since my last question?"). Each question is treated in isolation.
+
+**Technical Scope:**
+- Update Python `/brain/chat` endpoint to accept an optional `conversation_history: List[ChatMessage]` parameter
+- Update C# `BrainChatClient` to send the full conversation history when calling gateway `/brain/chat`
+- Modify Python reasoning layer to include conversation context in the augmented prompt sent to Ollama
+- Update `BrainChatRequest` contract to carry conversation history (backward-compatible: default to empty list)
+- Test: Multi-turn conversation where second question references "my last question" and verify context is passed
+
+**Owner:** Jeff (C# client changes) + Jarvis (Python reasoning layer changes)
+
+**Related Files:**
+- `src/AspireApp.Web/Components/Pages/Chat.razor.cs` — Collect conversation history before gateway call
+- `src/AspireApp.ApiService/Contracts/BrainContractModels.cs` — Extend `BrainChatRequest` with `conversation_history`
+- `src/AspireApp.PythonServices/app/routers/brain.py` — Accept and forward conversation history
+- `src/AspireApp.PythonServices/app/brain/reasoning/` — Include conversation context in prompt construction
+
+---
+
+### 2. Persist Gateway Evidence with Conversation Messages (HIGH PRIORITY)
+
+**Problem:** The backend brain returns evidence metadata (citations, confidence scores, reasoning steps) in the `BrainChatResponse`, but this data is not persisted with the conversation messages in Postgres. When a user reopens a saved conversation, the evidence metadata is lost and citations do not display.
+
+**Impact:** Users lose source attribution and confidence context when returning to old conversations. The "brain" appears less transparent because citations vanish after the session ends.
+
+**Technical Scope:**
+- Extend `ChatConversationMessage` entity to include a JSON column for storing gateway response metadata
+  - Field: `evidence_metadata` (nullable text/jsonb) storing serialized `BrainChatResponse` or subset (citations, confidence, reasoning_steps)
+- Update `ChatConversationService.AddMessageAsync` to accept and persist the evidence metadata when provided
+- Update `Chat.razor.cs` to pass `BrainChatResponse` evidence to `AddMessageAsync` after receiving assistant response
+- Update `ChatConversationMessageRecord` to include evidence metadata for retrieval
+- Update `Chat.razor` to render citations/confidence from persisted evidence when loading historical conversations
+- Database migration: Add `evidence_metadata` column to `chat_messages` table
+
+**Owner:** Jeff (C# entity/service/UI changes) + Buster (migration script + regression test)
+
+**Related Files:**
+- `src/AspireApp.Web/Data/ChatConversationEntities.cs` — Add `EvidenceMetadata` property to `ChatConversationMessage`
+- `src/AspireApp.Web/Services/ChatConversationService.cs` — Persist evidence JSON with messages
+- `src/AspireApp.Web/Components/Pages/Chat.razor.cs` — Pass evidence to persistence layer
+- `src/AspireApp.Web/Components/Pages/Chat.razor` — Render citations from persisted evidence
+- Database migration: `ALTER TABLE chat_messages ADD COLUMN evidence_metadata TEXT;`
 
 ---
 
