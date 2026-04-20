@@ -21,6 +21,7 @@ DEFAULT_CONFIDENCE = 0.5
 SCORE_KEYS = ("confidence", "relevance_score", "score", "similarity", "source_confidence")
 DOCUMENT_ID_IN_FILENAME_PATTERN = re.compile(r"^0*(\d+)(?:[-_]|$)")
 PAGE_NUMBER_PATTERN = re.compile(r"(?:^|[^0-9])page[:=_-]?(\d+)(?:[^0-9]|$)", re.IGNORECASE)
+DOCUMENT_SOURCE_REF_PATTERN = re.compile(r"document:(\d+)")
 
 
 class _KnowledgeItemFactory:
@@ -646,6 +647,7 @@ class BrainKnowledgeRetriever(IKnowledgeRetriever):
         resolved_limit = max(limit, 1)
         resolved_tenant_id = tenant_id or "default"
         resolved_correlation_id = correlation_id
+        document_ids = options.get("document_ids")
 
         try:
             primary_result = await self._light_rag_retriever.retrieve(
@@ -662,6 +664,20 @@ class BrainKnowledgeRetriever(IKnowledgeRetriever):
             resolved_tenant_id = primary_result.tenant_id or resolved_tenant_id
             resolved_correlation_id = primary_result.correlation_id or resolved_correlation_id
             if primary_result.results:
+                supplemented_results = await self._supplement_with_semantic_results(
+                    query,
+                    primary_result.results,
+                    tenant_id=resolved_tenant_id,
+                    correlation_id=resolved_correlation_id,
+                    limit=resolved_limit,
+                    document_ids=document_ids,
+                )
+                if supplemented_results is not None:
+                    return KnowledgeResult(
+                        tenant_id=resolved_tenant_id,
+                        correlation_id=resolved_correlation_id or uuid.uuid4().hex,
+                        results=supplemented_results,
+                    )
                 return primary_result
         except Exception:
             pass
@@ -671,8 +687,86 @@ class BrainKnowledgeRetriever(IKnowledgeRetriever):
             tenant_id=resolved_tenant_id,
             correlation_id=resolved_correlation_id,
             limit=resolved_limit,
-            document_ids=options.get("document_ids"),
+            document_ids=document_ids,
         )
+
+    async def _supplement_with_semantic_results(
+        self,
+        query: str,
+        primary_results: list[KnowledgeItem],
+        *,
+        tenant_id: str,
+        correlation_id: str | None,
+        limit: int,
+        document_ids: Any,
+    ) -> list[KnowledgeItem] | None:
+        if not self._should_supplement_with_semantic(primary_results, limit):
+            return None
+
+        try:
+            fallback_result = await self._semantic_retriever.retrieve(
+                query,
+                tenant_id=tenant_id,
+                correlation_id=correlation_id,
+                limit=limit,
+                document_ids=document_ids,
+            )
+        except Exception:
+            return None
+
+        merged_results = self._merge_results(primary_results, fallback_result.results, limit)
+        if len(merged_results) == len(primary_results):
+            return None
+
+        return merged_results
+
+    @staticmethod
+    def _should_supplement_with_semantic(results: list[KnowledgeItem], limit: int) -> bool:
+        if not results or limit <= 1:
+            return False
+
+        if len(results) < limit:
+            return True
+
+        unique_document_ids = BrainKnowledgeRetriever._extract_document_ids(results)
+        return len(unique_document_ids) <= 1
+
+    @staticmethod
+    def _extract_document_ids(results: list[KnowledgeItem]) -> set[int]:
+        document_ids: set[int] = set()
+        for result in results:
+            for source_ref in result.source_refs:
+                match = DOCUMENT_SOURCE_REF_PATTERN.search(source_ref)
+                if match is None:
+                    continue
+
+                try:
+                    document_ids.add(int(match.group(1)))
+                except ValueError:
+                    continue
+
+        return document_ids
+
+    @staticmethod
+    def _merge_results(
+        primary_results: list[KnowledgeItem],
+        fallback_results: list[KnowledgeItem],
+        limit: int,
+    ) -> list[KnowledgeItem]:
+        merged_results: list[KnowledgeItem] = []
+        seen_keys: set[tuple[str, tuple[str, ...]]] = set()
+
+        for result in [*primary_results, *fallback_results]:
+            result_key = (result.content, tuple(result.source_refs))
+            if result_key in seen_keys:
+                continue
+
+            seen_keys.add(result_key)
+            merged_results.append(result)
+            if len(merged_results) >= limit:
+                break
+
+        return merged_results
 
 
 class LightRAGRetriever(LightRagRetriever):

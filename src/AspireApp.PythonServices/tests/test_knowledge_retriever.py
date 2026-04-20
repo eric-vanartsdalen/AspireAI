@@ -231,7 +231,7 @@ class KnowledgeRetrieverTests(unittest.TestCase):
 
         self.assertEqual("Primary LightRAG result", result.results[0].content)
         self.assertEqual(1, len(light_rag.calls))
-        self.assertEqual([], semantic.calls)
+        self.assertEqual(1, len(semantic.calls))
 
     def test_brain_knowledge_retriever_falls_back_to_semantic_when_lightrag_returns_empty(self):
         light_rag = CapturingRetriever(
@@ -270,6 +270,63 @@ class KnowledgeRetrieverTests(unittest.TestCase):
         self.assertEqual(1, len(light_rag.calls))
         self.assertEqual(1, len(semantic.calls))
         self.assertEqual("corr-light-empty", semantic.calls[0]["correlation_id"])
+
+    def test_brain_knowledge_retriever_supplements_single_document_lightrag_results_with_semantic_hits(self):
+        light_rag = CapturingRetriever(
+            KnowledgeResult(
+                tenant_id="tenant-a",
+                correlation_id="corr-merge",
+                results=[
+                    KnowledgeItem(
+                        content="LightRAG primary result",
+                        confidence=0.72,
+                        source_refs=["document:1/page:1"],
+                        relevance_score=0.72,
+                    ),
+                    KnowledgeItem(
+                        content="LightRAG secondary chunk",
+                        confidence=0.69,
+                        source_refs=["document:1/page:2"],
+                        relevance_score=0.69,
+                    ),
+                ],
+            )
+        )
+        semantic = CapturingRetriever(
+            KnowledgeResult(
+                tenant_id="tenant-a",
+                correlation_id="corr-merge",
+                results=[
+                    KnowledgeItem(
+                        content="Semantic YouTube transcript hit",
+                        confidence=0.91,
+                        source_refs=["document:3/page:1"],
+                        relevance_score=0.91,
+                    )
+                ],
+            )
+        )
+        retriever = BrainKnowledgeRetriever(light_rag_retriever=light_rag, semantic_retriever=semantic)
+
+        result = asyncio.run(
+            retriever.retrieve(
+                "what did Jeff Fritz say about Squad",
+                tenant_id="tenant-a",
+                correlation_id="corr-merge",
+                limit=3,
+            )
+        )
+
+        self.assertEqual(1, len(light_rag.calls))
+        self.assertEqual(1, len(semantic.calls))
+        self.assertEqual(
+            [
+                "LightRAG primary result",
+                "LightRAG secondary chunk",
+                "Semantic YouTube transcript hit",
+            ],
+            [item.content for item in result.results],
+        )
 
     def test_brain_knowledge_retriever_falls_back_to_semantic_when_lightrag_raises(self):
         light_rag = CapturingRetriever(error=RuntimeError("LightRAG unavailable"))
