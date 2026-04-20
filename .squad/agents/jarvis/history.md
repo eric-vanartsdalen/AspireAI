@@ -9,6 +9,32 @@
 
 <!-- Append new learnings below. Each entry is something lasting about the project. -->
 
+### 2026-04-22 — YouTube Child Transcript Ingestion Uses a Persistent Attempt-Tracked Queue
+
+**Problem:**
+- Expanding a YouTube channel into many child video URLs caused transcript fetches to fire immediately, which can trip YouTube rate limits.
+- The throttle has to survive service restarts, so in-memory timers alone are not enough.
+
+**Fix:**
+- Added PostgreSQL-backed queue tables in `DatabaseService`: `youtube_transcript_queue` stores pending child video work, and `youtube_transcript_attempts` stores each attempt timestamp plus its UTC calendar date.
+- Updated `app/routers/processing.py` so channel expansion enqueues child `youtube_video` rows instead of recursively processing them, while a lightweight startup drainer claims at most one queued transcript per minute and blocks after 50 UTC-day attempts.
+- Retryable child rows still reuse the existing `files` record/status path; queue completion is tracked separately from the main document lifecycle.
+
+**Result:**
+- Channel ingestion stays responsive while transcript pulls are spread over time.
+- Daily and per-minute throttles survive restarts because attempt history lives in the operational PostgreSQL store.
+- `process-all` no longer bypasses the throttle for queued YouTube transcript rows.
+
+**Key Pattern:**
+- **Persist the throttle, not just the work item:** When an external source imposes rate limits, store each attempt timestamp and UTC attempt date in the database so quota logic survives restarts and multiple dispatch passes.
+- **Queue only the expensive child edge:** Keep the existing document pipeline for actual processing, but interpose a small persistent queue only around the external fetch step that needs throttling.
+
+**Key file paths:**
+- `src/AspireApp.PythonServices/app/services/database_service.py`
+- `src/AspireApp.PythonServices/app/routers/processing.py`
+- `src/AspireApp.PythonServices/tests/test_p0_contract_audit.py`
+- `src/AspireApp.PythonServices/tests/test_processing_pipeline_regression.py`
+
 ### 2026-04-22 — Child URL Expansion Must Reuse the Main Processing Pipeline
 
 **Problem:**
@@ -1119,3 +1145,33 @@ eo4j_service to LightRagRetriever for enrichment when LightRAG lacks scores
 **User Preferences:**
 - Keep the fix surgical.
 - Prove the dependency-install path works again with minimal, concrete validation.
+
+---
+
+## Session: YouTube Transcript Queue Implementation (2026-04-20T07:07:50Z)
+
+**Participants:** Bob (approval), Jarvis (implementation), Buster (QA)
+**Status:** COMPLETE — Schema deployed, worker integrated, 27+ tests passing
+**Output:** youtube_transcript_queue + youtube_transcript_attempts schema; async drainer loop; throttle enforcement methods
+
+**Implementation Summary:**
+- Schema: Two tables + indices (query optimization for status/attempt_date)
+- Throttle methods: 
+  - claim_next_youtube_transcript(): 1-per-minute dispatch eligibility
+  - get_youtube_transcript_queue_wait_seconds(): backoff calculation
+  - Quota tracking via daily COUNT WHERE attempt_date = TODAY
+- Enqueue gate: _process_child_documents() redirects youtube_video children to queue
+- Retry path: Child rows with uploaded/error status resume instead of skip
+- Async drainer: 60-second polling loop, FastAPI lifecycle wiring
+
+**Validation:**
+- Schema deployment: PASS
+- Throttle enforcement: PASS (1-per-minute + 50-per-day proven)
+- Retry mechanics: PASS (existing child rows handled)
+- Restart safety: PASS (attempt history persisted)
+
+**Cross-Agent Dependencies:** None new; existing DatabaseService patterns extended. No conflicts with Python/FastAPI boundaries.
+
+**Decision Record:** Merged 1 decision to decisions.md; orchestration log created
+
+**Known Limits:** UI signal for queued-but-not-yet-processed status deferred to Phase 3 (non-blocking)

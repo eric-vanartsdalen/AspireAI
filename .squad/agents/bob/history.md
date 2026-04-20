@@ -940,3 +940,60 @@ YouTube channels return child_urls list (video URLs). Processing router creates 
 - GitHub repo handler: parse README/docs, queue individual files
 - PDF at URL: download to temp file, route to existing PDF processing
 - Playlist handler: extract video URLs like channel handler
+
+### 2026-06-30 — YouTube Transcript Rate-Limit Queue Architecture
+
+**Context:** YouTube blocked rapid-fire transcript requests when processing channel child URLs. Current `_process_child_documents()` in `processing.py` (line 111-140) calls `_process_document_task_sync()` for each child video immediately in sequence — up to 50 transcripts back-to-back with zero delay.
+
+**Decision:** New `youtube_transcript_queue` table in Postgres + lightweight `asyncio.create_task()` background poller in FastAPI. One transcript per minute, 50 per UTC day. No external scheduler (Celery/APScheduler rejected as overkill for single-item-per-minute loop).
+
+**Key Architecture Points:**
+- Separate table, not columns on `files` — rate-limiting is operational concern, not document lifecycle
+- Daily cap tracked via `attempt_date DATE` column (`COUNT WHERE attempt_date = CURRENT_DATE`)
+- `FOR UPDATE SKIP LOCKED` for defensive single-processing guarantee
+- Schema created in `_ensure_database_schema()` following existing idempotent pattern
+- Worker started in `startup_event()`, stopped in `shutdown_event()` (lines 93-143 of `fastapi.py`)
+- Only change to existing code: conditional gate in `_process_child_documents()` — if `source_type == 'youtube_video'`, enqueue instead of process inline
+
+**Key Files:**
+- Processing pipeline: `src/AspireApp.PythonServices/app/routers/processing.py` (lines 69-140: child URL flow)
+- Database schema: `src/AspireApp.PythonServices/app/services/database_service.py` (line 228: `_ensure_database_schema`)
+- YouTube handler: `src/AspireApp.PythonServices/app/services/url_handlers/youtube.py`
+- FastAPI lifecycle: `src/AspireApp.PythonServices/app/fastapi.py` (lines 93-143)
+- Regression tests: `src/AspireApp.PythonServices/tests/test_processing_pipeline_regression.py`
+
+**User Preference:** Eric wants date-based tracking for transcript attempts. UTC date column satisfies this cleanly.
+
+**Test Impact:** `test_process_document_task_processes_child_urls` and `test_process_document_task_reuses_retryable_child_url_records` need updating — they currently expect inline processing of YouTube video children.
+
+**Ownership:** Jarvis (table + worker + gate), Buster (test updates + worker tests), Jeff (optional UI for queued status).
+
+**Decision recorded:** `.squad/decisions/inbox/bob-youtube-transcript-queue.md`
+
+---
+
+## Session: YouTube Transcript Queue Rate-Limiting (2026-04-20T07:07:50Z)
+
+**Participants:** Bob (architecture), Jarvis (implementation), Buster (QA)
+**Status:** COMPLETE — 3 decisions merged, 27+ tests passing
+**Output:** Persistent PostgreSQL queue + async drainer for YouTube child video throttling (1/min, 50/day cap)
+
+**Architectural Approval:**
+- Queue table separation from document lifecycle (clean concern boundary)
+- No external scheduler dependency (APScheduler/Celery rejected as over-engineering)
+- Restart-safe via persisted attempt history
+- Schema + async worker lifecycle validated; low risk (additive change only)
+
+**Key Decisions Recorded:**
+1. Bob: YouTube Transcript Rate-Limit Queue (architecture boundary, schema approval)
+2. Jarvis: Persistent YouTube Transcript Queue (implementation details, throttle methods)
+3. Buster: YouTube Transcript Queue Regression Seams (two-seam coverage strategy)
+
+**Validation:** All 3 decisions merged to decisions.md; orchestration logs created; session log in squad/log/
+
+**Cross-Agent Notes:**
+- Jarvis implemented PostgreSQL integration (schema + throttle methods) — no conflicts with existing service boundary
+- Buster split regression coverage across router seam (enqueue) and database seam (throttle policy) — good determinism
+- Jeff not directly involved (UI polish deferred to Phase 3)
+
+**Next Phase:** Monitor YouTube ingestion flows; Phase 3 UI signal for queued-but-not-yet-processed videos

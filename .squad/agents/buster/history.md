@@ -2092,3 +2092,56 @@ High — Three independent test failures all exhibit the same LightRAG stuck-in-
 - `src\AspireApp.PythonServices\app\routers\processing.py`
 - `src\AspireApp.PythonServices\tests\test_processing_pipeline_regression.py`
 - `src\AspireApp.PythonServices\app\services\database_service.py`
+
+### 2026-04-22 — YouTube transcript queue regressions belong at the router + DatabaseService seam
+
+**Task:** Add focused regression coverage for queued YouTube transcript behavior without hitting live YouTube.
+
+**What QA locked down:**
+- Child YouTube URLs discovered during channel processing must stay enqueued: `processing.py` should create child datasource rows, record queue entries via `enqueue_youtube_transcript(...)`, and avoid recursively processing those child documents immediately.
+- Queue throttle policy lives in `DatabaseService`, not the trigger endpoint: `claim_next_youtube_transcript(...)` and `get_youtube_transcript_queue_wait_seconds(...)` enforce the one-attempt-per-minute rule and the 50-attempts-per-UTC-day cap.
+- The daily cap is driven by `youtube_transcript_attempts.attempted_on` / `attempted_at`, not upload timestamps. Regression tests should seed explicit UTC attempt rows and prove a prior-day attempt does not consume today’s final slot.
+
+**Verification:**
+- `python -m pytest tests\test_youtube_transcript_queue.py tests\test_processing_pipeline_regression.py tests\test_phase2_ingestion.py -q` from `src\AspireApp.PythonServices` passed (19/19).
+
+**Key File Paths:**
+- `src\AspireApp.PythonServices\tests\test_youtube_transcript_queue.py`
+- `src\AspireApp.PythonServices\app\routers\processing.py`
+- `src\AspireApp.PythonServices\app\services\database_service.py`
+- `src\AspireApp.PythonServices\tests\fake_postgres.py`
+
+---
+
+## Session: YouTube Transcript Queue QA Coverage (2026-04-20T07:07:50Z)
+
+**Participants:** Bob (approval), Jarvis (implementation), Buster (QA)
+**Status:** COMPLETE — Two-seam regression coverage, 27+ tests passing
+**Output:** test_youtube_transcript_queue.py focused regression suite; router + database seams validated
+
+**Regression Coverage:**
+
+1. **Router Seam** (processing.py):
+   - Enqueue invoked for YouTube children only
+   - Non-YouTube children processed inline (existing path unbroken)
+   - Multiple children enqueued in single channel expansion
+   - Child rows remain uploaded until queue claims
+
+2. **Database Seam** (DatabaseService):
+   - claim_next_youtube_transcript() dispatch eligibility
+   - get_youtube_transcript_queue_wait_seconds() backoff timing
+   - 1-transcript-per-60-seconds enforcement
+   - 50-per-UTC-day quota enforcement
+   - Prior-day attempts do NOT consume today's quota
+
+**Test Results:**
+- test_youtube_transcript_queue.py: PASS (All tests)
+- test_processing_pipeline_regression.py: PASS (Child URL path updated)
+- test_p0_contract_audit.py: PASS (Contract boundaries verified)
+- Integration: PASS (27+ tests across all suites passing)
+
+**Key Testing Insight:** Two-seam coverage prevents bypass (router enqueue alone isn't proof of throttle enforcement; database tests prove the policy). Deterministic (no timing races).
+
+**Decision Record:** Merged 1 decision to decisions.md; orchestration log created
+
+**Residual Risk:** None identified. Both seams tightly coupled and fully covered.
