@@ -7,6 +7,7 @@ import sys
 import tempfile
 import unittest
 import httpx
+from datetime import UTC, datetime
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
@@ -40,6 +41,7 @@ class FakeDatabaseService:
         self.file_record: dict | None = None
         self.duplicate_urls: set[str] = set()
         self.added_url_sources: list[dict] = []
+        self.youtube_queue_entries: dict[int, dict] = {}
         if document is not None:
             self.register_document(document)
 
@@ -125,6 +127,10 @@ class FakeDatabaseService:
             document
             for document in self.documents.values()
             if getattr(document, "processing_status", "uploaded") in {"uploaded", "error"}
+            and not (
+                getattr(document, "source_type", None) == "youtube_video"
+                and self.youtube_queue_entries.get(document.id, {}).get("completed_at") is None
+            )
         ]
 
     def get_processing_status(self, document_id: int):
@@ -134,6 +140,39 @@ class FakeDatabaseService:
         if self.file_record and self.file_record.get("id") == file_id:
             return self.file_record
         return None
+
+    def enqueue_youtube_transcript(self, *, file_id: int, source_url: str, tenant_id: str = "default") -> int:
+        entry = self.youtube_queue_entries.get(file_id)
+        if entry is None:
+            entry = {
+                "id": len(self.youtube_queue_entries) + 1,
+                "file_id": file_id,
+                "source_url": source_url,
+                "tenant_id": tenant_id,
+                "queued_at": datetime.now(UTC),
+                "last_attempted_at": None,
+                "completed_at": None,
+                "last_error": None,
+            }
+            self.youtube_queue_entries[file_id] = entry
+        else:
+            entry["source_url"] = source_url
+            entry["tenant_id"] = tenant_id
+            entry["completed_at"] = None
+            entry["last_error"] = None
+        return entry["id"]
+
+    def mark_youtube_transcript_completed(self, file_id: int) -> None:
+        entry = self.youtube_queue_entries.get(file_id)
+        if entry is not None:
+            entry["completed_at"] = datetime.now(UTC)
+            entry["last_error"] = None
+
+    def mark_youtube_transcript_failed(self, file_id: int, error: str) -> None:
+        entry = self.youtube_queue_entries.get(file_id)
+        if entry is not None:
+            entry["completed_at"] = None
+            entry["last_error"] = error
 
 
 class FakeNeo4jService:
@@ -382,7 +421,7 @@ class ProcessingPipelineRegressionTests(unittest.TestCase):
         for embedding in neo4j.claim_embeddings.values():
             self.assertEqual(384, len(embedding))
 
-    def test_process_document_task_fetches_classified_url_sources_and_queues_children(self):
+    def test_process_document_task_fetches_classified_url_sources_and_enqueues_child_transcripts(self):
         document = SimpleNamespace(
             id=77,
             filename="happy-gilmore-channel",
@@ -454,7 +493,8 @@ class ProcessingPipelineRegressionTests(unittest.TestCase):
 
         with tempfile.TemporaryDirectory() as temp_dir, \
             patch.dict(os.environ, {"ASPIRE_DATA_PATH": temp_dir}, clear=False), \
-            patch("app.routers.processing.get_url_content_fetcher", return_value=FakeFetcher()):
+            patch("app.routers.processing.get_url_content_fetcher", return_value=FakeFetcher()), \
+            patch("app.routers.processing._ensure_youtube_transcript_queue_drainer"):
             asyncio.run(
                 processing.process_document_task(
                     document_id=77,
@@ -470,10 +510,10 @@ class ProcessingPipelineRegressionTests(unittest.TestCase):
         self.assertIn((77, "processed", None), db.status_updates)
         self.assertEqual(2, len(db.added_url_sources))
         self.assertEqual(2, len(queued_child_ids))
-        self.assertEqual([77, *queued_child_ids], processed_documents)
+        self.assertEqual([77], processed_documents)
         for child_id in queued_child_ids:
-            self.assertIn((child_id, "processing", None), db.status_updates)
-            self.assertIn((child_id, "processed", None), db.status_updates)
+            self.assertIn(child_id, db.youtube_queue_entries)
+            self.assertIsNone(db.youtube_queue_entries[child_id]["completed_at"])
         self.assertEqual(
             ["youtube_video", "youtube_video"],
             [item["source_type"] for item in db.added_url_sources],
@@ -543,7 +583,8 @@ class ProcessingPipelineRegressionTests(unittest.TestCase):
 
         with tempfile.TemporaryDirectory() as temp_dir, \
             patch.dict(os.environ, {"ASPIRE_DATA_PATH": temp_dir}, clear=False), \
-            patch("app.routers.processing.get_url_content_fetcher", return_value=FakeFetcher()):
+            patch("app.routers.processing.get_url_content_fetcher", return_value=FakeFetcher()), \
+            patch("app.routers.processing._ensure_youtube_transcript_queue_drainer"):
             asyncio.run(
                 processing.process_document_task(
                     document_id=88,
@@ -555,9 +596,9 @@ class ProcessingPipelineRegressionTests(unittest.TestCase):
             )
 
         self.assertEqual([], db.added_url_sources)
-        self.assertEqual([88, 12], processed_documents)
-        self.assertIn((12, "processing", None), db.status_updates)
-        self.assertIn((12, "processed", None), db.status_updates)
+        self.assertEqual([88], processed_documents)
+        self.assertIn(12, db.youtube_queue_entries)
+        self.assertIsNone(db.youtube_queue_entries[12]["completed_at"])
 
     def test_youtube_channel_handler_retries_past_consent_and_expands_child_videos(self):
         requested_url = "https://www.youtube.com/@csharpfritz/videos"
@@ -687,6 +728,30 @@ class ProcessingPipelineRegressionTests(unittest.TestCase):
             )
 
         self.assertEqual(409, context.exception.status_code)
+
+    def test_process_document_endpoint_queues_youtube_transcripts(self):
+        document = SimpleNamespace(
+            id=9,
+            processing_status="uploaded",
+            source_type="youtube_video",
+            source_url="https://www.youtube.com/watch?v=aaaaaaaaaaa",
+            tenant_id="tenant-a",
+        )
+        db = FakeDatabaseService(document)
+
+        with patch("app.routers.processing._ensure_youtube_transcript_queue_drainer"):
+            response = asyncio.run(
+                processing.process_document(
+                    document_id=9,
+                    background_tasks=BackgroundTasks(),
+                    db=db,
+                    neo4j=FakeNeo4jService(),
+                )
+            )
+
+        self.assertEqual("YouTube transcript queued for document 9", response.message)
+        self.assertEqual([], db.status_updates)
+        self.assertIn(9, db.youtube_queue_entries)
 
     def test_cleanup_document_removes_processed_artifacts_and_calls_external_cleanup(self):
         with tempfile.TemporaryDirectory() as temp_dir:
