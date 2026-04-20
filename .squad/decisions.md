@@ -27,6 +27,7 @@
 > **Note (2026-04-21T21:00:00Z):** Merged 1 inbox decision from MVP documentation & post-MVP fix ordering session (Bob, Verbal). Key outcome: Established MVP Declaration Pattern with clear milestone markers (functional gateway-routed chat end-to-end works), documented working features + known limitations side-by-side, captured and ordered two post-MVP fixes by user impact (conversation context + evidence persistence). Phase 3 status updated from "in progress" to "MVP Achieved"; post-MVP work explicitly scoped with technical ownership (Jeff + Jarvis for context; Buster + Jeff for evidence). Documentation now reflects honest product state. Inbox cleared.
 > **Note (2026-04-16T15:34:22Z):** Merged 2 inbox decisions from YouTube followup fixes session (Jeff, Jarvis). Key outcomes: (1) Web source labeling refined — UploadData table now treats `url`, `youtube_video`, `youtube_channel` uniformly in UI (WEB semantics) while preserving explicit taxonomic storage. UrlSourceTypeClassifier provides shared taxonomy helper. (2) YouTube channel ingestion made consent-resilient — Channel URLs now survive consent redirects via stable headers, explicit interstitial detection, canonical ID resolution from page metadata, and RSS feed as primary discovery source with HTML supplement. Both focused test suites passing (bUnit + Python regression + live smoke). Inbox cleared.
 > **Note (2026-04-20T07:07:50Z):** Merged 3 inbox decisions from YouTube transcript rate-limiting queue implementation session (Bob, Jarvis, Buster). Key outcomes: (1) Architecture approved: persistent PostgreSQL queue (no external scheduler dependency like APScheduler/Celery). (2) Jarvis implemented schema (`youtube_transcript_queue` + `youtube_transcript_attempts`), async drainer (1 attempt/min, 50/day cap), throttle enforcement methods. (3) Buster added two-seam regression coverage: router seam (enqueue mechanics), database seam (throttle policy). (4) Restart safety via persisted attempt history. (5) 27+ tests passing. (6) Enqueue gate in `_process_child_documents()` redirects YouTube children to queue; retry path (uploaded/error) validated. No exact duplicates found. Inbox cleared.
+> **Note (2026-04-22T21:17:21Z):** Merged 2 inbox decisions from retrieval flow investigation for YouTube-ingested content session (Jeff, Jarvis). Key outcomes: (1) Jeff investigated Web → ApiService → Python handoff; confirmed no dropped .NET document-scope signal in shared contracts (design limitation, not code bug). (2) Jarvis fixed downstream LightRAG retriever — now supplements sparse single-document LightRAG results with semantic hits before returning to caller. (3) YouTube transcript processing resilient to LightRAG eventual consistency. (4) Regression coverage validates single-document LightRAG result widening. (5) 48 Python tests passing. No exact duplicates found. Inbox cleared.
 
 <!-- Decisions are appended below. Each entry starts with ## -->
 
@@ -3585,4 +3586,99 @@ Testing only the enqueue endpoint misses the real risk: the throttle rules live 
   - prior-day attempts do not consume today’s final slot
 - Validation command:
   - `python -m pytest tests\test_youtube_transcript_queue.py tests\test_processing_pipeline_regression.py tests\test_phase2_ingestion.py -q`
+
+
+## BRAIN Retrieval Handoff Gap — Jeff — 2026-04-22
+
+**Author:** Jeff (.NET Dev)  
+**Status:** Investigated  
+**Date:** 2026-04-22  
+
+### Context
+
+Eric reported that after a new YouTube URL/page is processed, follow-up chat questions appear to keep retrieving from the earlier document instead of the newly processed source.
+
+### Decision
+
+Do **not** add a speculative .NET-only workaround.
+
+- The current Web → ApiService → Python BRAIN handoff does **not** carry any selected document IDs, focus document, or document filter.
+- The shared chat/query contracts currently expose only tenant, correlation, query, mode, conversation ID, top-k, and conversation history.
+- Python currently accepts conversation_id but does not use it to scope retrieval.
+- Python **does** blend conversation_history into the retrieval query, so older conversation context can anchor retrieval toward the earlier document.
+- Python retrievers already have an optional document_ids filtering seam, but that field is not present in the shared BRAIN chat/query contracts yet.
+
+### Implication
+
+The most likely root cause is downstream retrieval behavior, not a dropped .NET selection payload:
+
+1. There is no document-scope signal for .NET to send today, and
+2. Python retrieval currently uses history-augmented queries that can keep follow-ups tied to older context.
+
+### Follow-up
+
+1. Jarvis/Bob should decide whether to add document-scoping (document_ids or equivalent focus metadata) across the shared BRAIN contracts.
+2. If not, Jarvis should revisit Python retrieval-query construction so history helps follow-ups without overpowering a newly uploaded document.
+3. Keep the .NET caller unchanged until the product has a clear source of truth for document scope in the UI.
+
+### Evidence
+
+- Examined shared BRAIN chat/query contracts between C# and Python
+- Confirmed no document ID filter, focus document, or document scope signal currently present
+- Verified Python retrieval uses history-augmented queries (which can anchor to older context)
+- Found Python retrievers have optional document_ids filtering seam, but not exposed in shared contracts
+
+### Related Work
+
+- Jarvis's LightRAG semantic supplementation (2026-04-22) addresses downstream retrieval behavior
+
+---
+
+## LightRAG Single-Document Results Should Be Supplemented With Semantic Retrieval — Jarvis — 2026-04-22
+
+**Author:** Jarvis (Python / Data Dev)  
+**Status:** Implemented  
+**Date:** 2026-04-22  
+
+### Context
+
+- A processed YouTube URL can finish the Python pipeline and persist pages/claims while its LightRAG scan still fails or lags.
+- The current retrieval stack is LightRAG-first, semantic-second. Before this change, any non-empty LightRAG result short-circuited the semantic retriever.
+- In practice that meant a single stale LightRAG hit from an older document could hide newer YouTube transcript content that already existed in Neo4j.
+
+### Decision
+
+When BrainKnowledgeRetriever gets LightRAG results that are sparse or collapse to one source document, it should also run semantic retrieval and merge deduped results up to the caller's limit.
+
+### Why
+
+- This keeps LightRAG as the primary retriever while avoiding false confidence in stale or narrow result sets.
+- It improves resilience when downstream LightRAG indexing is eventually consistent or partially failed.
+
+### Implementation Notes
+
+- pp\brain\knowledge\retrievers.py now detects single-document LightRAG results from document:{id} source refs and supplements them with semantic hits.
+- 	ests\test_knowledge_retriever.py adds regression coverage for merging a single-document LightRAG result with a semantic YouTube transcript hit.
+
+### Merge Strategy
+
+- Preserve LightRAG ordering first
+- Append deduped semantic hits up to request limit
+- Prevents reversion to early-exit behavior on sparse results
+
+### Test Results
+
+- ✅ 48 targeted Python tests passing
+- ✅ YouTube transcript retrieval regression coverage validates supplementation
+- ✅ Sparse LightRAG single-document hits now widened with semantic results
+
+### Impact
+
+- Queries no longer depend on LightRAG being perfectly up to date before Neo4j-backed transcript content can show up in answer context
+- A LightRAG scan miss/failure for a newly processed YouTube document is less likely to get masked by older LightRAG hits from another document
+- Retrieval flow resilient to LightRAG eventual consistency
+
+### Related Decision
+
+- Jeff's BRAIN Retrieval Handoff Gap (2026-04-22) — established that root cause is downstream Python retrieval, not dropped .NET signal
 

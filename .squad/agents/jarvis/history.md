@@ -9,6 +9,32 @@
 
 <!-- Append new learnings below. Each entry is something lasting about the project. -->
 
+### 2026-04-22 — LightRAG Single-Document Results Should Be Supplemented With Semantic Retrieval
+
+**Problem:**
+- URL/YouTube processing can succeed through Docling fallback + Neo4j/page persistence while the downstream LightRAG scan still fails separately.
+- In the current local data shape, `data\rag_storage\kv_store_doc_status.json` showed the YouTube transcript staged as `000003-youtube.md` with LightRAG status `failed`, while Python had already marked document 3 as processed and saved canonical content under `data\processed\documents\3\`.
+- `BrainKnowledgeRetriever` previously returned the first non-empty LightRAG result set as-is, so a sparse or single-document LightRAG hit could suppress semantic fallback and hide newer YouTube-only content that was already queryable in Neo4j.
+
+**Fix:**
+- Updated `app\brain\knowledge\retrievers.py` so `BrainKnowledgeRetriever` supplements LightRAG hits with semantic retrieval when the LightRAG result set is sparse or resolves to only one source document.
+- Merge results by preserving LightRAG ordering first, then appending deduped semantic hits up to the request limit.
+- Added regression coverage proving a single-document LightRAG result can now be widened with a semantic YouTube transcript hit.
+
+**Result:**
+- Queries no longer depend on LightRAG being perfectly up to date before Neo4j-backed transcript content can show up in the answer context.
+- A LightRAG scan miss/failure for a newly processed YouTube document is less likely to get masked by older LightRAG hits from another document.
+
+**Key Pattern:**
+- **Primary retriever supplementation:** When a preferred retrieval layer can lag ingestion, do not stop at the first non-empty answer if it collapses to one source; supplement with the secondary retriever and merge/dedupe.
+- **Split ingestion status awareness:** Main document processing success does not guarantee downstream LightRAG indexing success; inspect `data\rag_storage\kv_store_doc_status.json` alongside `data\processed\documents\{id}\metadata.json` when retrieval feels stale.
+
+**Key file paths:**
+- `src\AspireApp.PythonServices\app\brain\knowledge\retrievers.py`
+- `src\AspireApp.PythonServices\tests\test_knowledge_retriever.py`
+- `data\rag_storage\kv_store_doc_status.json`
+- `data\processed\documents\3\metadata.json`
+
 ### 2026-04-22 — YouTube Child Transcript Ingestion Uses a Persistent Attempt-Tracked Queue
 
 **Problem:**

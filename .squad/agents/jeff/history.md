@@ -34,6 +34,20 @@
 
 ## Learnings
 
+### 2026-04-22 — BRAIN Retrieval Handoff Gap Investigation
+
+**Context:** Eric reported YouTube content retrieval appearing to search only the first document. Investigated Web → ApiService → Python handoff.
+
+**Finding:**
+- No document-scope signal in shared BRAIN chat/query contracts (design limitation, not .NET code bug)
+- Python retrieval uses history-augmented queries, which can anchor follow-ups to earlier context
+- Python retrievers have optional `document_ids` seam, but not exposed in shared contracts yet
+- Root cause is downstream Python retrieval behavior, not dropped .NET payload
+
+**Decision:** Do not add speculative .NET workaround. Recommended Jarvis/Bob add explicit document-scoping to shared contracts if product needs single-document focus.
+
+**Related:** Jarvis fixed downstream LightRAG supplementation; YouTube flow now resilient to eventual consistency.
+
 ### 2026-04-16 — Team Sync: Chat Gateway History + Metadata Persistence
 
 **Context:** Jarvis added `conversation_history` to BRAIN contract. Buster validated regression coverage. 54 Python + 44 .NET tests passing.
@@ -172,6 +186,30 @@ Build verified successfully. Tests were running but took longer than expected du
 ## Learnings
 
 <!-- Append new learnings below. Each entry is something lasting about the project. -->
+
+### 2026-04-22 — BRAIN chat/query handoff has no document-scoping, and Python retrieval uses history instead
+
+**Status:** Investigated; no local .NET product fix applied.
+
+**Key insight:**
+- `src\AspireApp.Web\Components\Pages\Chat.razor.cs` sends chat requests with tenant, conversation ID, mode, top-k, and conversation history, but no selected document IDs or focus/filter payload.
+- `src\AspireApp.Web\Services\BrainChatClient.cs` and `src\AspireApp.ApiService\Contracts\BrainContractModels.cs` mirror that same contract shape: chat carries `query`, `mode`, `conversation_id`, `conversation_history`, `top_k`; query carries only `query` and `top_k`.
+- Python accepts `conversation_id`, but `src\AspireApp.PythonServices\app\routers\brain.py` and `src\AspireApp.PythonServices\app\routers\rag.py` do not use it for retrieval. Instead, `conversation_history` is blended directly into the retrieval query, which can bias follow-up retrieval toward earlier document context.
+- Python retrievers already have an optional `document_ids` filter path in `src\AspireApp.PythonServices\app\brain\knowledge\retrievers.py`, but the shared BRAIN chat/query contracts do not expose that field today, so .NET cannot scope retrieval even if the UI wanted to.
+
+**Validation:**
+- `dotnet test src\AspireApp.WebTest\AspireApp.WebTest.csproj --filter "FullyQualifiedName~BrainGatewayPhase2Tests|FullyQualifiedName~ChatFocusTests|FullyQualifiedName~BrainContractRoundTripTests" --logger "console;verbosity=minimal" /m:1`
+
+**Key paths:**
+- `src\AspireApp.Web\Components\Pages\Chat.razor.cs`
+- `src\AspireApp.Web\Services\BrainChatClient.cs`
+- `src\AspireApp.ApiService\Contracts\BrainContractModels.cs`
+- `src\AspireApp.ApiService\Program.cs`
+- `src\AspireApp.ApiService\Services\BrainBackendClient.cs`
+- `src\AspireApp.PythonServices\app\contracts\models.py`
+- `src\AspireApp.PythonServices\app\routers\brain.py`
+- `src\AspireApp.PythonServices\app\routers\rag.py`
+- `src\AspireApp.PythonServices\app\brain\knowledge\retrievers.py`
 
 ### 2026-04-16 — Upload UI tests should sign in directly to the protected upload route instead of reopening the sidebar nav
 
