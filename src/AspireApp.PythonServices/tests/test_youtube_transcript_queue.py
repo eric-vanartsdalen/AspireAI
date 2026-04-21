@@ -23,7 +23,7 @@ from app.services import database_service as database_service_module
 from app.services.database_service import DatabaseService
 from app.services.url_handlers.base import FetchedContent
 
-from fake_postgres import FakeConnectionPool
+from fake_postgres import ATTEMPT_COLUMNS, FILE_COLUMNS, PAGE_COLUMNS, QUEUE_COLUMNS, FakeConnectionPool
 
 
 class QueueStubDatabase:
@@ -31,6 +31,7 @@ class QueueStubDatabase:
         self.documents: dict[int, SimpleNamespace] = {}
         self.next_document_id = document.id + 1
         self.status_updates: list[tuple[int, str, str | None]] = []
+        self.indexing_updates: list[tuple[int, str, str | None]] = []
         self.added_url_sources: list[dict[str, object]] = []
         self.enqueued_youtube_transcripts: list[dict[str, object]] = []
         self.ingestion_updates: list[dict[str, object]] = []
@@ -39,6 +40,10 @@ class QueueStubDatabase:
         self.register_document(document)
 
     def register_document(self, document: SimpleNamespace) -> None:
+        if not hasattr(document, "indexing_status"):
+            document.indexing_status = "not_requested"
+        if not hasattr(document, "indexing_error"):
+            document.indexing_error = None
         self.documents[document.id] = document
 
     def get_document_by_id(self, document_id: int):
@@ -49,6 +54,13 @@ class QueueStubDatabase:
         document = self.documents.get(file_id)
         if document is not None:
             document.processing_status = status
+
+    def update_file_indexing_status(self, file_id: int, indexing_status: str, error: str = None) -> None:
+        self.indexing_updates.append((file_id, indexing_status, error))
+        document = self.documents.get(file_id)
+        if document is not None:
+            document.indexing_status = indexing_status
+            document.indexing_error = error
 
     def resolve_upload_path(self, document):
         return document.file_path
@@ -152,6 +164,11 @@ class EmptyClaimExtractionService:
 class NoopLightRagHandoffService:
     def handoff_document(self, document, markdown_path):
         return {"scan_requested": False, "markdown_path": markdown_path}
+
+    def wait_for_document_readiness(self, staged_input_path, *, status_callback=None, **_kwargs):
+        if status_callback is not None:
+            status_callback("not_requested", None)
+        return {"indexing_status": "not_requested", "indexing_error": None}
 
 
 class FakeQueueFetcher:
@@ -319,6 +336,7 @@ class YouTubeTranscriptQueueTests(unittest.TestCase):
         self.assertEqual("processing", record["status"])
         self.assertIsNotNone(record["processing_started_at"])
         self.assertIsNone(record["processing_completed_at"])
+        self.assertEqual("not_requested", record["indexing_status"])
 
     def test_child_youtube_urls_stay_enqueued_until_queue_worker_runs(self):
         """Channel expansion should enqueue transcript URLs without recursively processing them immediately."""
@@ -371,7 +389,87 @@ class YouTubeTranscriptQueueTests(unittest.TestCase):
         self.assertGreaterEqual(ensure_drainer.call_count, 1)
         for child_id in queued_child_ids:
             self.assertEqual("uploaded", db.documents[child_id].processing_status)
+            self.assertEqual("not_requested", db.documents[child_id].indexing_status)
             self.assertNotIn((child_id, "processing", None), db.status_updates)
+            self.assertNotIn((child_id, "ready", None), db.indexing_updates)
+
+    def test_schema_compatibility_adds_indexing_columns_with_defaults(self):
+        conninfo = "host=test port=5432 dbname=appdb user=postgres password=pw"
+        state = FakeConnectionPool.states.setdefault(conninfo, FakeConnectionPool(conninfo).state)
+        legacy_file_columns = [column for column in FILE_COLUMNS if column not in {"indexing_status", "indexing_error"}]
+        state.tables["files"] = {
+            "columns": legacy_file_columns,
+            "rows": [
+                {
+                    "id": 1,
+                    "file_name": "legacy.pdf",
+                    "original_file_name": "legacy.pdf",
+                    "file_path": "legacy.pdf",
+                    "file_hash": "",
+                    "file_size": 0,
+                    "mime_type": "application/pdf",
+                    "uploaded_at": datetime(2026, 4, 22, 12, 0, tzinfo=UTC),
+                    "status": "uploaded",
+                    "processing_started_at": None,
+                    "processing_completed_at": None,
+                    "processing_error": None,
+                    "docling_document_path": None,
+                    "total_pages": None,
+                    "neo4j_document_node_id": None,
+                    "tenant_id": "default",
+                    "source_type": "upload",
+                    "source_confidence": 0.7,
+                    "source_url": None,
+                }
+            ],
+        }
+        state.tables["document_pages"] = {"columns": list(PAGE_COLUMNS), "rows": []}
+        state.tables["youtube_transcript_queue"] = {"columns": list(QUEUE_COLUMNS), "rows": []}
+        state.tables["youtube_transcript_attempts"] = {"columns": list(ATTEMPT_COLUMNS), "rows": []}
+
+        service = DatabaseService(conninfo)
+        row = self._get_file_row(service, 1)
+
+        self.assertIn("indexing_status", state.tables["files"]["columns"])
+        self.assertIn("indexing_error", state.tables["files"]["columns"])
+        self.assertEqual("not_requested", row["indexing_status"])
+        self.assertIsNone(row["indexing_error"])
+
+    def test_processing_status_exposes_indexing_readiness(self):
+        service = self._create_service()
+        file_id = self._seed_file(
+            service,
+            source_type="upload",
+            status="uploaded",
+            uploaded_at=datetime(2026, 4, 22, 12, 0, tzinfo=UTC),
+        )
+
+        service.update_file_status(file_id, "processing")
+        service.update_file_indexing_status(file_id, "indexing")
+        in_progress_status = service.get_processing_status(file_id)
+        in_progress_document = service.get_document_by_id(file_id)
+
+        self.assertEqual("indexing", in_progress_status.indexing_status)
+        self.assertFalse(in_progress_status.ready)
+        self.assertEqual("indexing", in_progress_document.indexing_status)
+        self.assertFalse(in_progress_document.ready)
+
+        service.update_file_processing_results(
+            file_id=file_id,
+            docling_path="/app/data/processed/documents/1/document.json",
+            total_pages=1,
+            neo4j_node_id=None,
+        )
+        service.update_file_indexing_status(file_id, "ready")
+        service.update_file_status(file_id, "processed")
+
+        completed_status = service.get_processing_status(file_id)
+        completed_document = service.get_document_by_id(file_id)
+
+        self.assertEqual("ready", completed_status.indexing_status)
+        self.assertTrue(completed_status.ready)
+        self.assertEqual("ready", completed_document.indexing_status)
+        self.assertTrue(completed_document.ready)
 
     def test_claim_next_youtube_transcript_respects_one_attempt_per_minute(self):
         """A transcript attempt inside the last UTC minute should block the next queued YouTube transcript."""

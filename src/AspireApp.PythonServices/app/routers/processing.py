@@ -398,6 +398,7 @@ def _process_document_task_sync(
         _attempt_lightrag_handoff(
             document=document,
             processed_doc=processed_doc,
+            db=db,
             lightrag_handoff=lightrag_handoff or LightRagHandoffService(),
         )
         _persist_processing_metadata(processed_doc)
@@ -450,20 +451,32 @@ def _process_document_task_sync(
             _ensure_youtube_transcript_queue_drainer()
 
 
-def _attempt_lightrag_handoff(document, processed_doc, lightrag_handoff: LightRagHandoffService) -> None:
+def _attempt_lightrag_handoff(
+    document,
+    processed_doc,
+    db: DatabaseService,
+    lightrag_handoff: LightRagHandoffService,
+) -> None:
     metadata = getattr(processed_doc, "processing_metadata", None) or {}
     markdown_path = metadata.get("markdown_path")
 
     if not markdown_path:
+        db.update_file_indexing_status(document.id, "not_requested")
         logger.info(
             "Skipping LightRAG handoff for document %s because no markdown export was produced",
             document.id,
         )
+        metadata["lightrag"] = {
+            "scan_requested": False,
+            "indexing_status": "not_requested",
+        }
+        processed_doc.processing_metadata = metadata
         return
 
     try:
         handoff_result = lightrag_handoff.handoff_document(document, markdown_path)
     except Exception as exc:
+        db.update_file_indexing_status(document.id, "failed", str(exc))
         logger.warning(
             "LightRAG handoff failed for document %s: %s",
             document.id,
@@ -471,9 +484,26 @@ def _attempt_lightrag_handoff(document, processed_doc, lightrag_handoff: LightRa
         )
         metadata["lightrag"] = {
             "scan_requested": False,
+            "indexing_status": "failed",
+            "indexing_error": str(exc),
             "error": str(exc),
         }
     else:
+        if not bool(handoff_result.get("scan_requested")):
+            db.update_file_indexing_status(document.id, "not_requested")
+            handoff_result["indexing_status"] = "not_requested"
+        else:
+            staged_input_path = handoff_result.get("staged_input_path")
+            if not staged_input_path:
+                staged_input_path = str(lightrag_handoff.build_staged_path(document))
+                handoff_result["staged_input_path"] = staged_input_path
+
+            readiness_result = lightrag_handoff.wait_for_document_readiness(
+                staged_input_path,
+                status_callback=lambda status, error: db.update_file_indexing_status(document.id, status, error),
+            )
+            handoff_result.update(readiness_result)
+
         metadata["lightrag"] = handoff_result
 
     processed_doc.processing_metadata = metadata

@@ -481,6 +481,12 @@
         border: 1px solid rgba(23, 162, 184, 0.5);
     }
 
+    .status-processed {
+        background-color: rgba(40, 167, 69, 0.2);
+        color: #6ee7b7;
+        border: 1px solid rgba(110, 231, 183, 0.45);
+    }
+
     .status-error {
         background-color: rgba(220, 53, 69, 0.3);
         color: #dc3545;
@@ -926,7 +932,7 @@ else
                                     }
                                 </td>
                                 <td class="status-cell">
-                                    <span class="status-badge @(GetStatusClass(file.Status.ToString()))">@file.Status</span>
+                                    <span class="status-badge @GetStatusBadgeClass(file)">@GetStatusLabel(file)</span>
                                 </td>
                                 <td class="file-hash-cell">
                                     @if (!string.IsNullOrEmpty(file.FileHash))

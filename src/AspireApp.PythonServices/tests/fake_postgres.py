@@ -25,6 +25,8 @@ FILE_COLUMNS = [
     "source_type",
     "source_confidence",
     "source_url",
+    "indexing_status",
+    "indexing_error",
 ]
 
 PAGE_COLUMNS = [
@@ -62,6 +64,8 @@ COLUMN_DEFAULTS = {
     "tenant_id": "default",
     "source_type": "upload",
     "source_confidence": 0.7,
+    "indexing_status": "not_requested",
+    "indexing_error": None,
     "last_error": None,
 }
 
@@ -179,6 +183,8 @@ class FakeCursor:
                 "source_type": params[9],
                 "source_confidence": params[10],
                 "source_url": params[11],
+                "indexing_status": "not_requested",
+                "indexing_error": None,
             }
             self.state.tables["files"]["rows"].append(row)
             self.state.next_file_id += 1
@@ -250,6 +256,8 @@ class FakeCursor:
             row["docling_document_path"] = None
             row["total_pages"] = None
             row["neo4j_document_node_id"] = None
+            row["indexing_status"] = "not_requested"
+            row["indexing_error"] = None
             self._result = []
             return self
 
@@ -281,6 +289,16 @@ class FakeCursor:
             row["docling_document_path"] = None
             row["total_pages"] = None
             row["neo4j_document_node_id"] = None
+            row["indexing_status"] = "not_requested"
+            row["indexing_error"] = None
+            self._result = []
+            return self
+
+        if normalized.startswith("update files set indexing_status = %s, indexing_error = %s where id = %s"):
+            file_id = params[2]
+            row = self._get_file(file_id)
+            row["indexing_status"] = params[0]
+            row["indexing_error"] = params[1]
             self._result = []
             return self
 

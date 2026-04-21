@@ -35,6 +35,7 @@ class FakeDatabaseService:
         self.documents: dict[int, SimpleNamespace] = {}
         self.next_document_id = 1
         self.status_updates: list[tuple[int, str, str | None]] = []
+        self.indexing_updates: list[tuple[int, str, str | None]] = []
         self.ingestion_updates: list[dict] = []
         self.processing_updates: list[dict] = []
         self.saved_pages: list[dict] = []
@@ -46,6 +47,10 @@ class FakeDatabaseService:
             self.register_document(document)
 
     def register_document(self, document: SimpleNamespace) -> SimpleNamespace:
+        if not hasattr(document, "indexing_status"):
+            document.indexing_status = "not_requested"
+        if not hasattr(document, "indexing_error"):
+            document.indexing_error = None
         self.documents[document.id] = document
         self.next_document_id = max(self.next_document_id, document.id + 1)
         return document
@@ -58,6 +63,13 @@ class FakeDatabaseService:
         document = self.documents.get(file_id)
         if document is not None:
             document.processing_status = status
+
+    def update_file_indexing_status(self, file_id: int, indexing_status: str, error: str = None) -> None:
+        self.indexing_updates.append((file_id, indexing_status, error))
+        document = self.documents.get(file_id)
+        if document is not None:
+            document.indexing_status = indexing_status
+            document.indexing_error = error
 
     def resolve_upload_path(self, document):
         return document.file_path
@@ -251,11 +263,46 @@ class FakeClaimExtractionService:
 
 
 class FakeLightRagHandoffService:
-    def __init__(self):
+    def __init__(
+        self,
+        readiness_updates: list[tuple[str, str | None]] | None = None,
+        *,
+        scan_requested: bool = True,
+    ):
         self.cleaned_documents: list[tuple[int, str | None]] = []
+        self.observed_processing_statuses: list[str | None] = []
+        self.readiness_updates = readiness_updates or [
+            ("queued", None),
+            ("indexing", None),
+            ("ready", None),
+        ]
+        self.scan_requested = scan_requested
+        self._last_document = None
 
     def handoff_document(self, document, markdown_path):
-        return {"scan_requested": True, "markdown_path": markdown_path}
+        self._last_document = document
+        return {
+            "scan_requested": self.scan_requested,
+            "markdown_path": markdown_path,
+            "staged_input_path": f"/app/data/inputs/{document.id:06d}-test.md",
+        }
+
+    def wait_for_document_readiness(self, staged_input_path, *, status_callback=None, **_kwargs):
+        self.observed_processing_statuses.append(getattr(self._last_document, "processing_status", None))
+        result = {
+            "indexing_status": "not_requested",
+            "indexing_error": None,
+            "document_status": None,
+        }
+        for status, error in self.readiness_updates:
+            if status_callback is not None:
+                status_callback(status, error)
+            result = {
+                "indexing_status": status,
+                "indexing_error": error,
+                "document_status": {"file_path": staged_input_path, "status": status},
+            }
+        return result
 
     def cleanup_document(self, document, staged_input_path=None, delete_llm_cache=False, wait_timeout_seconds=30.0):
         self.cleaned_documents.append((document.id, staged_input_path))
@@ -337,6 +384,50 @@ class ProcessingPipelineRegressionTests(unittest.TestCase):
             self.assertEqual(1, handoff_service.scan_requests)
             self.assertTrue((Path(temp_dir) / "inputs" / "000042-processing-smoke.md").exists())
 
+    def test_lightrag_readiness_poll_uses_per_document_status(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            staged_input_path = Path(temp_dir) / "inputs" / "000042-processing-smoke.md"
+            staged_input_path.parent.mkdir(parents=True, exist_ok=True)
+            staged_input_path.write_text("# staged", encoding="utf-8")
+            observed_updates: list[tuple[str, str | None]] = []
+
+            class PollingLightRagHandoffService(LightRagHandoffService):
+                def __init__(self, input_dir: Path):
+                    super().__init__(
+                        input_dir=input_dir,
+                        service_url="http://lightrag.test",
+                        scan_timeout_seconds=1.0,
+                        readiness_timeout_seconds=5.0,
+                        readiness_poll_interval_seconds=0.1,
+                    )
+                    self.document_requests = 0
+
+                def _json_request(self, method: str, path: str, payload=None, timeout=None):
+                    if method == "GET" and path == "/documents":
+                        self.document_requests += 1
+                        if self.document_requests == 1:
+                            return {"statuses": {"pending": [{"id": "doc-1", "file_path": staged_input_path.name}]}}
+                        if self.document_requests == 2:
+                            return {"statuses": {"processing": [{"id": "doc-1", "file_path": staged_input_path.name}]}}
+                        return {"statuses": {"processed": [{"id": "doc-1", "file_path": staged_input_path.name}]}}
+
+                    raise AssertionError(f"Unexpected request {method} {path}")
+
+            handoff_service = PollingLightRagHandoffService(staged_input_path.parent)
+
+            with patch("app.services.lightrag_handoff_service.time.sleep", return_value=None):
+                readiness = handoff_service.wait_for_document_readiness(
+                    staged_input_path,
+                    status_callback=lambda status, error: observed_updates.append((status, error)),
+                )
+
+            self.assertEqual("ready", readiness["indexing_status"])
+            self.assertEqual(
+                [("queued", None), ("indexing", None), ("ready", None)],
+                observed_updates,
+            )
+            self.assertEqual(3, handoff_service.document_requests)
+
     def test_process_document_task_persists_pages_and_marks_processed(self):
         document = SimpleNamespace(
             id=42,
@@ -381,6 +472,10 @@ class ProcessingPipelineRegressionTests(unittest.TestCase):
 
         self.assertEqual((42, "processing", None), db.status_updates[0])
         self.assertEqual((42, "processed", None), db.status_updates[-1])
+        self.assertEqual(
+            [(42, "queued", None), (42, "indexing", None), (42, "ready", None)],
+            db.indexing_updates,
+        )
         self.assertEqual(1, len(db.ingestion_updates))
         self.assertEqual(1, len(db.processing_updates))
         self.assertEqual(2, len(db.saved_pages))
@@ -420,6 +515,140 @@ class ProcessingPipelineRegressionTests(unittest.TestCase):
         self.assertEqual(4, len(neo4j.claim_embeddings))
         for embedding in neo4j.claim_embeddings.values():
             self.assertEqual(384, len(embedding))
+
+    def test_process_document_task_marks_timed_out_when_lightrag_readiness_times_out(self):
+        document = SimpleNamespace(
+            id=43,
+            filename="delayed-indexing.pdf",
+            original_filename="delayed-indexing.pdf",
+            file_path="C:\\data\\uploads\\delayed-file.pdf",
+            mime_type="application/pdf",
+            processing_status="uploaded",
+            tenant_id="default",
+            source_type="upload",
+        )
+        db = FakeDatabaseService(document)
+        neo4j = FakeNeo4jService()
+        docling = SimpleNamespace(
+            process_document=lambda doc, path: (
+                SimpleNamespace(
+                    docling_document_path="/app/data/processed/documents/43/document.json",
+                    total_pages=1,
+                    neo4j_node_id=None,
+                    processing_metadata={"markdown_path": "/app/data/processed/documents/43/output.md"},
+                ),
+                [SimpleNamespace(page_number=1, content="Delayed indexing content.", metadata={"page": 1})],
+            )
+        )
+
+        with patch("app.routers.processing.EmbeddingService", return_value=FakeEmbeddingService()), \
+            patch("app.routers.processing.ClaimExtractionService", return_value=FakeClaimExtractionService()):
+            asyncio.run(
+                processing.process_document_task(
+                    document_id=43,
+                    db=db,
+                    docling=docling,
+                    neo4j=neo4j,
+                    lightrag_handoff=FakeLightRagHandoffService(
+                        readiness_updates=[
+                            ("queued", None),
+                            ("indexing", None),
+                            ("timed_out", "Timed out waiting for LightRAG readiness"),
+                        ]
+                    ),
+                )
+            )
+
+        self.assertEqual((43, "processed", None), db.status_updates[-1])
+        self.assertEqual(("timed_out", "Timed out waiting for LightRAG readiness"), db.indexing_updates[-1][1:])
+
+    def test_process_document_task_marks_failed_when_lightrag_readiness_reports_failed_status(self):
+        document = SimpleNamespace(
+            id=44,
+            filename="failed-indexing.pdf",
+            original_filename="failed-indexing.pdf",
+            file_path="C:\\data\\uploads\\failed-file.pdf",
+            mime_type="application/pdf",
+            processing_status="uploaded",
+            tenant_id="default",
+            source_type="upload",
+        )
+        db = FakeDatabaseService(document)
+        neo4j = FakeNeo4jService()
+        docling = SimpleNamespace(
+            process_document=lambda doc, path: (
+                SimpleNamespace(
+                    docling_document_path="/app/data/processed/documents/44/document.json",
+                    total_pages=1,
+                    neo4j_node_id=None,
+                    processing_metadata={"markdown_path": "/app/data/processed/documents/44/output.md"},
+                ),
+                [SimpleNamespace(page_number=1, content="Failed indexing content.", metadata={"page": 1})],
+            )
+        )
+
+        with patch("app.routers.processing.EmbeddingService", return_value=FakeEmbeddingService()), \
+            patch("app.routers.processing.ClaimExtractionService", return_value=FakeClaimExtractionService()):
+            asyncio.run(
+                processing.process_document_task(
+                    document_id=44,
+                    db=db,
+                    docling=docling,
+                    neo4j=neo4j,
+                    lightrag_handoff=FakeLightRagHandoffService(
+                        readiness_updates=[
+                            ("queued", None),
+                            ("indexing", None),
+                            ("failed", "LightRAG indexing failed"),
+                        ]
+                    ),
+                )
+            )
+
+        self.assertEqual((44, "processed", None), db.status_updates[-1])
+        self.assertEqual(("failed", "LightRAG indexing failed"), db.indexing_updates[-1][1:])
+
+    def test_process_document_task_marks_not_requested_when_markdown_export_is_missing(self):
+        document = SimpleNamespace(
+            id=45,
+            filename="no-markdown-export.pdf",
+            original_filename="no-markdown-export.pdf",
+            file_path="C:\\data\\uploads\\no-markdown-file.pdf",
+            mime_type="application/pdf",
+            processing_status="uploaded",
+            tenant_id="default",
+            source_type="upload",
+        )
+        db = FakeDatabaseService(document)
+        neo4j = FakeNeo4jService()
+        docling = SimpleNamespace(
+            process_document=lambda doc, path: (
+                SimpleNamespace(
+                    docling_document_path="/app/data/processed/documents/45/document.json",
+                    total_pages=1,
+                    neo4j_node_id=None,
+                    processing_metadata={},
+                ),
+                [SimpleNamespace(page_number=1, content="Markdown export unavailable.", metadata={"page": 1})],
+            )
+        )
+        lightrag_handoff = FakeLightRagHandoffService()
+
+        with patch("app.routers.processing.EmbeddingService", return_value=FakeEmbeddingService()), \
+            patch("app.routers.processing.ClaimExtractionService", return_value=FakeClaimExtractionService()):
+            asyncio.run(
+                processing.process_document_task(
+                    document_id=45,
+                    db=db,
+                    docling=docling,
+                    neo4j=neo4j,
+                    lightrag_handoff=lightrag_handoff,
+                )
+            )
+
+        self.assertEqual((45, "processed", None), db.status_updates[-1])
+        self.assertEqual([(45, "not_requested", None)], db.indexing_updates)
+        self.assertEqual([], lightrag_handoff.observed_processing_statuses)
 
     def test_process_document_task_fetches_classified_url_sources_and_enqueues_child_transcripts(self):
         document = SimpleNamespace(
@@ -508,6 +737,7 @@ class ProcessingPipelineRegressionTests(unittest.TestCase):
         queued_child_ids = [item["id"] for item in db.added_url_sources]
         self.assertEqual((77, "processing", None), db.status_updates[0])
         self.assertIn((77, "processed", None), db.status_updates)
+        self.assertEqual((77, "ready", None), db.indexing_updates[-1])
         self.assertEqual(2, len(db.added_url_sources))
         self.assertEqual(2, len(queued_child_ids))
         self.assertEqual([77], processed_documents)

@@ -869,15 +869,69 @@ public partial class UploadData : ComponentBase, IAsyncDisposable, IDisposable
         };
     }
 
-    private static string GetStatusClass(string status)
+    private static string GetStatusBadgeClass(FileMetadata file)
     {
-        return status.ToLowerInvariant() switch
+        return GetReadinessStatusOverride(file) switch
+        {
+            "queued" or "indexing" => "status-processing",
+            "failed" or "timed_out" => "status-error",
+            _ => GetStatusClass(file.Status)
+        };
+    }
+
+    private static string GetStatusLabel(FileMetadata file)
+    {
+        return GetReadinessStatusOverride(file) switch
+        {
+            "queued" => "Index queued",
+            "indexing" => "Indexing",
+            "failed" => "Index failed",
+            "timed_out" => "Index timed out",
+            _ => GetStatusLabel(file.Status)
+        };
+    }
+
+    private static string GetStatusClass(string? status)
+    {
+        return status?.Trim().ToLowerInvariant() switch
         {
             "uploaded" => "status-uploaded",
             "pending" => "status-pending",
             "processing" => "status-processing",
+            "processed" => "status-processed",
             "error" => "status-error",
             _ => "status-pending"
+        };
+    }
+
+    private static string GetStatusLabel(string? status)
+    {
+        return status?.Trim().ToLowerInvariant() switch
+        {
+            "uploaded" => "Uploaded",
+            "pending" => "Pending",
+            "processing" => "Processing",
+            "processed" => "Processed",
+            "error" => "Error",
+            null or "" => "Unknown",
+            _ => status
+        };
+    }
+
+    private static string? GetReadinessStatusOverride(FileMetadata file)
+    {
+        if (!string.Equals(file.Status, "processed", StringComparison.OrdinalIgnoreCase))
+        {
+            return null;
+        }
+
+        return file.IndexingStatus?.Trim().ToLowerInvariant() switch
+        {
+            "queued" => "queued",
+            "indexing" => "indexing",
+            "failed" => "failed",
+            "timed_out" => "timed_out",
+            _ => null
         };
     }
 

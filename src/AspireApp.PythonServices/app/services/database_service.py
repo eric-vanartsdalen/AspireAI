@@ -103,6 +103,8 @@ class DatabaseService:
         "source_type": "TEXT NOT NULL DEFAULT 'upload'",
         "source_confidence": "REAL NOT NULL DEFAULT 0.7",
         "source_url": "TEXT",
+        "indexing_status": "TEXT NOT NULL DEFAULT 'not_requested'",
+        "indexing_error": "TEXT",
     }
     _document_pages_column_definitions: Dict[str, str] = {
         "page_metadata": "TEXT",
@@ -267,7 +269,9 @@ class DatabaseService:
                         tenant_id TEXT NOT NULL DEFAULT 'default',
                         source_type TEXT NOT NULL DEFAULT 'upload',
                         source_confidence REAL NOT NULL DEFAULT 0.7,
-                        source_url TEXT
+                        source_url TEXT,
+                        indexing_status TEXT NOT NULL DEFAULT 'not_requested',
+                        indexing_error TEXT
                     )
                     """
                 )
@@ -827,7 +831,9 @@ class DatabaseService:
                             processing_error = NULL,
                             docling_document_path = NULL,
                             total_pages = NULL,
-                            neo4j_document_node_id = NULL
+                            neo4j_document_node_id = NULL,
+                            indexing_status = 'not_requested',
+                            indexing_error = NULL
                         WHERE id = %s
                         """,
                         (normalized_status, file_id),
@@ -865,7 +871,9 @@ class DatabaseService:
                             processing_error = NULL,
                             docling_document_path = NULL,
                             total_pages = NULL,
-                            neo4j_document_node_id = NULL
+                            neo4j_document_node_id = NULL,
+                            indexing_status = 'not_requested',
+                            indexing_error = NULL
                         WHERE id = %s
                         """,
                         (normalized_status, file_id),
@@ -875,6 +883,33 @@ class DatabaseService:
                     cursor.execute("UPDATE files SET status = %s WHERE id = %s", (normalized_status, file_id))
         except Exception as exc:
             logger.error("Error updating file %s status: %s", file_id, exc)
+            raise
+
+    def update_file_indexing_status(
+        self,
+        file_id: int,
+        indexing_status: str,
+        error: str | None = None,
+    ) -> None:
+        try:
+            normalized_indexing_status = self._normalize_indexing_status(indexing_status)
+            with self._pool.get_connection() as conn:
+                cursor = conn.cursor()
+                cursor.execute(
+                    """
+                    UPDATE files
+                    SET indexing_status = %s,
+                        indexing_error = %s
+                    WHERE id = %s
+                    """,
+                    (
+                        normalized_indexing_status,
+                        error if normalized_indexing_status in {"failed", "timed_out"} else None,
+                        file_id,
+                    ),
+                )
+        except Exception as exc:
+            logger.error("Error updating file %s indexing status: %s", file_id, exc)
             raise
 
     def update_file_processing_results(
@@ -1005,6 +1040,8 @@ class DatabaseService:
             "source_type": row[16],
             "source_confidence": row[17],
             "source_url": row[18],
+            "indexing_status": row[19],
+            "indexing_error": row[20],
         }
 
     def _fetch_file_row(self, conn, file_id: int):
@@ -1015,7 +1052,8 @@ class DatabaseService:
                    file_size, mime_type, uploaded_at, status,
                    processing_started_at, processing_completed_at, processing_error,
                    docling_document_path, total_pages, neo4j_document_node_id,
-                   tenant_id, source_type, source_confidence, source_url
+                   tenant_id, source_type, source_confidence, source_url,
+                   indexing_status, indexing_error
             FROM files
             WHERE id = %s
             """,
@@ -1031,7 +1069,8 @@ class DatabaseService:
                    file_size, mime_type, uploaded_at, status,
                    processing_started_at, processing_completed_at, processing_error,
                    docling_document_path, total_pages, neo4j_document_node_id,
-                   tenant_id, source_type, source_confidence, source_url
+                   tenant_id, source_type, source_confidence, source_url,
+                   indexing_status, indexing_error
             FROM files
             ORDER BY uploaded_at DESC
             """
@@ -1046,7 +1085,8 @@ class DatabaseService:
                    file_size, mime_type, uploaded_at, status,
                    processing_started_at, processing_completed_at, processing_error,
                    docling_document_path, total_pages, neo4j_document_node_id,
-                   tenant_id, source_type, source_confidence, source_url
+                   tenant_id, source_type, source_confidence, source_url,
+                   indexing_status, indexing_error
             FROM files
             WHERE LOWER(status) IN ('uploaded', 'error')
               AND NOT EXISTS (
@@ -1070,6 +1110,7 @@ class DatabaseService:
 
     def _file_dict_to_document(self, file_dict: Dict[str, Any]) -> Document:
         status = self._normalize_file_status(file_dict.get("status", "uploaded"))
+        indexing_status = self._normalize_indexing_status(file_dict.get("indexing_status"))
         return Document(
             id=file_dict["id"],
             filename=file_dict["file_name"],
@@ -1084,6 +1125,9 @@ class DatabaseService:
             source_type=file_dict.get("source_type") or "upload",
             source_confidence=file_dict.get("source_confidence"),
             source_url=file_dict.get("source_url"),
+            indexing_status=indexing_status,
+            indexing_error=file_dict.get("indexing_error"),
+            ready=self._is_document_ready(status, indexing_status),
         )
 
     def _normalize_file_status(self, status: str) -> str:
@@ -1098,6 +1142,29 @@ class DatabaseService:
             "uploaded": "uploaded",
         }
         return status_map.get(normalized, normalized)
+
+    def _normalize_indexing_status(self, status: str | None) -> str:
+        normalized = (status or "not_requested").strip().lower().replace("-", "_").replace(" ", "_")
+        status_map = {
+            "not_requested": "not_requested",
+            "pending": "queued",
+            "queued": "queued",
+            "enqueued": "queued",
+            "indexing": "indexing",
+            "processing": "indexing",
+            "processed": "ready",
+            "completed": "ready",
+            "complete": "ready",
+            "ready": "ready",
+            "failed": "failed",
+            "error": "failed",
+            "timed_out": "timed_out",
+            "timeout": "timed_out",
+        }
+        return status_map.get(normalized, normalized or "not_requested")
+
+    def _is_document_ready(self, status: str, indexing_status: str) -> bool:
+        return status == "processed" and indexing_status in {"not_requested", "ready"}
 
     def list_documents(self) -> List[Document]:
         return [self._file_dict_to_document(file_dict) for file_dict in self.get_all_files()]
@@ -1131,6 +1198,12 @@ class DatabaseService:
                 error_message=file_dict.get("processing_error"),
                 started_at=file_dict.get("processing_started_at") or file_dict.get("uploaded_at"),
                 completed_at=file_dict.get("processing_completed_at"),
+                indexing_status=self._normalize_indexing_status(file_dict.get("indexing_status")),
+                indexing_error=file_dict.get("indexing_error"),
+                ready=self._is_document_ready(
+                    self._normalize_file_status(file_dict.get("status")),
+                    self._normalize_indexing_status(file_dict.get("indexing_status")),
+                ),
             )
         except Exception as exc:
             logger.error("Error in get_processing_status(%s): %s", document_id, exc)
@@ -1163,7 +1236,8 @@ class DatabaseService:
                            file_size, mime_type, uploaded_at, status,
                            processing_started_at, processing_completed_at, processing_error,
                            docling_document_path, total_pages, neo4j_document_node_id,
-                           tenant_id, source_type, source_confidence, source_url
+                           tenant_id, source_type, source_confidence, source_url,
+                           indexing_status, indexing_error
                     FROM files
                     WHERE source_url = %s AND tenant_id = %s
                     LIMIT 1

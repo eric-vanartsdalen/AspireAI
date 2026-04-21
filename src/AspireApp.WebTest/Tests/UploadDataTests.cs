@@ -143,10 +143,16 @@ public sealed class UploadDataTests : IDisposable
     }
 
     [Theory]
-    [InlineData("url", "error", false)]
-    [InlineData("youtube_video", "processed", false)]
-    [InlineData("youtube_channel", "processing", true)]
-    public async Task UploadData_SetsRefreshActionState_ForWebBackedStatuses(string sourceType, string status, bool expectedDisabled)
+    [InlineData("url", "error", null, false, "Error")]
+    [InlineData("youtube_video", "processed", "ready", false, "Processed")]
+    [InlineData("youtube_video", "processed", "queued", false, "Index queued")]
+    [InlineData("youtube_channel", "processing", null, true, "Processing")]
+    public async Task UploadData_RendersReadinessState_ForWebBackedSources(
+        string sourceType,
+        string status,
+        string? indexingStatus,
+        bool expectedDisabled,
+        string expectedStatusLabel)
     {
         await using var context = CreateDbContext();
         var tenantId = "tenant-allowed";
@@ -164,6 +170,7 @@ public sealed class UploadDataTests : IDisposable
                 SourceType = sourceType,
                 SourceUrl = "https://contoso.example/docs",
                 Status = status,
+                IndexingStatus = indexingStatus ?? string.Empty,
                 TenantId = tenantId
             });
             await context.SaveChangesAsync(XunitTestContext.Current.CancellationToken);
@@ -173,7 +180,59 @@ public sealed class UploadDataTests : IDisposable
             cut.WaitForAssertion(() =>
             {
                 var refreshButton = cut.Find(".refresh-web-source-button");
+                var statusBadge = cut.Find(".status-badge");
+
                 Assert.Equal(expectedDisabled, refreshButton.HasAttribute("disabled"));
+                Assert.Equal(expectedStatusLabel, statusBadge.TextContent.Trim());
+            });
+        }
+        finally
+        {
+            DeleteDirectoryIfPresent(dataDirectory);
+        }
+    }
+
+    [Theory]
+    [InlineData(null, "Processed", "status-processed")]
+    [InlineData("", "Processed", "status-processed")]
+    [InlineData("not_requested", "Processed", "status-processed")]
+    [InlineData("ready", "Processed", "status-processed")]
+    [InlineData("queued", "Index queued", "status-processing")]
+    [InlineData("indexing", "Indexing", "status-processing")]
+    [InlineData("failed", "Index failed", "status-error")]
+    [InlineData("timed_out", "Index timed out", "status-error")]
+    public async Task UploadData_RendersReadinessAwareStatus_ForProcessedSources(
+        string? indexingStatus,
+        string expectedText,
+        string expectedClass)
+    {
+        await using var context = CreateDbContext();
+        var tenantId = "tenant-allowed";
+        var currentUser = SeedTenantMembership(context, tenantId);
+        var dataDirectory = CreateDataDirectory();
+
+        try
+        {
+            context.Datasources.Add(new web::AspireApp.Web.Data.FileMetadata
+            {
+                FileName = "processed-source",
+                OriginalFileName = "processed-source",
+                FilePath = string.Empty,
+                FileHash = "HASH-READY",
+                SourceType = "upload",
+                Status = "processed",
+                IndexingStatus = indexingStatus ?? string.Empty,
+                TenantId = tenantId
+            });
+            await context.SaveChangesAsync(XunitTestContext.Current.CancellationToken);
+
+            var cut = await RenderUploadDataAsync(context, currentUser, dataDirectory);
+
+            cut.WaitForAssertion(() =>
+            {
+                var badge = cut.Find(".status-badge");
+                Assert.Equal(expectedText, badge.TextContent.Trim());
+                Assert.Contains(expectedClass, badge.ClassName);
             });
         }
         finally
@@ -252,6 +311,7 @@ public sealed class UploadDataTests : IDisposable
                 SourceType = "youtube_video",
                 SourceUrl = "https://youtu.be/dQw4w9WgXcQ",
                 Status = "processed",
+                IndexingStatus = "failed",
                 UploadedAt = DateTime.UtcNow,
                 ProcessingStartedAt = DateTime.UtcNow.AddMinutes(-5),
                 ProcessingCompletedAt = DateTime.UtcNow.AddMinutes(-1),
@@ -294,6 +354,7 @@ public sealed class UploadDataTests : IDisposable
             Assert.Null(refreshed.ProcessingError);
             Assert.Null(refreshed.DoclingDocumentPath);
             Assert.Null(refreshed.TotalPages);
+            Assert.Equal("not_requested", refreshed.IndexingStatus);
             Assert.Null(refreshed.Neo4jDocumentNodeId);
             Assert.Empty(await context.DatasourcePages.ToListAsync(XunitTestContext.Current.CancellationToken));
         }
