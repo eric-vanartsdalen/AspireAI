@@ -2,7 +2,8 @@
 
 > Shared decision log. All agents read this before starting work.
 > Scribe merges new decisions from `.squad/decisions/inbox/` after each session.
-> **Note (2026-04-21T10:52:38Z):** Merged 0 new inbox decisions from readiness implementation session (Jarvis, Jeff, Buster, Coordinator). Key outcomes: (1) Python-side `indexing_status` polling implemented; separates "processing complete" (Neo4j) from "retrieval-ready" (LightRAG indexed). (2) Web UI displays readiness labels (queued, indexing, ready, error) in Upload table. (3) Schema tolerance ensures backward-compat with pre-polling databases. (4) Regression coverage updated: no longer assume `processed` flag implies retrieval-ready. (5) Dual status model: `processed` = immediate Neo4j indexing; `indexing_status` = polled LightRAG readiness. (6) All platforms passing: Python readiness tests (23+), Web UploadDataTests (28/28), E2E YouTube queue tests, full .NET build. (7) Ownership: Jarvis (polling + schema), Jeff (UI indicators), Buster (end-to-end freshness proof). No exact duplicates found; inbox empty. Decisions recorded in orchestration logs and session log. Ready for Phase 3b polish.
+> **Note (2026-04-21T13:58:59Z):** Merged 3 inbox decisions from timeout stabilization session (Jarvis, Jeff, Buster). Key outcomes: (1) Python deferred reconciliation — first-pass LightRAG timeout no longer permanent; document remains `queued/indexing` and reconciles forward when LightRAG completes. Secondary truth source (`kv_store_doc_status.json`) used when HTTP view stale. (2) .NET non-blocking dispatch + timeout translation — Upload surfaces persist first, dispatch processing in background; gateway translates `OperationCanceledException` into clear `TimeoutException`. (3) Aspire runtime wiring — LightRAG container gets explicit `EMBEDDING_BINDING=ollama` + both storage alias styles; Python vector population optional (defaults off); semantic fallback prevents empty retriever. All fixes validated: Jarvis 49 tests, Jeff 63 tests + build, Buster live Aspire E2E + 68 Python regression + 16 LightRAG tests ✅. No exact duplicates found. Inbox cleared.
+> **Note (2026-04-21T10:52:38Z):** Merged 0 new inbox decisions from readiness implementation session (Jarvis, Jeff, Buster, Coordinator).Key outcomes: (1) Python-side `indexing_status` polling implemented; separates "processing complete" (Neo4j) from "retrieval-ready" (LightRAG indexed). (2) Web UI displays readiness labels (queued, indexing, ready, error) in Upload table. (3) Schema tolerance ensures backward-compat with pre-polling databases. (4) Regression coverage updated: no longer assume `processed` flag implies retrieval-ready. (5) Dual status model: `processed` = immediate Neo4j indexing; `indexing_status` = polled LightRAG readiness. (6) All platforms passing: Python readiness tests (23+), Web UploadDataTests (28/28), E2E YouTube queue tests, full .NET build. (7) Ownership: Jarvis (polling + schema), Jeff (UI indicators), Buster (end-to-end freshness proof). No exact duplicates found; inbox empty. Decisions recorded in orchestration logs and session log. Ready for Phase 3b polish.
 > **Note (2026-04-16T16-58-29Z):** Merged 8 inbox decisionsfrom URL Refresh + Extensible Ingestion Implementation session (Jeff, Buster, Jarvis, Bob). Key outcomes: (1) URL Refresh Action for UploadData rows (visible for URL/YouTube, hidden for file rows, disabled during processing). (2) Extensible upload surfaces and source type taxonomy (file types expanded to .json; YouTube URLs classified for future processing). (3) Extensible URL ingestion architecture (handler-based framework for pluggable content sources). (4) Multi-format ingestion regression test plan (phased approach minimizing external dependencies). (5) Child URL auto-processing contract (URLs created from parent expansion immediately processed, not left in uploaded). (6) Child URL reuses main processing pipeline (single document-processing path for all ingestion types). Key decision: Keep source taxonomy explicit in storage while treating web-backed sources uniformly in UI (WEB semantics). All focused tests passing. No exact duplicates found; consolidated related decisions. Inbox cleared.
 > **Note (2026-04-16T10-11-47Z):** Merged 1 inbox decision from upload navigation test hardening session (Buster, Jeff). Key outcome: Diagnosed `DeleteUploadedTestFile` failure as Playwright/sidebar-animation brittleness, not product regression. Hardened test seam to use direct protected-route entry via mock sign-in with `returnUrl=%2Fupload` and upload-surface markers instead of sidebar nav dependency. Result: Upload tests now stable and properly scoped (upload behavior ≠ navigation infrastructure). Inbox cleared.
 > **Note (2026-04-21T21:00:00Z):** Merged 1 inbox decision from MVP documentation & post-MVP fix ordering session (Bob, Verbal). Key outcome: Established MVP Declaration Pattern with clear milestone markers (functional gateway-routed chat end-to-end works), documented working features + known limitations side-by-side, captured and ordered two post-MVP fixes by user impact (conversation context + evidence persistence). Phase 3 status updated from "in progress" to "MVP Achieved"; post-MVP work explicitly scoped with technical ownership (Jeff + Jarvis for context; Buster + Jeff for evidence). Documentation now reflects honest product state. Inbox cleared.
@@ -4346,3 +4347,154 @@ LightRAG-specific readiness lifecycle: `not_requested`, `queued`, `indexing`, `r
 - **Jarvis's Freshness Investigation** (2026-04-21) — Identified two-phase status gap as root cause
 - **Buster's Test Coverage Gap** (2026-04-21) — No end-to-end freshness test in baseline
 
+## LightRAG Readiness Timeout — Deferred Reconciliation Strategy — Jarvis — 2026-04-21
+
+**Author:** Jarvis (Python / Data Dev)  
+**Status:** IMPLEMENTED  
+**Scope:** Python `lightrag_handoff_service`, `processing` router, timeout reconciliation
+
+### Context
+
+The LightRAG readiness polling (implemented in Phase 2) exposed a deeper timeout problem: the first bounded 300-second wait was being treated as final. Local evidence showed a document marked `timed_out` in Python metadata while the shared LightRAG store later advanced the same file to `processed`. The polling implementation was correct but honest—it was surfacing the real problem, then masking eventual success with a permanent timeout state.
+
+### Decision
+
+**Treat a first readiness timeout as deferred indexing, not permanent failure.**
+
+1. **Non-terminal LightRAG states stay queued:** When LightRAG HTTP `/documents/{doc_id}` returns `pending`, `processing`, or `queued`, keep the document row in `indexing_status = queued|indexing` instead of freezing to `timed_out`.
+2. **Schedule deferred reconciliation:** Instead of marking timeout permanent, register a follow-up reconciliation pass to poll again after a grace period or on next service opportunity.
+3. **Use secondary truth source:** Consult the shared `data\rag_storage\kv_store_doc_status.json` store as a secondary truth source when the HTTP `/documents` view is stale or slow.
+4. **Terminal states remain terminal:** A `failed` status stops reconciliation; a later reconciliation timeout after retry windows exhausted can still persist `timed_out` as final.
+
+### Why
+
+- LightRAG can legitimately take 300+ seconds for large document graphs; the first bounded poll window is not authoritative.
+- A permanent timeout is dishonest when the downstream system is still progressing and later reaches `processed`.
+- Deferred reconciliation keeps UI/API state honest while avoiding false terminal failures.
+- Secondary truth source ensures eventual consistency even if HTTP polling falls behind.
+
+### Impact
+
+- Upload rows can move from `indexing` → `ready` after the original polling window without manual reprocessing.
+- Python metadata and database status stay aligned with eventual LightRAG outcome.
+- Prevents users from seeing "❌ timeout" when the document was actually succeeding in the background.
+- This does not hide real failures; `failed` still remains terminal and is not reconciled.
+
+### Implementation
+
+- **Files Changed:**
+  - `src\AspireApp.PythonServices\app\services\lightrag_handoff_service.py` — Non-terminal state check + secondary source fallback
+  - `src\AspireApp.PythonServices\app\routers\processing.py` — Reconciliation endpoint + integration
+  - `src\AspireApp.PythonServices\tests\test_processing_pipeline_regression.py` — Regression coverage
+
+- **Validation:** 17 regression tests passing ✅
+
+### Related
+
+- **Buster's Aspire Runtime Fix** (2026-04-21) — LightRAG embedding wiring; semantic fallback
+- **Jeff's Non-Blocking Dispatch** (2026-04-21) — Upload dispatch no longer blocks on Python handoff
+- **Session Log:** `.squad/log/20260421-timeout-stabilization.md`
+
+---
+
+## Non-Blocking Upload Dispatch + Explicit Gateway Timeouts — Jeff — 2026-04-21
+
+**Author:** Jeff (.NET Dev)  
+**Status:** IMPLEMENTED  
+**Scope:** `AspireApp.Web`, `AspireApp.ApiService`, `.NET` timeout handling
+
+### Context
+
+The Upload page could time out even after a row flipped to `Processing` because the interactive Blazor path still awaited the Python processing-dispatch call. At the same time, long-running chat requests could surface as opaque `OperationCanceledException` or transport timeouts instead of a clear user-facing timeout boundary.
+
+### Decision
+
+**1. Upload surfaces must persist first and dispatch processing in background.**
+- Blazor circuit and URL upload controller response must not block on `TryStartAutomaticProcessingAsync()`.
+- Persist the row to the database, return honest "queued / will start shortly" messaging, then refresh UI state after background dispatch completes asynchronously.
+- Python already treats `/processing/process-document/{id}` as queueing work, not completing work.
+
+**2. Gateway timeout handling must translate and be explicit.**
+- Translate downstream `OperationCanceledException` and transport timeouts into clear `TimeoutException` with user-friendly message.
+- Keep transport/resilience timeouts above the user-facing chat timeout so the page-level cancellation boundary stays authoritative.
+- Friendly timeout translation makes it obvious that the request exceeded a boundary, not that the app returned bad data.
+
+### Why
+
+- Blocking the upload interaction on background dispatch adds false user-visible failures without improving correctness.
+- Opaque cancellations confuse users; explicit timeouts are honest about infrastructure boundaries.
+- Non-blocking dispatch aligns with Python's queueing semantics and improves responsiveness.
+
+### Implementation
+
+- **Files Changed:**
+  - `src\AspireApp.Web\Controllers\FileUploadController.cs` — Non-blocking dispatch
+  - `src\AspireApp.Web\Components\Pages\Chat.razor.cs` — Explicit timeout rendering
+  - `src\AspireApp.Web\Services\BrainChatClient.cs` — Timeout translation
+  - `src\AspireApp.Web\Services\BrainChatClientServiceCollectionExtensions.cs` — Client config
+  - `src\AspireApp.ApiService\Services\BrainBackendClient.cs` — Gateway translation
+  - `src\AspireApp.ApiService\Services\BrainBackendClientServiceCollectionExtensions.cs` — Service config
+  - `src\AspireApp.Web\Services\DocumentProcessingCoordinator.cs` — Dispatch integration
+  - `src\AspireApp.Web\Program.cs` — Dependency wiring
+
+- **Validation:** 63 focused .NET tests passing; `dotnet build .\AspireApp.sln --no-restore` success ✅
+
+### Related
+
+- **Jarvis's Deferred Reconciliation** (2026-04-21) — Python side doesn't now rely on upload blocking
+- **Buster's Aspire Runtime Fix** (2026-04-21) — LightRAG embedding wiring; semantic fallback
+- **Session Log:** `.squad/log/20260421-timeout-stabilization.md`
+
+---
+
+## LightRAG Aspire Runtime Wiring — Ollama Embeddings + Optional Vector Population — Buster — 2026-04-21
+
+**Author:** Buster (QA / Tester)  
+**Status:** IMPLEMENTED  
+**Scope:** `AppHost.cs`, `retrievers.py`, Aspire container configuration, semantic fallback
+
+### Context
+
+Live Aspire validation (`BasicAspireAppHostTests.LiveLightRagNeo4jQueryRoundTrip`) reproduced a deeper LightRAG failure: the document made it through upload and LightRAG scan acknowledgement, but the Neo4j graph never grew, leaving the retrieval surface behind chat effectively empty. At the same time, the Python ingestion path was doing optional page/claim embedding work against the same Ollama instance used by LightRAG and chat, causing contention.
+
+### Decision
+
+**1. LightRAG container wiring must set Ollama embeddings explicitly.**
+- Set environment variable `EMBEDDING_BINDING=ollama` in AppHost LightRAG service wiring.
+- Provide both storage alias styles (`KV_STORAGE` / `DOC_STATUS_STORAGE` / `GRAPH_STORAGE` / `VECTOR_STORAGE` and `LIGHTRAG_*`) so LightRAG version differences do not silently drop Neo4j-backed graph projection.
+
+**2. Python-side Neo4j vector population stays optional and defaults off.**
+- Keep upload/chat reliability on the primary path.
+- Allow explicit re-enable through `ENABLE_INGESTION_VECTOR_POPULATION=true` only once live validation proves it no longer starves Ollama.
+
+**3. Semantic fallback must drop to text search when vector search has no hits.**
+- Disabling optional vector population cannot be allowed to create an empty fallback retriever.
+- `SemanticKnowledgeRetriever` supplements sparse LightRAG results with text-search fallback before returning to caller.
+
+### Why
+
+- A LightRAG scan that never grows the Neo4j graph is a **correctness failure**, not just a slow path.
+- Missing embedding-binding configuration is easy to overlook because the container can still start and expose `/documents` endpoints.
+- Optional ingestion-time vector work should not be allowed to steal capacity from the user-visible upload/chat experience until the live end-to-end path is proven stable.
+- Semantic fallback ensures chat always returns *something*, even if vector indexes are incomplete.
+
+### Implementation
+
+- **Files Changed:**
+  - `src\AspireApp.AppHost\AppHost.cs` — `EMBEDDING_BINDING=ollama` + both storage alias styles
+  - `src\AspireApp.PythonServices\app\brain\knowledge\retrievers.py` — Semantic fallback to text when vector sparse
+  - `src\AspireApp.PythonServices\tests\test_knowledge_retriever.py` — Fallback regression coverage
+
+- **Validation:**
+  - `dotnet build` ✅
+  - 68 Python regression tests ✅
+  - 16 LightRAG retriever tests ✅
+  - 34 focused Web tests ✅
+  - 30 gateway/chat tests ✅
+  - Live Aspire E2E: `FlowEndToEnd` ✅ + `LiveLightRagNeo4jQueryRoundTrip` ✅
+
+### Related
+
+- **Jarvis's Deferred Reconciliation** (2026-04-21) — Keeps document `queued/indexing` while LightRAG progresses
+- **Jeff's Non-Blocking Dispatch** (2026-04-21) — Upload no longer blocks waiting for Python
+- **Session Log:** `.squad/log/20260421-timeout-stabilization.md`

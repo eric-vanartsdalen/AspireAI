@@ -30,6 +30,25 @@
 
 <!-- Append new learnings below. Each entry is something lasting about the project. -->
 
+### 2026-04-21 — LightRAG timeout regression was split across two seams: optional Ollama load and missing LightRAG embedding binding
+
+**Task:** Reproduce the reported upload/chat timeout and review the current Jeff/Jarvis timeout work.
+
+**Concrete findings:**
+1. The focused Python + Blazor regression suites still passed, so the bug was not in the basic upload row/status rendering seam.
+2. The live Aspire regression `BasicAspireAppHostTests.LiveLightRagNeo4jQueryRoundTrip` reproduced the real break: LightRAG accepted the document, but Neo4j graph growth stayed at `0/0`, which meant LightRAG was not actually projecting graph data into Neo4j.
+3. `AppHost.cs` configured `LLM_BINDING=ollama` for LightRAG, but it did **not** set `EMBEDDING_BINDING=ollama`; combined with version-sensitive storage env naming, that left the container in a partially configured state that could index superficially while never growing the external Neo4j graph.
+4. The Python ingestion path also did extra Neo4j page/claim embedding work on the same Ollama instance before LightRAG handoff; that load is optional for the product path and is safer disabled by default until live validation proves it does not starve upload/chat responsiveness.
+
+**What held up after the fix:**
+- `dotnet test .\src\AspireApp.WebTest\AspireApp.WebTest.csproj --filter "FullyQualifiedName~AspireApp.WebTest.Tests.BasicAspireAppHostTests.FlowEndToEnd|FullyQualifiedName~AspireApp.WebTest.Tests.BasicAspireAppHostTests.LiveLightRagNeo4jQueryRoundTrip"` ✅
+- `dotnet test .\src\AspireApp.WebTest\AspireApp.WebTest.csproj --filter "FullyQualifiedName~AspireApp.WebTest.Tests.BrainGatewayPhase2Tests|FullyQualifiedName~AspireApp.WebTest.Tests.ChatCritiqueModeTests"` ✅
+- `python -m pytest src\AspireApp.PythonServices\tests\test_processing_pipeline_regression.py src\AspireApp.PythonServices\tests\test_youtube_transcript_queue.py src\AspireApp.PythonServices\tests\test_brain_chat.py src\AspireApp.PythonServices\tests\test_knowledge_retriever.py src\AspireApp.PythonServices\tests\test_lightrag_retriever.py` ✅
+
+**Reviewer verdict on Jeff/Jarvis timeout work:**
+- **No rejection.** Jeff’s explicit gateway timeout surfacing and non-blocking upload dispatch still validate.
+- **Main corrective follow-up:** LightRAG container wiring needed the missing embedding binding plus compatibility aliases, and Jarvis’s optional Neo4j embedding population needed a safer default so upload/chat paths stop competing for Ollama by default.
+
 ### 2026-04-16 — Post-Upload Retrieval Regression: Data Freshness Gap in Test Suite
 
 **Task:** Audit test coverage for: upload website → marked processed → reload chat → new knowledge unavailable.
@@ -2218,3 +2237,14 @@ High — Three independent test failures all exhibit the same LightRAG stuck-in-
 **Decision Record:** Merged 1 decision to decisions.md; orchestration log created
 
 **Residual Risk:** None identified. Both seams tightly coupled and fully covered.
+
+
+### 2026-04-21 — Timeout Stabilization Session: Aspire Runtime + Semantic Fallback Wiring
+
+**Session Work:** Live E2E testing revealed LightRAG graph never grows due to missing embedding binding and Ollama contention from optional ingestion work.
+
+**Buster Learning:** LightRAG container must set EMBEDDING_BINDING=ollama explicitly; both storage alias styles must be provided for version tolerance. Python vector population must be optional (default off) so it doesn't starve upload/chat. Semantic fallback prevents empty retriever even when vector work disabled.
+
+**Session Log:** See .squad/log/20260421-timeout-stabilization.md
+**Decision File:** .squad/decisions.md (merged: LightRAG timeout fix must wire Ollama embeddings explicitly...)
+

@@ -34,6 +34,24 @@
 
 ## Learnings
 
+### 2026-04-21 — Upload Dispatch Must Not Block the Blazor Circuit
+
+**Context:** Eric reported upload-page timeouts after the row flipped to "Processing", plus chat calls timing out while LightRAG-backed responses were still in flight.
+
+**What I Confirmed:**
+- Python `POST /processing/process-document/{id}` already queues background work and returns quickly; the long-running work is not supposed to be awaited by the upload surface.
+- The Web **interactive** upload path in `UploadData.razor.cs` still awaited `TryStartAutomaticProcessingAsync()` directly, and the URL controller path did the same.
+- Chat timeouts were still brittle because transport timeouts could race or outlive the user-facing timeout without being translated into a clear gateway problem.
+
+**What I Changed:**
+- Upload/file + URL flows now persist first, return immediately with a queued-processing message, and dispatch automatic processing in background.
+- Background dispatch failures now surface as warnings instead of stalling the upload interaction.
+- Chat/gateway clients now translate downstream timeouts into explicit 504-style problems, and timeout layers were widened so the UI token is the primary boundary.
+
+**Validation:**
+- Focused .NET tests passed: `BrainGatewayPhase2Tests`, `UploadDataTests`, `ChatCritiqueModeTests`, `FileUploadControllerTests` (63/63).
+- `dotnet build .\\AspireApp.sln --no-restore` succeeded.
+
 ### 2026-12-20 — Chat Reload Diagnosis: Fresh Knowledge Not Appearing
 
 **Context:** User uploaded website, it processed successfully, reloaded chat page, but new knowledge didn't appear in chat responses. Requested audit of .NET side for stale request state or reload behavior issues.
@@ -1962,4 +1980,15 @@ The failing UI test checks `Assert.Equal("uploaded", uploadedFile.Status)` at li
 - `src\\AspireApp.Web\\Data\\DocumentEntities.cs` maps shared `files.indexing_status` so Web can distinguish LightRAG readiness from the primary `status` lifecycle.
 - `src\\AspireApp.Web\\Components\\Pages\\UploadData.razor(.cs)` should keep legacy/non-LightRAG rows on the existing processed semantics (`null` / `not_requested` / `ready` still render as processed) but override the badge for `queued`, `indexing`, `failed`, and `timed_out`.
 - `src\\AspireApp.Web\\Shared\\FileStorageService.cs` is the right .NET seam for tolerant shared-table bootstrap work: ensure missing columns exist before EF reads the `files` table, and reset retrieval readiness back to `not_requested` when a source is re-queued.
+
+
+
+### 2026-04-21 — Timeout Stabilization Session: Non-Blocking Upload Dispatch + Explicit Timeout Translation
+
+**Session Work:** .NET side timeout traced to synchronous upload dispatch and opaque cancellation handling.
+
+**Jeff Learning:** Upload surfaces must not block on background processing dispatch; return queued immediately. Gateway must translate OperationCanceledException into clear TimeoutException. Both fixes implemented in UI layer, gateway clients, and dependency wiring.
+
+**Session Log:** See .squad/log/20260421-timeout-stabilization.md
+**Decision File:** .squad/decisions.md (merged: Non-Blocking Upload Dispatch + Explicit Gateway Timeouts)
 

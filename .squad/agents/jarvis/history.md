@@ -9,6 +9,28 @@
 
 <!-- Append new learnings below. Each entry is something lasting about the project. -->
 
+### 2026-04-26 — LightRAG Readiness Timeouts Need Deferred Reconciliation, Not Frozen Failure
+
+**Problem:**
+- The new readiness polling correctly exposed that LightRAG can stay `pending` well past the first 300-second poll window for some documents.
+- Real data showed a bad follow-up state: document `62` recorded `indexing_status = timed_out` in Python metadata even though `data\rag_storage\kv_store_doc_status.json` later advanced the same staged file (`000062-docs-github.md`) to `processed`.
+- That left the upload row looking permanently broken even when LightRAG eventually caught up.
+
+**Fix:**
+- `LightRagHandoffService` now reads the shared `kv_store_doc_status.json` store as a second source of truth and prefers the more advanced per-document status when the HTTP `/documents` view is stale.
+- When the first bounded readiness wait expires but the document is still non-terminal (`queued` / `indexing`), Python now keeps the document in an honest in-flight indexing state and starts a deferred reconciliation pass instead of freezing the row at `timed_out`.
+- The reconciliation pass updates both the operational DB status and the persisted processing metadata once LightRAG finally reaches `ready` or `failed`.
+
+**Result:**
+- The recent readiness polling change was **exposing** real LightRAG latency; it was not the underlying cause.
+- Upload rows no longer get stuck in a false permanent timeout when LightRAG finishes shortly after the first polling window.
+- Retrieval readiness stays honest without masking eventual success.
+
+**Key file paths:**
+- `src\AspireApp.PythonServices\app\services\lightrag_handoff_service.py`
+- `src\AspireApp.PythonServices\app\routers\processing.py`
+- `src\AspireApp.PythonServices\tests\test_processing_pipeline_regression.py`
+
 ### 2026-04-24 — Keep `files.status` and LightRAG Readiness Separate, but Hold Final `processed` Until Polling Ends
 
 **Problem:**
@@ -1450,3 +1472,4 @@ eo4j_service to LightRagRetriever for enrichment when LightRAG lacks scores
 **Decision Record:** Merged 1 decision to decisions.md; orchestration log created
 
 **Known Limits:** UI signal for queued-but-not-yet-processed status deferred to Phase 3 (non-blocking)
+
