@@ -198,7 +198,7 @@ public partial class Program
             .WithEnvironment("LLM_BINDING", "ollama")
             .WithEnvironment("LLM_BINDING_HOST", ollama.GetEndpoint("http"))
             .WithEnvironment("LLM_MODEL", aiModel.Resource)
-            .WithEnvironment("MAX_PARALLEL_INSERT", "2")
+            .WithEnvironment("MAX_PARALLEL_INSERT", "1")
             .WithEnvironment("EMBEDDING_FUNC_MAX_ASYNC", "1")
             .WithEnvironment("EMBEDDING_BATCH_NUM", "1")
             .WithEnvironment("EMBEDDING_BINDING", "ollama")
