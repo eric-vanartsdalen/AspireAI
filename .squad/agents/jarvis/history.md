@@ -9,6 +9,39 @@
 
 <!-- Append new learnings below. Each entry is something lasting about the project. -->
 
+### 2026-04-24 — LightRAG Readiness Must Use Per-Document Status, Not Just Scan Acknowledgement
+
+**Problem:**
+- The Python processing worker currently calls `_attempt_lightrag_handoff()` and then immediately marks the `files` row `processed`, so `GET /processing/status/{id}` can report success before LightRAG has indexed the staged markdown.
+- `LightRagHandoffService.trigger_scan()` only waits for service readiness and returns the scan acknowledgement (`status: "scanning_started"` + `track_id`); it does not wait for terminal ingestion status.
+- `wait_for_pipeline_idle()` only reports whether the global LightRAG pipeline is busy, which is not a safe proof that a specific document is queryable.
+
+**What to use instead:**
+- Use the deterministic staged LightRAG filename (`{document_id:06d}-{sanitized-name}.md`) as the correlation key.
+- Poll LightRAG's per-document registry until that staged `file_path` reaches a terminal state:
+  - primary seam: `GET /documents` (already used by `find_document_ids_by_file_path()`)
+  - underlying evidence/debug seam: `data\rag_storage\kv_store_doc_status.json`
+- Treat `status: processed` as retrieval-ready and `status: failed` as terminal failure; `track_id` is diagnostic only.
+
+**Safest pipeline seam:**
+- Start any readiness poll from `_process_document_task_sync()` immediately after `_attempt_lightrag_handoff()` because that seam already owns the document row, staged filename, and metadata persistence.
+- Keep the existing document-processing success semantics separate from LightRAG readiness; add a second indexing/readiness state instead of overloading the current `files.status`.
+
+**Recommended state split:**
+- Keep `files.status` for the synchronous pipeline (`uploaded` → `processing` → `processed` / `error`).
+- Add a second field such as `indexing_status` with values like `not_requested`, `queued`, `indexing`, `ready`, `failed`, `timed_out`.
+- Only surface a source as fully "Processed and ready" when `status == processed` and `indexing_status == ready`.
+
+**Timeout / failure guardrail:**
+- Bound the poll (for example ~5 minutes with short intervals) and persist `failed` or `timed_out` rather than leaving the row in `processing` forever.
+- Capture LightRAG failure detail from the document status entry (`error_msg` when present) so the system can show "processed but not indexed" instead of a false-ready state.
+
+**Key file paths:**
+- `src\AspireApp.PythonServices\app\routers\processing.py`
+- `src\AspireApp.PythonServices\app\services\lightrag_handoff_service.py`
+- `src\AspireApp.PythonServices\app\services\database_service.py`
+- `data\rag_storage\kv_store_doc_status.json`
+
 ### 2026-04-22 — LightRAG Single-Document Results Should Be Supplemented With Semantic Retrieval
 
 **Problem:**

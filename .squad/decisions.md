@@ -29,6 +29,7 @@
 > **Note (2026-04-20T07:07:50Z):** Merged 3 inbox decisions from YouTube transcript rate-limiting queue implementation session (Bob, Jarvis, Buster). Key outcomes: (1) Architecture approved: persistent PostgreSQL queue (no external scheduler dependency like APScheduler/Celery). (2) Jarvis implemented schema (`youtube_transcript_queue` + `youtube_transcript_attempts`), async drainer (1 attempt/min, 50/day cap), throttle enforcement methods. (3) Buster added two-seam regression coverage: router seam (enqueue mechanics), database seam (throttle policy). (4) Restart safety via persisted attempt history. (5) 27+ tests passing. (6) Enqueue gate in `_process_child_documents()` redirects YouTube children to queue; retry path (uploaded/error) validated. No exact duplicates found. Inbox cleared.
 > **Note (2026-04-22T21:17:21Z):** Merged 2 inbox decisions from retrieval flow investigation for YouTube-ingested content session (Jeff, Jarvis). Key outcomes: (1) Jeff investigated Web → ApiService → Python handoff; confirmed no dropped .NET document-scope signal in shared contracts (design limitation, not code bug). (2) Jarvis fixed downstream LightRAG retriever — now supplements sparse single-document LightRAG results with semantic hits before returning to caller. (3) YouTube transcript processing resilient to LightRAG eventual consistency. (4) Regression coverage validates single-document LightRAG result widening. (5) 48 Python tests passing. No exact duplicates found. Inbox cleared.
 > **Note (2026-04-23T06:07:48Z):** Merged 3 inbox decisions from search latency review session (Bob, Jarvis, Jeff). Key outcomes: (1) Neo4j indexing is not the latency fix — LightRAG HTTP (40-60s) is primary bottleneck, not Neo4j queries (<1s fallback). (2) Critique mode latency is structural (4 LLM calls + 3 serial LightRAG retrievals = 150-270s minimum); parallelization of retrieval calls is highest-impact fix. (3) Web HttpClient timeout (120s) fires before intended Blazor token (180s) — design clarity issue, not performance defect. (4) Recommendations: [1] Parallelize critique retrieval via `asyncio.gather` (Jarvis, ~20 lines, 3x speedup), [2] Raise Web HttpClient timeout to 240s (Jeff, 1-2 lines), [3] Convert service instantiation to singletons (Jarvis, ~15 lines), [4] SSE streaming + progress events (medium effort), [5] Invert retrieval priority (post-P2-C, high effort). No exact duplicates found. Inbox cleared.
+> **Note (2026-04-24T10:06:52Z):** Merged 1 inbox decision from LightRAG readiness polling feasibility investigation (Jarvis). Key outcome: LightRAG completion **can** be polled per-document before surfacing source as ready. Repo already exposes per-document LightRAG status keyed by staged file path. Decision: introduce `indexing_status` field (states: `not_requested`, `queued`, `indexing`, `ready`, `failed`, `timed_out`); poll per-document after `_attempt_lightrag_handoff()`; keep `processed` flag for Docling/Neo4j completion; bound polling with timeout; surface honest failures. Ownership: Jarvis (polling + schema), Jeff (UI indicators), Buster (end-to-end test). No exact duplicates found. Inbox cleared.
 > **Note (2026-04-21T08:24:27Z):** Merged 2 inbox decisions from freshness investigation session (Bob, Jarvis, Jeff, Buster). Key outcomes: (1) Two-phase status problem identified—docs marked "processed" before LightRAG indexing completes (30–300s window), causing UI shows ✅ but chat returns empty ❌. (2) Root cause: `_attempt_lightrag_handoff()` fire-and-forget; no polling for actual index completion. (3) Architecture recommendation: separate "processing complete" (Neo4j) from "retrieval-ready" (LightRAG indexed) via `indexing_status` field + polling loop. (4) Test coverage gap: no end-to-end cycle test validates upload→process→reload→query freshness. (5) .NET side clean (no caching issues); issue localized to Python processing/indexing layer. (6) Ownership assigned: Jarvis (polling + schema), Jeff (UI indicators), Buster (test implementation). No exact duplicates found. Inbox cleared. See session log `2026-04-21T08-24-27Z-freshness-investigation.md` and orchestration logs for full details.
 
 <!-- Decisions are appended below. Each entry starts with ## -->
@@ -4272,4 +4273,75 @@ Awaiting Phase 3 roadmap prioritization. Recommend **HIGH PRIORITY** as blocker 
 - **Bob's Processing vs Indexing Status Gap** (2026-04-21) — Architectural fix for root cause
 - **Jeff's .NET Audit** (2026-04-21) — Confirmed issue localized to Python layer
 - **Jarvis's Python Trace** (2026-04-21) — Identified fire-and-forget LightRAG handoff
+
+
+## LightRAG Readiness Should Be Tracked Separately From Processing Completion — Jarvis — 2026-04-24
+
+**Author:** Jarvis (Python/Data Dev)  
+**Date:** 2026-04-24  
+**Status:** APPROVED  
+**Scope:** LightRAG document indexing readiness polling, separate status lifecycle, polling timeout bounds.
+
+### Context
+
+- `processing.py` currently marks a source `processed` immediately after `_attempt_lightrag_handoff()`.
+- `LightRagHandoffService` only stages markdown and triggers `POST /documents/scan`; the returned scan acknowledgement is not proof that the source is queryable in LightRAG.
+- The repo already has a per-document LightRAG status seam keyed by staged `file_path`, visible through `GET /documents` and persisted in `data\rag_storage\kv_store_doc_status.json`.
+- Two-phase status problem identified: UI shows ✅ (processed) but chat returns empty ❌ (not yet indexed), causing false freshness perception.
+
+### Decision
+
+Treat document processing completion and LightRAG retrieval readiness as **two separate, independent states**.
+
+#### Keep Existing `files.status` Lifecycle
+
+Synchronous pipeline remains: `uploaded` / `processing` / `processed` / `error`
+
+Tracks Docling extraction and Neo4j enrichment completion, not LightRAG readiness.
+
+#### Add `indexing_status` Field
+
+LightRAG-specific readiness lifecycle: `not_requested`, `queued`, `indexing`, `ready`, `failed`, `timed_out`
+
+- Poll per-document status by matching deterministic staged filename after `_attempt_lightrag_handoff()`
+- Do NOT use global pipeline busy/idle as readiness signal for specific source
+- Do NOT assume acknowledgement = indexed
+
+#### Polling Requirements
+
+- Keyed by staged filename (deterministic derivation from upload data)
+- Bounded timeout (recommend 300s max per document)
+- Transitions to `failed` or `timed_out` on error/timeout to prevent stuck documents
+- Surface honest terminal failures (LightRAG down, indexing failure) without regressing Docling/Neo4j completion
+
+### Consequences
+
+- UI and API callers can distinguish "processed but still indexing" from "processed and ready"
+- Terminal LightRAG failures surfaced honestly without regressing already-completed Docling/Neo4j work
+- Chat retriever can differentiate "no results" (failure state) from "still indexing" (transient state)
+- Polling prevents LightRAG outage from leaving documents stuck in processing forever
+- Enables honest freshness signaling in chat results (empty results vs. still indexing vs. indexed-and-ready)
+
+### Implementation Ownership
+
+| Role | Task | Estimate |
+|------|------|----------|
+| **Jarvis** | Implement polling loop + `indexing_status` schema + timeout enforcement | High |
+| **Jeff** | UI indicators for "processing" vs "indexing" vs "ready" states in UploadData display | Medium |
+| **Buster** | End-to-end upload→process→query freshness test + Playwright validation | Medium |
+
+### Acceptance Criteria
+
+- [ ] `indexing_status` field persisted and queryable via `GET /documents/{id}`
+- [ ] Polling starts after `_attempt_lightrag_handoff()` completion
+- [ ] Timeout enforced per document (300s recommended)
+- [ ] Terminal states (`failed`, `timed_out`, `ready`) prevent infinite polling
+- [ ] Chat retriever gracefully handles "still indexing" state
+- [ ] End-to-end cycle test validates upload→process→query freshness
+
+### Related Decisions
+
+- **Bob's Search Latency Review** (2026-04-23) — LightRAG HTTP as primary bottleneck
+- **Jarvis's Freshness Investigation** (2026-04-21) — Identified two-phase status gap as root cause
+- **Buster's Test Coverage Gap** (2026-04-21) — No end-to-end freshness test in baseline
 

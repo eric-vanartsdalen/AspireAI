@@ -48,6 +48,45 @@
 4. **Enable SSE streaming** (Jeff + Jarvis, medium effort): User sees "Searching..." → "Reasoning..." → "Done" instead of silent wait.
 5. **Post-P2-C: Invert retrieval priority** (Jarvis, future): Neo4j vector first (1-5s), LightRAG supplement (40-60s). Hot path drops from 40-60s to 1-5s for populated embeddings.
 
+### 2026-04-21 — Processing-to-Retrieval Freshness Gap: Two-Phase Status Problem + Polling Solution
+
+**Context:** Parallel audit (Bob, Jarvis, Jeff, Buster) on user scenario: upload document → processed → reload chat → query returns empty. Four-agent investigation converged on root cause and architectural fix.
+
+**Four-Agent Findings:**
+
+1. **Bob (Architecture):** Two-phase status problem. Status marked "processed" immediately after `trigger_scan()` handoff, but LightRAG indexing may take 30–300s. Window where UI shows ✅ but chat returns ❌.
+
+2. **Jarvis (Python):** Fire-and-forget handoff in `_attempt_lightrag_handoff()` (processing.py:398-402) calls `trigger_scan()` (HTTP POST, returns immediately) without polling. No mechanism to verify ingestion before status update.
+
+3. **Jeff (.NET):** Audit of Upload/Chat reload path clean. No caching issues, no stale request construction. Issue localized to Python retrieval/indexing layer.
+
+4. **Buster (QA):** Current test suite would NOT catch regression. No end-to-end cycle test validates upload→process→reload→query freshness. Test gap is systematic.
+
+**Root Cause Summary:**
+- LightRAG handoff is fire-and-forget; no polling for actual index completion
+- Status boundary mismatch: "processed" means "Neo4j done" but users interpret as "chat-ready" (includes LightRAG indexed)
+- Async visibility gap: No polling to confirm LightRAG ingestion before declaring retrieval-ready
+- Test coverage gap: No end-to-end test proves freshness
+
+**Architectural Recommendation:**
+- Separate "processing complete" (Neo4j populated) from "retrieval-ready" (LightRAG indexed)
+- Add `indexing_status` field to `files` table (`pending` → `indexing` → `indexed` or `error`)
+- Two-phase status: mark `processed` after Neo4j, poll LightRAG until doc appears, mark `indexed=True`
+- Strengthen Neo4j fallback to use `source_confidence` when LightRAG metadata missing
+- UI shows "Indexing..." badge until `indexed=True`
+
+**Ownership & Timeline:**
+- Jarvis: Polling logic + `indexing_status` column + DB service updates (1–2 days)
+- Jeff: UploadData UI indicators for indexing state (1 day)
+- Buster: End-to-end cycle tests + freshness validation (2–3 days)
+- Bob: Architecture alignment review (on PR)
+
+**Decision Status:** Merged to decisions.md inbox (awaiting Phase 3 roadmap prioritization)
+
+**Key Decision:** Establish as team standard for future data retrieval features: end-to-end cycle test, freshness validation, timing boundary assertion.
+
+---
+
 ### 2026-04-16 — Processing-to-Retrieval Gap: LightRAG Async Handoff Creates Stale-State Window
 
 **Context:** User uploaded website, processing completed, reloaded chat, new information not found. Investigate why processed data isn't retrieval-ready immediately.

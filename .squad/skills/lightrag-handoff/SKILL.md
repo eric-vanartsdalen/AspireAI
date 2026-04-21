@@ -9,7 +9,8 @@ Use this pattern when a local service already extracted document text and LightR
 1. Export a stable markdown artifact from the upstream processor.
 2. Stage that markdown into the shared LightRAG `INPUT_DIR`.
 3. Trigger an explicit `POST /documents/scan` request.
-4. Treat scan failures as handoff failures, not as proof of ingestion.
+4. Treat the scan acknowledgement as handoff success only, not as proof of ingestion.
+5. If the product needs retrieval readiness, poll LightRAG's per-document status by matching the deterministic staged `file_path` until it reaches `processed` or `failed`.
 
 ## Why this pattern exists in AspireAI
 
@@ -19,4 +20,6 @@ AspireAI mounts `./data` into both the Python service and the LightRAG container
 
 - Prefer markdown for the staged artifact because it preserves document structure and is easy to inspect.
 - Keep staged filenames deterministic (`{document_id}-{sanitized-name}.md`) so retries overwrite cleanly.
+- Use `GET /documents` (preferred) or `data\rag_storage\kv_store_doc_status.json` to observe per-document terminal status; `pipeline_status.busy` is only a global liveness signal.
 - Do not make the canonical Docling/SQLite success path depend on LightRAG availability unless the product explicitly requires it.
+- If the product needs a "ready" badge, model it as a second readiness/indexing state rather than overloading the main document `processed` status.
