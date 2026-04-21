@@ -34,6 +34,65 @@
 
 ## Learnings
 
+### 2026-12-19 — Performance Bottleneck Analysis: Chat Timeouts
+
+**Context:** Eric reported chat response latency (80–120s for regular search, 180s for Critique Mode with timeouts). Requested investigation of .NET timeout/resilience limits and whether architecture adds avoidable latency.
+
+**Trace Path:**
+- Blazor Chat component → BrainChatClient (Web) → API Service → PythonBrainBackendClient → Python FastAPI backend
+- 3-minute (180s) cancellation token set in Chat.razor.cs CallBackgroundAI() (line 980)
+- Timeout stacking across three layers:
+  - Web HttpClient.Timeout: 120s
+  - Web Polly TotalRequestTimeout: 180s
+  - API HttpClient.Timeout: 180s
+  - API Polly TotalRequestTimeout: 240s
+
+**Critical Finding:**
+- Backend latency is the bottleneck: Neo4j search 40–60s + Ollama LLM 40–60s = 80–120s
+- .NET layers have **no defects** (no duplicate calls, serial waits are correct, payload size is lean)
+- BUT: Web HttpClient.Timeout (120s) fires **before** Blazor's 180s intent because it's too tight
+- Critique Mode timeout (reported 180s) is correct behavior: if multiple passes + reasoning occur, hitting the Blazor token boundary is expected
+
+**Key Issues Identified:**
+1. **Timeout collision:** Web layer's 120s HttpClient.Timeout is hidden boundary; users see failure before Blazor's 180s token expires
+2. **No progress feedback:** User stares at "Waiting..." for 2 minutes; no "Searching graph" or "Generating response" indicator
+3. **Timeout alignment not documented:** Future maintainers won't understand why timeouts are stacked the way they are
+
+**Recommendations (High Impact):**
+1. Increase Web HttpClient.Timeout to 240s (was 120s) — removes hidden boundary
+2. Increase Web Polly TotalRequestTimeout to 240s (was 180s) — aligns with updated client timeout
+3. Add documentation explaining timeout stacking rationale
+4. Implement Server-Sent Events (SSE) for real-time progress feedback — reduces perceived wait time
+5. Add diagnostic logging for timeout patterns (helps identify whether issues are Neo4j, Ollama, or .NET)
+
+**Decision:** These are maintainability + UX improvements, not performance defects. Recommend implementing #1–3 as low-effort high-value fixes, #4–5 as medium-term UX enhancements.
+
+**Artifact:** Full analysis in `/PERFORMANCE_ANALYSIS.md` with 10 prioritized recommendations and code locations.
+
+### 2026-04-23 — Chat Timeout Boundaries Misaligned; Immediate Fixes Approved
+
+**Context:** Search latency review surfaced hidden timeout collision: Web HttpClient.Timeout (120s) fires before Blazor's 180s cancellation token. .NET layers are correct; issue is design clarity + UX.
+
+**Investigation Result:**
+- Backend latency is expected (40-60s retrieval + 40-60s LLM = 80-120s regular, longer for critique)
+- Critique Mode timeout is not a bug; multi-pass design is structurally expensive (150-270s without parallelization)
+- .NET is not adding latency; architecture is sound
+
+**Immediate Fixes (Approved for Next Sprint):**
+1. Raise Web HttpClient.Timeout from 120s to 240s (allow Blazor 180s token to be terminal)
+2. Raise Web Polly TotalRequestTimeout to 240s (remove collision)
+3. Document timeout hierarchy in code comments explaining layered design
+
+**Deferred Enhancements:**
+- SSE progress events (medium effort; helps perceived latency)
+- Timeout negotiation header (optional; low priority)
+
+**Decision:** Jarvis will parallelize critique retrieval (highest impact). Jeff implements timeout fixes (low effort) + documents stacking. Together with parallelization, critique mode should fit within 180s window for most queries.
+
+**Related Decisions:**
+- "Retrieval Parallelization: Critique Mode Sub-Queries" (Jarvis implementation details)
+- "Neo4j Indexing Is Not the Latency Fix" (architecture confirmation)
+
 ### 2026-04-22 — BRAIN Retrieval Handoff Gap Investigation
 
 **Context:** Eric reported YouTube content retrieval appearing to search only the first document. Investigated Web → ApiService → Python handoff.

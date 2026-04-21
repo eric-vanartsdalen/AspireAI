@@ -901,6 +901,104 @@
 
 ---
 
+### 2026-04-23 — Retrieval Latency Investigation: 40-60s Graph Queries + 40-60s Ollama Generate Time
+
+**Problem Statement:**
+- Regular search mode: ~40-60s for Neo4j/LightRAG graph query + ~40-60s for Ollama generation = ~80-120s total end-to-end.
+- Critique mode: Often timeouts at 180s, suggesting serial query fan-out and/or duplicate Neo4j traversals.
+- User is asking if Neo4j indexing would help and looking for speed improvements.
+
+**Investigation Findings:**
+
+**1. Retrieval Path (Regular Mode):**
+- Flow: `brain_chat()` → `retriever.retrieve()` (lines 209-218 in brain.py)
+- `BrainKnowledgeRetriever.retrieve()` first calls `LightRagRetriever` → `LightRagQueryService.query_data()` (HTTP POST to LightRAG container at line 25 in lightrag_query_service.py)
+- If LightRAG succeeds, checks if results are sparse (< limit or only 1 document) → calls `SemanticKnowledgeRetriever.retrieve()` to supplement (lines 667-680 in retrievers.py)
+- Each semantic retrieval path runs `_vector_search()` or `_text_search()` sequentially:
+  - `search_claims()` first (lines 395-417 in neo4j_service.py, uses CONTAINS substring match, **no index**)
+  - If no claim results, falls back to `search_similar_content()` (lines 252-273, also CONTAINS, **no index**)
+- **Latency source #1:** LightRAG HTTP call to external container is the primary blocker (40-60s observed). Neo4j queries inside semantic retrieval are typically milliseconds.
+
+**2. Retrieval Path (Critique Mode):**
+- Flow: `brain_chat()` → `critique_pipeline.execute()` (lines 170-188 in brain.py)
+- Planner phase: 1x LLM call (synchronous via Ollama)
+- Retriever phase: Calls `knowledge_retriever.retrieve()` **3 times sequentially** (lines 103-138 in critique_pipeline.py) — once per extracted sub-query from the planner
+- Each sub-query runs the full `BrainKnowledgeRetriever` pipeline (LightRAG + optional semantic fallback)
+- **Latency source #2:** 3 sequential LightRAG calls if planner produces 3 sub-queries. Since each call blocks 40-60s, that's 120-180s just for retrieval in critique mode.
+- Synthesizer phase: 1x LLM call (lines 147-155)
+- Critic phase: 1x LLM call (lines 167-183)
+- Total: Minimum 3x Ollama + 3x LightRAG in serial = 180-300s.
+
+**3. Neo4j Query Performance:**
+- Current semantic search queries in `search_claims()` and `search_similar_content()` use **`WHERE p.content CONTAINS $query`** — full-table scan, no index.
+- Neo4j vector indexes exist (`page_content_vector`, `claim_text_vector`) but are **P2-C gated (embeddings not yet populated)** per team decisions (lines 419-462, 464-506 in neo4j_service.py).
+- Current text-based fallback has no indexes on `Claim.text` or `Page.content` properties.
+
+**4. Serial vs. Parallel Opportunity in Critique Mode:**
+- Planner decomposes the user query into sub-queries (lines 68-96 in critique_pipeline.py).
+- Sub-query retrieval loop currently fires **3x `await retriever.retrieve()`** in serial (line 110, awaited inside loop at 103-138).
+- Could be parallelized via `asyncio.gather()` to fetch all 3 in parallel, reducing 3 × 40-60s to 1 × 40-60s.
+
+**5. Duplicate Retrievals in Supplementation Logic:**
+- When LightRAG returns sparse results, `BrainKnowledgeRetriever._supplement_with_semantic_results()` calls semantic retriever a second time (lines 707-715 in retrievers.py).
+- Semantic retriever runs BOTH `search_claims()` AND `search_similar_content()` sequentially unless claims returns a full result set (lines 561-575 in retrievers.py).
+- Merges results (lines 717, 759-769).
+- This is intentional fallback design (primary → secondary → merge), but adds latency on the hot path.
+
+**Indexing Assessment:**
+
+**What would indexing help?**
+- If embeddings were populated (P2-C gate lifted), vector indexes would replace CONTAINS with cosine-similarity lookups: ~10-100ms vs. full scan.
+- A text index on `Claim.text` could speed up `search_claims()` for substring matching, but CONTAINS queries in Neo4j 5.x don't benefit from property indexes the way SQL LIKE does; would need full-text search index or token analyzer.
+
+**What would NOT help?**
+- Neo4j indexes on the hot path contribute only milliseconds; the LightRAG HTTP call (40-60s) dominates the latency budget by 99%.
+- Indexing Neo4j won't address the 80% of time spent waiting for an external service.
+
+**Recommendations (Priority Order, Impact vs Effort):**
+
+**1. [HIGH IMPACT, MEDIUM EFFORT] Parallelize Sub-Query Retrieval in Critique Mode**
+   - Use `asyncio.gather(*[retriever.retrieve(sq) for sq in sub_queries])` instead of serial loop.
+   - Expected impact: Reduce critique mode retrieval from 120-180s to 40-60s (parallel LightRAG calls).
+   - Why: Critique mode latency is pure serial query fan-out; parallelization is a 3x speedup for free.
+   - Effort: ~10 lines of code change in `critique_pipeline.py` lines 103-138.
+
+**2. [HIGH IMPACT, LOW EFFORT] Timeout Configuration & Retry Strategy**
+   - Increase `LightRagQueryService.query_timeout_seconds` from 60s to 120s (or configurable).
+   - Add exponential backoff retry in critique pipeline for transient LightRAG failures.
+   - Why: 180s critique mode timeout suggests LightRAG sometimes takes >60s; silent timeout hides this.
+   - Effort: 2-3 parameter changes + basic retry loop in critque_pipeline.py.
+
+**3. [MEDIUM IMPACT, HIGH EFFORT] Cache Recent Retrieval Results**
+   - Memoize `BrainKnowledgeRetriever.retrieve()` for duplicate queries within the same conversation turn.
+   - Example: User query "What is X?" → Critique mode extracts sub-query "What is X?" → retriever.retrieve(X) called twice, both hit LightRAG.
+   - Why: Critique pipeline may extract sub-queries that overlap with the original query; deduping would avoid redundant LightRAG calls.
+   - Effort: Requires query-text hashing, cache store, and invalidation logic (~50 lines).
+
+**4. [LOW IMPACT, HIGH EFFORT] Upgrade to Vector Search (P2-C Gate Lift)**
+   - Populate `Claim.text_embedding` and `Page.content_embedding` during document ingestion.
+   - Replace CONTAINS fallback with vector index queries once embeddings are ready.
+   - Why: Reduces Neo4j semantic fallback from full-table scan to index lookup (10-100ms gain), but does NOT address LightRAG 40-60s bottleneck.
+   - Effort: Coordinate with embedding pipeline, update ingestion, validate index population.
+
+**5. [VERY LOW IMPACT] Add Neo4j Text/Full-Text Indexes**
+   - Create full-text index on `Claim.text` and `Page.content` to speed substring matching.
+   - Why: Neo4j full-text indexes can help if LightRAG fails and semantic retrieval is called; otherwise negligible.
+   - Effort: Minimal, but won't fix the core latency issue (LightRAG dominates).
+
+**Key Pattern Learned:**
+- **Retrieval latency is I/O-bounded, not compute-bounded.** The 40-60s bottleneck is an external HTTP call to LightRAG, not Neo4j query execution. Indexing Neo4j won't materially improve retrieval time unless the LightRAG call is eliminated or replaced with a faster service.
+- **Serial query fan-out in critique mode adds 3x multiplier.** Parallelizing sub-query retrieval is the single biggest win for critique mode without architectural changes.
+
+**Key File Paths:**
+- `src/AspireApp.PythonServices/app/routers/brain.py` — brain_chat() entry point
+- `src/AspireApp.PythonServices/app/brain/reasoning/critique_pipeline.py` — critique pipeline orchestrator (line 103-138 serial retrieval loop)
+- `src/AspireApp.PythonServices/app/brain/knowledge/retrievers.py` — BrainKnowledgeRetriever and semantic fallback logic
+- `src/AspireApp.PythonServices/app/services/lightrag_query_service.py` — LightRAG HTTP client (40-60s bottleneck)
+- `src/AspireApp.PythonServices/app/services/neo4j_service.py` — Neo4j queries (search_claims, search_similar_content; vector indexes P2-C gated)
+
+---
+
 ### 2026-04-05 — Postgres Cutover Coordination & BRAIN Pivot Context
 
 **Status:** Postgres cutover complete. Joined BRAIN pivot decision consolidation session.

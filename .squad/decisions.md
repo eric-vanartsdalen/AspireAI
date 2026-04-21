@@ -28,6 +28,7 @@
 > **Note (2026-04-16T15:34:22Z):** Merged 2 inbox decisions from YouTube followup fixes session (Jeff, Jarvis). Key outcomes: (1) Web source labeling refined — UploadData table now treats `url`, `youtube_video`, `youtube_channel` uniformly in UI (WEB semantics) while preserving explicit taxonomic storage. UrlSourceTypeClassifier provides shared taxonomy helper. (2) YouTube channel ingestion made consent-resilient — Channel URLs now survive consent redirects via stable headers, explicit interstitial detection, canonical ID resolution from page metadata, and RSS feed as primary discovery source with HTML supplement. Both focused test suites passing (bUnit + Python regression + live smoke). Inbox cleared.
 > **Note (2026-04-20T07:07:50Z):** Merged 3 inbox decisions from YouTube transcript rate-limiting queue implementation session (Bob, Jarvis, Buster). Key outcomes: (1) Architecture approved: persistent PostgreSQL queue (no external scheduler dependency like APScheduler/Celery). (2) Jarvis implemented schema (`youtube_transcript_queue` + `youtube_transcript_attempts`), async drainer (1 attempt/min, 50/day cap), throttle enforcement methods. (3) Buster added two-seam regression coverage: router seam (enqueue mechanics), database seam (throttle policy). (4) Restart safety via persisted attempt history. (5) 27+ tests passing. (6) Enqueue gate in `_process_child_documents()` redirects YouTube children to queue; retry path (uploaded/error) validated. No exact duplicates found. Inbox cleared.
 > **Note (2026-04-22T21:17:21Z):** Merged 2 inbox decisions from retrieval flow investigation for YouTube-ingested content session (Jeff, Jarvis). Key outcomes: (1) Jeff investigated Web → ApiService → Python handoff; confirmed no dropped .NET document-scope signal in shared contracts (design limitation, not code bug). (2) Jarvis fixed downstream LightRAG retriever — now supplements sparse single-document LightRAG results with semantic hits before returning to caller. (3) YouTube transcript processing resilient to LightRAG eventual consistency. (4) Regression coverage validates single-document LightRAG result widening. (5) 48 Python tests passing. No exact duplicates found. Inbox cleared.
+> **Note (2026-04-23T06:07:48Z):** Merged 3 inbox decisions from search latency review session (Bob, Jarvis, Jeff). Key outcomes: (1) Neo4j indexing is not the latency fix — LightRAG HTTP (40-60s) is primary bottleneck, not Neo4j queries (<1s fallback). (2) Critique mode latency is structural (4 LLM calls + 3 serial LightRAG retrievals = 150-270s minimum); parallelization of retrieval calls is highest-impact fix. (3) Web HttpClient timeout (120s) fires before intended Blazor token (180s) — design clarity issue, not performance defect. (4) Recommendations: [1] Parallelize critique retrieval via `asyncio.gather` (Jarvis, ~20 lines, 3x speedup), [2] Raise Web HttpClient timeout to 240s (Jeff, 1-2 lines), [3] Convert service instantiation to singletons (Jarvis, ~15 lines), [4] SSE streaming + progress events (medium effort), [5] Invert retrieval priority (post-P2-C, high effort). No exact duplicates found. Inbox cleared.
 
 <!-- Decisions are appended below. Each entry starts with ## -->
 
@@ -2463,6 +2464,255 @@ The current `AspireApp.WebTest` failures cluster around the full distributed-app
 Pass `neo4j_service` through the retriever initialization chain:
 - `BrainKnowledgeRetriever` receives `neo4j_service` from FastAPI DI
 - Passes it to `LightRagRetriever` when creating the default instance
+
+---
+
+## Neo4j Indexing Is Not the Latency Fix — Bob, Jarvis, Jeff — 2026-04-23
+
+**Authors:** Bob (Lead / Architect), Jarvis (Python / Data Dev), Jeff (.NET Dev)  
+**Date:** 2026-04-23  
+**Status:** APPROVED  
+**Scope:** Search latency analysis; LightRAG vs. Neo4j performance; P2-C vector indexing rationale.
+
+### Context
+
+User reported 40-60s retrieval latency in regular chat mode and frequent 180s timeouts in critique mode. Question: "Is Neo4j indexing the answer?"
+
+Three independent investigations (Bob architecture, Jarvis retrieval paths, Jeff timeout stacks) converged on consistent findings.
+
+### Decision
+
+**Neo4j indexing is secondary/distraction for the reported latency. LightRAG HTTP call (40-60s) dominates the hot path.**
+
+#### Evidence
+
+1. **LightRAG HTTP call:** 40-60s per call (primary bottleneck)
+2. **Neo4j semantic fallback:** <500ms full-table scans on small datasets
+3. **Even optimal Neo4j indexes:** Would save <1s on fallback path; 99% of latency is LightRAG
+4. **Vector indexes (P2-C gated):** Help fallback quality but don't address the 40-60s LightRAG wall
+
+#### Why Indexing Won't Help Regular Mode
+
+- `search_claims()` and `search_similar_content()` are fallback paths (triggered only when LightRAG sparse)
+- On hotpath: LightRAG blocks for 40-60s, Neo4j fallback is never invoked
+- Indexing saves <1s if fallback needed; leaves 40-60s LightRAG unchanged
+
+#### Why Indexing Won't Fix Critique Mode
+
+- Critique mode runs 3 LightRAG calls in serial: 3 × 40-60s = 120-180s retrieval time alone
+- Adding Neo4j vector indexes doesn't parallelize the LightRAG calls (different system)
+- Even with perfect Neo4j, critique retrieval remains 120-180s
+- **Criticism resolution:** Parallelize retrieval calls via `asyncio.gather`, not indexing
+
+#### Vector Indexing Remains Valuable (Different Rationale)
+
+P2-C embedding population is still approved, but for **semantic fallback quality**, not latency:
+- When LightRAG fails/sparse, vector index makes fallback faster (100ms → 10ms)
+- Provides alternative semantic path when LightRAG graph traversal inefficient
+- Supports future inversion of retrieval priority (Neo4j vector first, LightRAG supplement)
+
+### Recommendation
+
+1. **Parallelize critique retrieval** (Jarvis, ~20 lines): Replace serial `for` loop in `critique_pipeline.py` with `asyncio.gather()`. Expected: 3x speedup on retrieval phase.
+
+2. **Raise Web HttpClient timeout** (Jeff, 1-2 lines): Increase to 240s so Blazor's 180s token is terminal signal.
+
+3. **Convert service instantiation to singletons** (Jarvis, ~15 lines): Eliminate per-request Neo4j/embedding service construction overhead.
+
+4. **Enable streaming + SSE** (Jeff + Jarvis, medium effort): User sees progress events instead of silent wait.
+
+5. **Post-P2-C: Invert retrieval priority** (Jarvis, future): Neo4j vector first (1-5s), LightRAG supplement (40-60s). Drops hot path from 40-60s to 1-5s for populated embeddings.
+
+### Decisions Recorded
+
+- Neo4j indexing is not the latency fix.
+- LightRAG HTTP is primary bottleneck; retrieval parallelization is highest-impact change.
+- Vector indexing remains valuable for fallback quality and future priority inversion.
+- Critique mode timeout requires parallelization + SSE streaming, not indexing.
+
+---
+
+## Retrieval Parallelization: Critique Mode Sub-Queries — Jarvis — 2026-04-23
+
+**Author:** Jarvis (Python / Data Dev)  
+**Date:** 2026-04-23  
+**Status:** APPROVED FOR IMPLEMENTATION  
+**Scope:** Critique pipeline retrieval phase; reducing 120-180s serial latency to 40-60s parallel.
+
+### Context
+
+Critique mode traces 3 independent sub-query retrievals in serial (lines 103-138 in `critique_pipeline.py`). Each blocks 40-60s on LightRAG HTTP call. Total: 120-180s just for retrieval phase.
+
+### Decision
+
+**Replace serial `for` loop with `asyncio.gather()` to parallelize independent retrieval calls.**
+
+#### Current (Serial)
+
+```python
+for i, sub_query in enumerate(sub_queries[:3], 1):
+    retrieval_query = self._build_retrieval_query(...)
+    knowledge_result = await self.knowledge_retriever.retrieve(
+        retrieval_query,
+        tenant_id=tenant_id,
+        correlation_id=correlation_id,
+        limit=top_k,
+        top_k=top_k,
+        chunk_top_k=top_k,
+        include_references=True,
+        include_chunk_content=True,
+    )
+    all_knowledge.extend(knowledge_result.results)
+```
+
+**Wall time: 3 × 40-60s = 120-180s**
+
+#### Proposed (Parallel)
+
+```python
+sub_queries_limited = sub_queries[:3]
+retrieval_tasks = [
+    self.knowledge_retriever.retrieve(
+        self._build_retrieval_query(sq, conversation_context, query),
+        tenant_id=tenant_id,
+        correlation_id=correlation_id,
+        limit=top_k,
+        top_k=top_k,
+        chunk_top_k=top_k,
+        include_references=True,
+        include_chunk_content=True,
+    )
+    for sq in sub_queries_limited
+]
+results = await asyncio.gather(*retrieval_tasks, return_exceptions=True)
+
+all_knowledge = []
+for i, result in enumerate(results, 1):
+    if isinstance(result, Exception):
+        reasoning_steps.append(
+            f"Sub-query retrieval {i} failed: {result}"
+        )
+    else:
+        all_knowledge.extend(result.results)
+```
+
+**Wall time: 1 × 40-60s (parallel) + error handling overhead**
+
+### Expected Impact
+
+- **Critique retrieval phase:** 120-180s → 40-60s (3x speedup)
+- **Total critique latency:** 150-270s → 90-140s (more often within 180s timeout)
+- **Regular mode:** No change (single retrieval already optimal)
+
+### Effort
+
+- ~20 lines of code change
+- No interface changes, backward compatible
+- Existing exception handling pattern applies
+- Correlation/tracing IDs preserved across parallel calls
+
+### Risk
+
+**Low.** Retrieval calls are:
+- Independent (no data dependencies)
+- Idempotent (safe to retry)
+- Already exception-wrapped
+
+Only risk: If one call fails, exception is caught and logged; query continues with partial results.
+
+### Implementation Notes
+
+- Use `asyncio.gather(*tasks, return_exceptions=True)` to prevent one failure from crashing others
+- Preserve reasoning_steps logging for each sub-query (success or failure)
+- Add unit test validating parallel execution timing (mock LightRAG with sleep to confirm concurrency)
+
+### Files
+
+- `src/AspireApp.PythonServices/app/brain/reasoning/critique_pipeline.py` lines 103-138
+- Test: `tests/unit/test_critique_pipeline.py` (add parallelization coverage)
+
+---
+
+## Chat Timeout Boundary Alignment & Progress Feedback — Jeff — 2026-04-23
+
+**Author:** Jeff (.NET Dev)  
+**Date:** 2026-04-23  
+**Status:** IMMEDIATE FIXES APPROVED; STREAMING DEFERRED  
+**Scope:** Web/API timeout stacking; progress feedback UX; Critique Mode timeout handling.
+
+### Context
+
+User reports 180s timeouts in Critique Mode. Investigation found:
+
+1. **Hidden timeout boundary:** Web layer's `HttpClient.Timeout` (120s) fires *before* Blazor component's cancellation token (180s).
+2. **No progress feedback:** User sees "Waiting..." with zero visibility into operation stages.
+3. **Critique Mode latency is structural:** 4 LLM calls + 3 retrieval calls naturally expensive; 150-270s is not a bug.
+
+### Decision
+
+Align timeout boundaries and add progress visibility.
+
+#### Immediate Fixes (High Priority)
+
+**[1] Raise Web HttpClient.Timeout from 120s to 240s**
+- **File:** `src/AspireApp.Web/Program.cs` line 38
+- **Change:** `client.Timeout = TimeSpan.FromMinutes(2)` → `TimeSpan.FromMinutes(4)`
+- **Rationale:** Allow Web layer to exceed Blazor's 180s intent. If backend takes 150s, Web relays that result instead of timing out at 120s.
+
+**[2] Raise Web Polly TotalRequestTimeout from 180s to 240s**
+- **File:** `src/AspireApp.Web/Program.cs` line 43
+- **Change:** Increase margin so Polly doesn't fire before HttpClient.Timeout
+- **Rationale:** Remove timeout collision; Blazor token should be terminal signal.
+
+**[3] Document timeout hierarchy**
+- Add code comments in both `Program.cs` files explaining why timeouts layer:
+  ```csharp
+  // Timeout stacking (innermost → outermost):
+  // 1. API HttpClient: 180s (backend seam timeout)
+  // 2. API Polly Total: 240s (buffer for retry)
+  // 3. Web HttpClient: 240s (must exceed API's 180s + Polly margin)
+  // 4. Web Polly Total: 240s (aligns with HttpClient)
+  // 5. Blazor cancellation token: 180s (user-visible timeout)
+  // If backend takes >180s, Blazor times out first (expected).
+  ```
+
+#### Medium-Term Enhancements (Deferred)
+
+**[4] Server-Sent Events (SSE) for progress feedback**
+- Python: Add `/brain/chat-stream` endpoint emitting events (search_start, search_complete, reasoning_start, reasoning_step, response_ready)
+- C# client: Wire SSE consumption to Blazor component for real-time UI updates
+- Benefit: User sees "Searching..." → "Reasoning..." → "Done" instead of silent wait
+- Effort: Medium; requires contract changes
+
+**[5] Timeout negotiation header**
+- C#: Send `X-Timeout-Remaining` header to Python backend
+- Python: Return early or prioritize fast operations if time is low
+- Benefit: Prevents Python from starting expensive operations with insufficient time
+- Effort: Low; optional optimization
+
+### What This Is NOT
+
+- **Not a performance defect:** .NET is not adding latency; backend is the constraint.
+- **Not a retry issue:** POST requests correctly disable retries.
+- **Not a payload bloat issue:** Conversation history capped at 12 messages; serialization standard.
+
+### What This IS
+
+- **A design clarity issue:** Timeout stacking is correct but undocumented.
+- **A UX issue:** Users don't see progress during long operations.
+- **Expected behavior:** Critique Mode is structurally expensive; with parallelization + progress feedback, feels fast enough.
+
+### Team Coordination
+
+- **Jarvis:** Parallelize critique retrieval (separate decision). No Python changes needed for immediate timeout fix.
+- **Buster:** Update chat test timeout thresholds; accept longer wait in Critique Mode tests to avoid flakiness.
+- **Bob:** No architecture changes needed; timeout stacking is sound.
+
+### Approval Status
+
+- Immediate fixes (1-3): Approved for next sprint
+- Streaming (4): Optional enhancement; revisit if UX feedback indicates value
+- Timeout negotiation (5): Optional; low priority
 - `LightRagRetriever` uses it to call `get_confidence_by_provenance()` when LightRAG doesn't provide scores
 
 ## Implementation

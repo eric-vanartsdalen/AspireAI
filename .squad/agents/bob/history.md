@@ -31,6 +31,27 @@
 
 ## Learnings
 
+### 2026-04-23 — Search Latency Review: Neo4j Indexing Distraction; Parallelization Is the Fix
+
+**Context:** User reported 40-60s retrieval + 40-60s generation in regular mode and frequent 180s timeouts in critique mode. Architecture review requested.
+
+**Synthesis:**
+- Three independent investigations (Bob, Jarvis, Jeff) converged on consistent findings
+- Jarvis traced retrieval paths: LightRAG 40-60s dominates, Neo4j fallback <500ms (indexing would save <1s)
+- Jeff mapped timeout layers: Web HttpClient (120s) fires before Blazor token (180s) — design clarity issue
+- Bob synthesized: Neo4j indexing is distraction; retrieval parallelization is highest-impact fix
+
+**Architecture Recommendations (Priority Order):**
+1. **Parallelize critique sub-query retrieval** (Jarvis, ~20 lines): Replace serial `for` loop with `asyncio.gather()`. Expected: 3x speedup on retrieval phase, total critique ~90-140s (often fits 180s).
+2. **Raise Web HttpClient timeout to 240s** (Jeff, 1-2 lines): Remove hidden 120s boundary before intended 180s.
+3. **Convert service instantiation to singletons** (Jarvis, ~15 lines): Eliminate per-request Neo4j/embedding service construction overhead.
+4. **Enable SSE streaming** (Jeff + Jarvis, medium effort): User sees "Searching..." → "Reasoning..." → "Done" instead of silent wait.
+5. **Post-P2-C: Invert retrieval priority** (Jarvis, future): Neo4j vector first (1-5s), LightRAG supplement (40-60s). Hot path drops from 40-60s to 1-5s for populated embeddings.
+
+**Key Decision:** Critique Mode is **structurally expensive by design** (4 LLM calls + 3 retrieval calls). No pure performance fix; requires parallelization + streaming for UX. Honest timeline: recommendations 1-3 are quick wins (this sprint); 4-5 are deeper design.
+
+**Decisions Recorded:** All three new decisions now in `.squad/decisions.md` (Neo4j Indexing, Retrieval Parallelization, Timeout Boundary Alignment).
+
 ### 2026-04-15 — Planning Docs Need Explicit Roles After a Pivot
 
 **Context:** Roadmap review showed three planning documents drifting in different directions: `roadmap/Roadmap.md` still read like the pre-pivot plan, `roadmap/Plan.md` was closest to the active BRAIN roadmap, and `roadmap/Tasks.md` had the best execution detail but stale Phase 3 status.
@@ -121,6 +142,46 @@ def create_agent_provider() -> IAgentProvider:
 ---
 
 <!-- Append new learnings below. Each entry is something lasting about the project. -->
+
+### 2026-04-23 — Chat Latency Root Causes: LightRAG Dominates, Critique Mode is Structurally Expensive
+
+**Context:** Eric reported 40-60s retrieval + 40-60s Ollama generation in regular mode, and frequent 180s timeouts in critique mode. Investigation requested with question: "Is Neo4j indexing the answer?"
+
+**Key Findings:**
+
+1. **Neo4j indexing is a distraction, not the fix.** The 40-60s retrieval latency comes from LightRAG's internal processing (HTTP call to a separate container that does its own graph traversal + likely its own LLM reasoning). Neo4j vector indexes already exist in code; even if populated and used, they'd save <1s on the fallback path. The hot path is LightRAG, which Neo4j indexing doesn't touch.
+
+2. **Critique mode is structurally expensive.** It runs 4 serial LLM calls + 3 serial LightRAG calls. Minimum wall time is 150-270s — it *always* exceeds the 180s timeout unless retrievals are parallelized. This is not a bug; it's a design consequence of sequential multi-agent orchestration.
+
+3. **The Web HttpClient timeout (120s) cuts out before the intended Blazor 180s timeout.** Jeff identified this independently: `Program.cs` line 38 sets `client.Timeout = TimeSpan.FromMinutes(2)` (120s), which fires before Blazor's 180s CancellationToken. Users see an abrupt fail before the system would naturally time out.
+
+4. **Ollama generation is non-streaming (`stream=False`).** The entire LLM response is buffered before anything returns to the user. Switching to streaming won't reduce server compute time but dramatically improves perceived latency — the user sees the first token in seconds, not the last token after 60 seconds.
+
+5. **Service instances are created fresh per request.** `get_neo4j_service()` and `get_embedding_service()` are FastAPI dependency factories that instantiate new objects on every request. The Neo4j driver lazy-initializes its connection pool each time. These should be module-level singletons.
+
+**Ordered Recommendations:**
+
+| # | Change | Mode Affected | Impact | Effort |
+|---|--------|---------------|--------|--------|
+| 1 | Parallelize critique sub-query retrievals (`asyncio.gather`) | Critique | Cuts retrieval 120-180s → 40-60s | Low (20 lines) |
+| 2 | Raise Web HttpClient timeout from 120s → 240s | Both | Stops premature abort | Low (1 line) |
+| 3 | Enable Ollama streaming + SSE endpoint | Both | Perceived latency: near-instant first token | Medium |
+| 4 | Singleton service instances (Neo4j driver, EmbeddingService) | Both | Eliminates per-request connection overhead | Low |
+| 5 | Invert retrieval priority: Neo4j vector primary, LightRAG supplement | Both | Cuts 40-60s to ~1-5s on primary path | High |
+
+**Architecture Principle Reinforced:** When multiple I/O operations are independent, always `asyncio.gather`. Serial fan-out stacks linearly; parallel fan-out is bounded by the slowest single call. In critique mode: 3 × 40-60s serial → 1 × 40-60s parallel.
+
+**Coordination Required:**
+- **Jarvis:** Owns critique retrieval parallelization (#1) + singleton service instances (#4)
+- **Jeff:** Owns Web HttpClient timeout fix (#2); owns SSE endpoint wiring (#3)
+- **Buster:** Update critique mode test timeout expectations post-fix; add streaming contract test
+
+**Key Files:**
+- `src/AspireApp.PythonServices/app/brain/reasoning/critique_pipeline.py` (lines 103-138: serial loop)
+- `src/AspireApp.PythonServices/app/services/lightrag_query_service.py` (timeout, line 14)
+- `src/AspireApp.PythonServices/app/services/llm_chat_service.py` (`stream=False`, line 104)
+- `src/AspireApp.Web/Program.cs` (HttpClient.Timeout 120s, line 38)
+- `src/AspireApp.ApiService/Services/BrainBackendClientServiceCollectionExtensions.cs` (AttemptTimeout 3min)
 
 ### 2026-04-18 — Ollama Contention: Serialize Embedding vs LightRAG Workloads
 
