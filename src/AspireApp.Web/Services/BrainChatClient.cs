@@ -1,6 +1,7 @@
 using System.Net.Http.Json;
 using System.Text.Json;
 using System.Text.Json.Serialization;
+using Microsoft.AspNetCore.Http;
 
 namespace AspireApp.Web.Services;
 
@@ -112,6 +113,15 @@ public sealed class BrainChatClient(HttpClient httpClient, ILogger<BrainChatClie
         {
             logger.LogWarning(ex, "BRAIN gateway request failed");
             throw new BrainChatException("The BRAIN gateway is unavailable.", innerException: ex);
+        }
+        catch (OperationCanceledException ex) when (!cancellationToken.IsCancellationRequested)
+        {
+            logger.LogWarning(ex, "BRAIN gateway request timed out");
+            throw new BrainChatException(
+                "The BRAIN gateway timed out before a response was ready. Please try again in a moment.",
+                StatusCodes.Status504GatewayTimeout,
+                "BRAIN chat timed out",
+                ex);
         }
         catch (JsonException ex)
         {

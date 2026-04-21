@@ -1,20 +1,20 @@
 ---
-updated_at: 2026-04-15T00:00:00Z
-focus_area: Phase 3 beta → End-to-end Aspire chat validation
+updated_at: 2026-04-21T13:30:00Z
+focus_area: LightRAG timeout stabilization and retrieval readiness
 active_issues:
-  - ACTIVE: Prove one end-to-end Aspire flow from ingested document to gateway-routed chat with citations/confidence in the Web UI
-  - READY: Gateway/contracts/retrieval foundations plus Regular + Critique chat paths are already implemented on this branch
-  - GAP: Critique mode remains experimental until live-validated; saved-conversation mode-switch regression coverage is still missing
-  - roadmap/Tasks.md :: Remaining Phase 3 gaps are session memory, contradiction/proactive monitoring, proactive suggestions, chat mode transition regression coverage, and MEai cleanup
-  - CRITIQUE-MODE-UI-GUIDE.md :: Treat the guide as implemented reference material, not pending work
+  - COMPLETE: Upload and chat timeout regression traced to three combined causes: deferred LightRAG readiness, synchronous web dispatch, and missing live LightRAG embedding/runtime wiring
+  - ACTIVE: Keep user-facing document readiness honest while allowing LightRAG to reconcile to ready after long indexing runs
+  - ACTIVE: Preserve live Aspire retrieval by explicitly wiring LightRAG embedding/runtime settings and reducing Ollama contention during ingestion
+  - READY: Validate normal user upload -> process -> chat flow again after the timeout stabilization batch
+  - roadmap/Tasks.md :: Phase 3 gaps still include session memory, contradiction/proactive monitoring, proactive suggestions, chat mode transition regression coverage, and MEai cleanup
 ---
 
 # What We're Focused On
 
-**Phase 3 Beta:** The branch already has the gateway, contracts, retrieval foundation, Regular chat path, Critique chat path, and Web UI confidence/citation rendering.
+**Timeout Stabilization:** The current branch needed a follow-up fix so upload and chat no longer surface false timeouts while LightRAG is still reconciling or waiting on Ollama-backed embedding work.
 
-**Active Now:** Prove one end-to-end Aspire flow from ingested document to gateway-routed chat with citations/confidence in the Web UI.
+**Active Now:** Keep readiness truthful, queue long-running processing work in background, and preserve live LightRAG retrieval by wiring its runtime and embedding configuration explicitly.
 
-**Critique Mode:** Implemented, but still experimental until live end-to-end validation and saved-conversation mode-switch regression coverage are complete.
+**Verification:** Focused Python, Web, gateway, and live Aspire tests passed after the timeout stabilization batch, including the live LightRAG query round-trip.
 
-**Next After Beta Proof:** Finish the remaining Phase 3 gaps — session memory, contradiction/proactive monitoring, proactive suggestions, and MEai cleanup — before shifting to Phase 4 hardening.
+**Next After Stabilization:** Re-run the normal user-facing upload -> process -> chat flow, then continue the remaining Phase 3 gaps — session memory, contradiction/proactive monitoring, proactive suggestions, chat mode transition regression coverage, and MEai cleanup.

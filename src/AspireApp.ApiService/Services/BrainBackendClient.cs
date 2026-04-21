@@ -37,31 +37,42 @@ public sealed class PythonBrainBackendClient(HttpClient httpClient, ILogger<Pyth
         BrainIngestRequest request,
         CancellationToken cancellationToken = default)
     {
-        using var response = await _httpClient.PostAsync(
-            $"processing/process-document/{request.DocumentId.ToString(CultureInfo.InvariantCulture)}",
-            content: null,
-            cancellationToken);
-
-        var responseBody = await response.Content.ReadAsStringAsync(cancellationToken);
-        if (!response.IsSuccessStatusCode)
+        try
         {
-            throw CreateProblem(
-                response.StatusCode,
-                "BRAIN ingest failed",
-                $"Python processing could not start document {request.DocumentId}. {ExtractProblemDetail(responseBody)}");
+            using var response = await _httpClient.PostAsync(
+                $"processing/process-document/{request.DocumentId.ToString(CultureInfo.InvariantCulture)}",
+                content: null,
+                cancellationToken);
+
+            var responseBody = await response.Content.ReadAsStringAsync(cancellationToken);
+            if (!response.IsSuccessStatusCode)
+            {
+                throw CreateProblem(
+                    response.StatusCode,
+                    "BRAIN ingest failed",
+                    $"Python processing could not start document {request.DocumentId}. {ExtractProblemDetail(responseBody)}");
+            }
+
+            var payload = Deserialize<ProcessingStartResponse>(responseBody);
+            var message = string.IsNullOrWhiteSpace(payload?.Message)
+                ? $"Processing started for document {request.DocumentId}"
+                : payload.Message;
+
+            return new BrainIngestResponse(
+                request.TenantId,
+                request.CorrelationId,
+                request.DocumentId,
+                Status: "processing",
+                Message: message);
         }
-
-        var payload = Deserialize<ProcessingStartResponse>(responseBody);
-        var message = string.IsNullOrWhiteSpace(payload?.Message)
-            ? $"Processing started for document {request.DocumentId}"
-            : payload.Message;
-
-        return new BrainIngestResponse(
-            request.TenantId,
-            request.CorrelationId,
-            request.DocumentId,
-            Status: "processing",
-            Message: message);
+        catch (OperationCanceledException ex) when (!cancellationToken.IsCancellationRequested)
+        {
+            throw new BrainGatewayProblemException(
+                StatusCodes.Status504GatewayTimeout,
+                "BRAIN ingest timed out",
+                $"Python processing did not acknowledge document {request.DocumentId} before the gateway timed out.",
+                ex);
+        }
     }
 
     public async Task<KnowledgeResult> QueryKnowledgeAsync(
@@ -106,44 +117,55 @@ public sealed class PythonBrainBackendClient(HttpClient httpClient, ILogger<Pyth
         string failureTitle,
         CancellationToken cancellationToken)
     {
-        using var response = await _httpClient.PostAsJsonAsync(relativePath, payload, cancellationToken);
-        var responseBody = await response.Content.ReadAsStringAsync(cancellationToken);
-
-        if (!response.IsSuccessStatusCode)
-        {
-            throw CreateProblem(
-                response.StatusCode,
-                failureTitle,
-                $"Python retrieval seam {relativePath} returned {(int)response.StatusCode}. {ExtractProblemDetail(responseBody)}");
-        }
-
         try
         {
-            var deserialized = Deserialize<TResponse>(responseBody);
-            if (deserialized is not null)
-            {
-                return deserialized;
-            }
-        }
-        catch (JsonException ex)
-        {
-            _logger.LogWarning(
-                ex,
-                "Python retrieval seam {RelativePath} returned invalid JSON",
-                relativePath);
+            using var response = await _httpClient.PostAsJsonAsync(relativePath, payload, cancellationToken);
+            var responseBody = await response.Content.ReadAsStringAsync(cancellationToken);
 
+            if (!response.IsSuccessStatusCode)
+            {
+                throw CreateProblem(
+                    response.StatusCode,
+                    failureTitle,
+                    $"Python retrieval seam {relativePath} returned {(int)response.StatusCode}. {ExtractProblemDetail(responseBody)}");
+            }
+
+            try
+            {
+                var deserialized = Deserialize<TResponse>(responseBody);
+                if (deserialized is not null)
+                {
+                    return deserialized;
+                }
+            }
+            catch (JsonException ex)
+            {
+                _logger.LogWarning(
+                    ex,
+                    "Python retrieval seam {RelativePath} returned invalid JSON",
+                    relativePath);
+
+                throw new BrainGatewayProblemException(
+                    StatusCodes.Status502BadGateway,
+                    failureTitle,
+                    $"Python retrieval seam {relativePath} returned invalid JSON.",
+                    ex);
+            }
+
+            _logger.LogWarning("Python retrieval seam {RelativePath} returned an empty response body", relativePath);
             throw new BrainGatewayProblemException(
                 StatusCodes.Status502BadGateway,
                 failureTitle,
-                $"Python retrieval seam {relativePath} returned invalid JSON.",
+                $"Python retrieval seam {relativePath} returned an empty response.");
+        }
+        catch (OperationCanceledException ex) when (!cancellationToken.IsCancellationRequested)
+        {
+            throw new BrainGatewayProblemException(
+                StatusCodes.Status504GatewayTimeout,
+                $"{failureTitle} timed out",
+                $"Python retrieval seam {relativePath} timed out before it returned a response.",
                 ex);
         }
-
-        _logger.LogWarning("Python retrieval seam {RelativePath} returned an empty response body", relativePath);
-        throw new BrainGatewayProblemException(
-            StatusCodes.Status502BadGateway,
-            failureTitle,
-            $"Python retrieval seam {relativePath} returned an empty response.");
     }
 
     private static TResponse? Deserialize<TResponse>(string responseBody)

@@ -14,7 +14,9 @@ public static class BrainChatClientServiceCollectionExtensions
                 string.IsNullOrWhiteSpace(configuredBaseAddress)
                     ? "http://localhost:5158/"
                     : EnsureTrailingSlash(configuredBaseAddress));
-            client.Timeout = TimeSpan.FromMinutes(3);
+            // Keep the transport timeout above the user-facing Blazor timeout so the
+            // page-level cancellation token remains the single authoritative boundary.
+            client.Timeout = TimeSpan.FromMinutes(5);
         });
 
 #pragma warning disable EXTEXP0001
@@ -24,9 +26,9 @@ public static class BrainChatClientServiceCollectionExtensions
             // Chat requests are POSTs that may trigger real work downstream, so retrying them
             // amplifies deterministic failures and risks duplicate side effects.
             options.Retry.DisableForUnsafeHttpMethods();
-            options.TotalRequestTimeout.Timeout = TimeSpan.FromMinutes(4);
-            options.AttemptTimeout.Timeout = TimeSpan.FromMinutes(3);
-            options.CircuitBreaker.SamplingDuration = TimeSpan.FromMinutes(6);
+            options.TotalRequestTimeout.Timeout = TimeSpan.FromMinutes(6);
+            options.AttemptTimeout.Timeout = TimeSpan.FromMinutes(5);
+            options.CircuitBreaker.SamplingDuration = TimeSpan.FromMinutes(10);
         });
 #pragma warning restore EXTEXP0001
 

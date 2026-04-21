@@ -23,3 +23,5 @@ AspireAI mounts `./data` into both the Python service and the LightRAG container
 - Use `GET /documents` (preferred) or `data\rag_storage\kv_store_doc_status.json` to observe per-document terminal status; `pipeline_status.busy` is only a global liveness signal.
 - Do not make the canonical Docling/SQLite success path depend on LightRAG availability unless the product explicitly requires it.
 - If the product needs a "ready" badge, model it as a second readiness/indexing state rather than overloading the main document `processed` status.
+- When LightRAG runs against Ollama, set both `LLM_BINDING=ollama` **and** `EMBEDDING_BINDING=ollama`; a missing embedding binding can leave `/documents` alive while Neo4j-backed graph growth never happens.
+- For container-version tolerance, set both storage alias styles when possible (`KV_STORAGE` / `DOC_STATUS_STORAGE` / `GRAPH_STORAGE` / `VECTOR_STORAGE` plus the `LIGHTRAG_*` variants) so graph persistence does not silently fall back to defaults.

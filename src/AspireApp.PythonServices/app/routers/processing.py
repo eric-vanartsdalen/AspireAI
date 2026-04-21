@@ -38,6 +38,15 @@ def get_lightrag_handoff_service():
     return LightRagHandoffService()
 
 
+def _ingestion_vector_population_enabled() -> bool:
+    return os.getenv("ENABLE_INGESTION_VECTOR_POPULATION", "false").strip().lower() in {
+        "1",
+        "true",
+        "yes",
+        "on",
+    }
+
+
 def _is_youtube_transcript_document(document) -> bool:
     return (
         getattr(document, "source_type", None) == "youtube_video"
@@ -141,6 +150,101 @@ def _normalize_processing_status(status: str | None) -> str:
         "error": "error",
     }
     return status_map.get(normalized, normalized)
+
+
+def _start_lightrag_readiness_reconciler(
+    document_id: int,
+    staged_input_path: str,
+    db: DatabaseService,
+    lightrag_handoff: LightRagHandoffService,
+    docling_document_path: str | None,
+    remaining_attempts: int = 1,
+) -> None:
+    reconciliation_thread = threading.Thread(
+        target=_continue_lightrag_readiness_sync,
+        kwargs={
+            "document_id": document_id,
+            "staged_input_path": staged_input_path,
+            "db": db,
+            "lightrag_handoff": lightrag_handoff,
+            "docling_document_path": docling_document_path,
+            "remaining_attempts": remaining_attempts,
+        },
+        name=f"lightrag-readiness-{document_id}",
+        daemon=True,
+    )
+    reconciliation_thread.start()
+
+
+def _continue_lightrag_readiness_sync(
+    *,
+    document_id: int,
+    staged_input_path: str,
+    db: DatabaseService,
+    lightrag_handoff: LightRagHandoffService,
+    docling_document_path: str | None,
+    remaining_attempts: int,
+) -> None:
+    try:
+        readiness_result = lightrag_handoff.wait_for_document_readiness(
+            staged_input_path,
+            status_callback=lambda status, error: db.update_file_indexing_status(document_id, status, error),
+        )
+    except Exception as exc:
+        logger.warning(
+            "Deferred LightRAG readiness reconciliation failed for document %s: %s",
+            document_id,
+            exc,
+        )
+        db.update_file_indexing_status(document_id, "timed_out", str(exc))
+        _update_lightrag_metadata(
+            docling_document_path,
+            {
+                "indexing_status": "timed_out",
+                "indexing_error": str(exc),
+                "readiness_reconciliation": "failed",
+            },
+        )
+        return
+
+    if readiness_result.get("readiness_deferred") and remaining_attempts > 0:
+        last_known_status = readiness_result.get("last_known_indexing_status") or "indexing"
+        db.update_file_indexing_status(document_id, last_known_status)
+        _update_lightrag_metadata(
+            docling_document_path,
+            {
+                "indexing_status": last_known_status,
+                "indexing_error": None,
+                "readiness_reconciliation": "scheduled",
+                "readiness_timeout_message": readiness_result.get("readiness_timeout_message"),
+            },
+        )
+        _start_lightrag_readiness_reconciler(
+            document_id=document_id,
+            staged_input_path=staged_input_path,
+            db=db,
+            lightrag_handoff=lightrag_handoff,
+            docling_document_path=docling_document_path,
+            remaining_attempts=remaining_attempts - 1,
+        )
+        return
+
+    final_status = readiness_result.get("indexing_status", "timed_out")
+    final_error = readiness_result.get("indexing_error")
+    if final_status == "timed_out":
+        final_error = readiness_result.get("readiness_timeout_message") or final_error
+        db.update_file_indexing_status(document_id, "timed_out", final_error)
+
+    _update_lightrag_metadata(
+        docling_document_path,
+        {
+            "indexing_status": final_status,
+            "indexing_error": final_error,
+            "lightrag_document_id": readiness_result.get("lightrag_document_id"),
+            "document_status": readiness_result.get("document_status"),
+            "readiness_reconciliation": "completed",
+        },
+    )
 
 
 def _collect_child_document_ids(document, content, db: DatabaseService, fetcher) -> list[int]:
@@ -300,9 +404,16 @@ def _process_document_task_sync(
             # Create document node
             doc_node_id = neo4j.create_document_node(canonical_document)
             
-            # Initialize embedding service for P2-C population
-            embedding_service = EmbeddingService()
-            embedding_available = embedding_service.is_available()
+            embedding_service = None
+            embedding_available = False
+            if _ingestion_vector_population_enabled():
+                embedding_service = EmbeddingService()
+                embedding_available = embedding_service.is_available()
+            else:
+                logger.info(
+                    "Skipping optional Neo4j vector population during ingestion for document %s",
+                    document_id,
+                )
             
             # Create page nodes and populate embeddings
             page_node_ids = neo4j.create_page_nodes(canonical_document.pages, doc_node_id, document.id)
@@ -395,13 +506,23 @@ def _process_document_task_sync(
         # All Ollama-dependent work is finished.  Hand off to LightRAG now so its
         # own Ollama calls (LLM entity extraction + embedding) don't compete with
         # the page/claim embedding batches above.
-        _attempt_lightrag_handoff(
+        resolved_lightrag_handoff = lightrag_handoff or LightRagHandoffService()
+        lightrag_reconciliation_request = _attempt_lightrag_handoff(
             document=document,
             processed_doc=processed_doc,
             db=db,
-            lightrag_handoff=lightrag_handoff or LightRagHandoffService(),
+            lightrag_handoff=resolved_lightrag_handoff,
         )
         _persist_processing_metadata(processed_doc)
+        if lightrag_reconciliation_request is not None:
+            _start_lightrag_readiness_reconciler(
+                document_id=document.id,
+                staged_input_path=lightrag_reconciliation_request["staged_input_path"],
+                db=db,
+                lightrag_handoff=resolved_lightrag_handoff,
+                docling_document_path=getattr(processed_doc, "docling_document_path", None),
+                remaining_attempts=lightrag_reconciliation_request.get("remaining_attempts", 1),
+            )
 
         db.update_file_ingestion_metadata(
             file_id=document_id,
@@ -456,7 +577,7 @@ def _attempt_lightrag_handoff(
     processed_doc,
     db: DatabaseService,
     lightrag_handoff: LightRagHandoffService,
-) -> None:
+) -> dict[str, object] | None:
     metadata = getattr(processed_doc, "processing_metadata", None) or {}
     markdown_path = metadata.get("markdown_path")
 
@@ -471,7 +592,7 @@ def _attempt_lightrag_handoff(
             "indexing_status": "not_requested",
         }
         processed_doc.processing_metadata = metadata
-        return
+        return None
 
     try:
         handoff_result = lightrag_handoff.handoff_document(document, markdown_path)
@@ -489,6 +610,7 @@ def _attempt_lightrag_handoff(
             "error": str(exc),
         }
     else:
+        reconciliation_request: dict[str, object] | None = None
         if not bool(handoff_result.get("scan_requested")):
             db.update_file_indexing_status(document.id, "not_requested")
             handoff_result["indexing_status"] = "not_requested"
@@ -503,10 +625,23 @@ def _attempt_lightrag_handoff(
                 status_callback=lambda status, error: db.update_file_indexing_status(document.id, status, error),
             )
             handoff_result.update(readiness_result)
+            if readiness_result.get("readiness_deferred"):
+                last_known_status = readiness_result.get("last_known_indexing_status") or "indexing"
+                db.update_file_indexing_status(document.id, last_known_status)
+                handoff_result["indexing_status"] = last_known_status
+                handoff_result["indexing_error"] = None
+                handoff_result["readiness_reconciliation"] = "scheduled"
+                reconciliation_request = {
+                    "staged_input_path": str(staged_input_path),
+                    "remaining_attempts": 1,
+                }
 
         metadata["lightrag"] = handoff_result
+        processed_doc.processing_metadata = metadata
+        return reconciliation_request
 
     processed_doc.processing_metadata = metadata
+    return None
 
 
 def _persist_processing_metadata(processed_doc) -> None:
@@ -516,6 +651,31 @@ def _persist_processing_metadata(processed_doc) -> None:
         return
 
     metadata_path = Path(document_path).with_name("metadata.json")
+    if not metadata_path.parent.exists():
+        return
+
+    metadata_path.write_text(
+        json.dumps(metadata, indent=2, ensure_ascii=False),
+        encoding="utf-8",
+    )
+
+
+def _update_lightrag_metadata(docling_document_path: str | None, lightrag_state: dict[str, object]) -> None:
+    if not docling_document_path:
+        return
+
+    metadata = _load_processing_metadata(docling_document_path)
+    if not metadata:
+        return
+
+    existing_lightrag = metadata.get("lightrag")
+    if not isinstance(existing_lightrag, dict):
+        existing_lightrag = {}
+
+    existing_lightrag.update(lightrag_state)
+    metadata["lightrag"] = existing_lightrag
+
+    metadata_path = Path(docling_document_path).with_name("metadata.json")
     if not metadata_path.parent.exists():
         return
 

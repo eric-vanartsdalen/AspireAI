@@ -6,6 +6,7 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging.Abstractions;
+using System.Diagnostics;
 using System.Reflection;
 using AuthenticatedUser = web::AspireApp.Web.Services.AuthenticatedUser;
 using AuthenticationContext = web::AspireApp.Web.Services.AuthenticationContext;
@@ -78,6 +79,73 @@ public sealed class UploadDataTests : IDisposable
             Assert.Equal("uploaded", storedFile.Status);
             Assert.True(File.Exists(Path.Combine(dataDirectory, storedFile.FileName)));
             Assert.Equal([storedFile.Id], processingCoordinator.QueuedDocumentIds);
+        }
+        finally
+        {
+            DeleteDirectoryIfPresent(dataDirectory);
+        }
+    }
+
+    [Fact]
+    public async Task UploadFiles_DoesNotWaitForAutomaticProcessingDispatch()
+    {
+        await using var context = CreateDbContext();
+        var tenantId = "tenant-allowed";
+        var currentUser = SeedTenantMembership(context, tenantId);
+        var dataDirectory = CreateDataDirectory();
+
+        try
+        {
+            var processingCoordinator = new FakeDocumentProcessingCoordinator
+            {
+                QueueDelay = TimeSpan.FromSeconds(5)
+            };
+
+            var cut = await RenderUploadDataAsync(context, currentUser, dataDirectory, processingCoordinator);
+
+            SetSelectedBrowserFile(cut.Instance, new TestBrowserFile("notes.txt", "text/plain", [1, 2, 3, 4]));
+
+            await InvokeUploadAsync(cut);
+
+            var storedFileId = await context.Datasources
+                .Select(file => file.Id)
+                .SingleAsync(XunitTestContext.Current.CancellationToken);
+
+            Assert.DoesNotContain(storedFileId, processingCoordinator.QueuedDocumentIds);
+            await WaitForQueuedDocumentAsync(processingCoordinator, storedFileId, timeoutMs: 8_000);
+        }
+        finally
+        {
+            DeleteDirectoryIfPresent(dataDirectory);
+        }
+    }
+
+    [Fact]
+    public async Task HandleUrlUpload_DoesNotWaitForAutomaticProcessingDispatch()
+    {
+        await using var context = CreateDbContext();
+        var tenantId = "tenant-allowed";
+        var currentUser = SeedTenantMembership(context, tenantId);
+        var dataDirectory = CreateDataDirectory();
+
+        try
+        {
+            var processingCoordinator = new FakeDocumentProcessingCoordinator
+            {
+                QueueDelay = TimeSpan.FromSeconds(5)
+            };
+
+            var cut = await RenderUploadDataAsync(context, currentUser, dataDirectory, processingCoordinator);
+            SetWebsiteUrl(cut.Instance, "https://contoso.example/docs");
+
+            await InvokeUrlUploadAsync(cut);
+
+            var storedFileId = await context.Datasources
+                .Select(file => file.Id)
+                .SingleAsync(XunitTestContext.Current.CancellationToken);
+
+            Assert.DoesNotContain(storedFileId, processingCoordinator.QueuedDocumentIds);
+            await WaitForQueuedDocumentAsync(processingCoordinator, storedFileId, timeoutMs: 8_000);
         }
         finally
         {
@@ -378,6 +446,15 @@ public sealed class UploadDataTests : IDisposable
         cut.Render();
     }
 
+    private static async Task InvokeUrlUploadAsync(IRenderedComponent<UploadData> cut)
+    {
+        var method = typeof(UploadData).GetMethod("HandleUrlUpload", BindingFlags.Instance | BindingFlags.NonPublic)
+            ?? throw new InvalidOperationException("Could not locate UploadData.HandleUrlUpload for regression coverage.");
+
+        await cut.InvokeAsync(() => (Task)method.Invoke(cut.Instance, [])!);
+        cut.Render();
+    }
+
     private async Task<IRenderedComponent<UploadData>> RenderUploadDataAsync(
         UploadDbContext context,
         AuthenticatedUser currentUser,
@@ -423,6 +500,14 @@ public sealed class UploadDataTests : IDisposable
             ?? throw new InvalidOperationException("Could not locate UploadData._selectedBrowserFile for regression coverage.");
 
         field.SetValue(component, browserFile);
+    }
+
+    private static void SetWebsiteUrl(UploadData component, string websiteUrl)
+    {
+        var field = typeof(UploadData).GetField("_websiteUrl", BindingFlags.Instance | BindingFlags.NonPublic)
+            ?? throw new InvalidOperationException("Could not locate UploadData._websiteUrl for regression coverage.");
+
+        field.SetValue(component, websiteUrl);
     }
 
     private static AuthenticatedUser SeedTenantMembership(UploadDbContext context, string tenantId)
@@ -479,6 +564,25 @@ public sealed class UploadDataTests : IDisposable
         }
     }
 
+    private static async Task WaitForQueuedDocumentAsync(
+        FakeDocumentProcessingCoordinator processingCoordinator,
+        int documentId,
+        int timeoutMs = 2_000)
+    {
+        var stopwatch = Stopwatch.StartNew();
+        while (stopwatch.ElapsedMilliseconds < timeoutMs)
+        {
+            if (processingCoordinator.QueuedDocumentIds.Contains(documentId))
+            {
+                return;
+            }
+
+            await Task.Delay(25, XunitTestContext.Current.CancellationToken);
+        }
+
+        Assert.Fail($"Timed out waiting for automatic processing to queue document {documentId}.");
+    }
+
     private sealed class TestBrowserFile(string name, string contentType, byte[] content) : IBrowserFile
     {
         private readonly byte[] _content = content;
@@ -510,10 +614,17 @@ public sealed class UploadDataTests : IDisposable
 
         public List<int> CleanedDocumentIds { get; } = [];
 
-        public Task<AutomaticProcessingDispatchResult> TryStartProcessingAsync(int documentId, CancellationToken cancellationToken = default)
+        public TimeSpan QueueDelay { get; init; }
+
+        public async Task<AutomaticProcessingDispatchResult> TryStartProcessingAsync(int documentId, CancellationToken cancellationToken = default)
         {
+            if (QueueDelay > TimeSpan.Zero)
+            {
+                await Task.Delay(QueueDelay, cancellationToken);
+            }
+
             QueuedDocumentIds.Add(documentId);
-            return Task.FromResult(new AutomaticProcessingDispatchResult(true, true, "queued"));
+            return new AutomaticProcessingDispatchResult(true, true, "queued");
         }
 
         public Task CleanupDocumentAsync(int documentId, CancellationToken cancellationToken = default)

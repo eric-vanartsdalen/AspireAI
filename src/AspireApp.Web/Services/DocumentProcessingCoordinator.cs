@@ -50,6 +50,14 @@ public sealed class DocumentProcessingCoordinator(HttpClient httpClient, ILogger
                 responseBody);
             return new AutomaticProcessingDispatchResult(true, false, responseBody);
         }
+        catch (OperationCanceledException ex) when (!cancellationToken.IsCancellationRequested)
+        {
+            _logger.LogWarning(ex, "Automatic processing request timed out for document {DocumentId}", documentId);
+            return new AutomaticProcessingDispatchResult(
+                true,
+                false,
+                "Timed out while asking the processing service to queue this document.");
+        }
         catch (Exception ex)
         {
             _logger.LogWarning(ex, "Automatic processing request threw for document {DocumentId}", documentId);

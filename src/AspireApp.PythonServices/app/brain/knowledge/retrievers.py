@@ -516,9 +516,16 @@ class SemanticKnowledgeRetriever(_KnowledgeItemFactory, IKnowledgeRetriever):
         query_embedding = await self._try_embed(query)
 
         if query_embedding is not None:
-            raw_results = await self._vector_search(
-                query_embedding, resolved_limit, document_ids,
-            )
+            try:
+                raw_results = await self._vector_search(
+                    query_embedding, resolved_limit, document_ids,
+                )
+            except Exception:
+                _logger.warning("Vector search failed — falling back to text search", exc_info=True)
+                raw_results = []
+
+            if not raw_results:
+                raw_results = await self._text_search(query, resolved_limit, document_ids)
         else:
             raw_results = await self._text_search(query, resolved_limit, document_ids)
 

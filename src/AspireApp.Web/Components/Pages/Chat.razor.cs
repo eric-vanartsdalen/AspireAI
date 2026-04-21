@@ -45,7 +45,7 @@ namespace AspireApp.Web.Components.Pages
         private DotNetObjectReference<Chat>? _dotNetRef;
         private const int MaxConversationHistoryMessages = 12;
         private const int AiFirstTokenTimeoutSeconds = 45;
-        private const int AiResponseTimeoutSeconds = 150;
+        private const int AiResponseTimeoutSeconds = 240;
         private const string HaltedResponseTag = "[AI response was manually halted prematurely.]";
         private const string TimedOutResponseTag = "[AI response timed out before completion.]";
 
@@ -977,7 +977,7 @@ namespace AspireApp.Web.Components.Pages
             var stopwatch = Stopwatch.StartNew();
 
             var manualStopTokenSource = new CancellationTokenSource();
-            using var responseTimeoutTokenSource = new CancellationTokenSource(TimeSpan.FromMinutes(3));
+            using var responseTimeoutTokenSource = new CancellationTokenSource(TimeSpan.FromSeconds(AiResponseTimeoutSeconds));
             using var linkedTokenSource = CancellationTokenSource.CreateLinkedTokenSource(
                 manualStopTokenSource.Token,
                 responseTimeoutTokenSource.Token);

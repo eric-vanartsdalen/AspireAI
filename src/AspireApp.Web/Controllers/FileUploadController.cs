@@ -142,25 +142,7 @@ public class FileUploadController(
                     file.FileName, filePath, file.Length, fileHash, tenantId);
             }
 
-            // Queue automatic processing in background without blocking the response
-            // This ensures the upload response returns with status="uploaded" before processing changes it
-            var fileId = fileMetadata.Id;
-            _ = Task.Run(async () =>
-            {
-                // Give the response time to complete before starting processing
-                await Task.Delay(100, _applicationLifetime.ApplicationStopping);
-                try
-                {
-                    await _fileStorageService.TryStartAutomaticProcessingAsync(fileId, _applicationLifetime.ApplicationStopping);
-                }
-                catch (Exception ex)
-                {
-                    if (_logger.IsEnabled(LogLevel.Warning))
-                    {
-                        _logger.LogWarning(ex, "Background automatic processing failed for file {FileId}", fileId);
-                    }
-                }
-            }, _applicationLifetime.ApplicationStopping);
+            QueueAutomaticProcessing(fileMetadata.Id);
 
             return Ok(new
             {
@@ -173,7 +155,7 @@ public class FileUploadController(
                 uploadedAt = fileMetadata.UploadedAt,
                 status = "uploaded",
                 fileHash,
-                message = "File uploaded successfully."
+                message = "File uploaded successfully. Automatic processing will start shortly."
             });
         }
         catch (Exception ex)
@@ -276,12 +258,7 @@ public class FileUploadController(
                     request.Url, fileMetadata.Id, urlHash, tenantId, sourceType);
             }
 
-            var automaticProcessing = await _fileStorageService.TryStartAutomaticProcessingAsync(fileMetadata.Id, cancellationToken);
-            var message = automaticProcessing.Attempted
-                ? automaticProcessing.Started
-                    ? "Website URL added successfully. Processing started automatically."
-                    : "Website URL added successfully, but automatic processing could not be started."
-                : "Website URL added successfully.";
+            QueueAutomaticProcessing(fileMetadata.Id);
 
             return Ok(new
             {
@@ -294,7 +271,7 @@ public class FileUploadController(
                 status = fileMetadata.Status,
                 sourceType = fileMetadata.SourceType,
                 fileHash = urlHash,
-                message
+                message = "Website URL added successfully. Automatic processing will start shortly."
             });
         }
         catch (Exception ex)
@@ -420,6 +397,36 @@ public class FileUploadController(
             success = false,
             error = "The requested tenant is not available for the current user."
         }));
+    }
+
+    private void QueueAutomaticProcessing(int fileId)
+    {
+        _ = Task.Run(async () =>
+        {
+            await Task.Delay(100, _applicationLifetime.ApplicationStopping);
+
+            try
+            {
+                var automaticProcessing = await _fileStorageService.TryStartAutomaticProcessingAsync(
+                    fileId,
+                    _applicationLifetime.ApplicationStopping);
+
+                if (!automaticProcessing.Attempted || !automaticProcessing.Started)
+                {
+                    _logger.LogWarning(
+                        "Background automatic processing did not start for file {FileId}. Detail: {Detail}",
+                        fileId,
+                        automaticProcessing.Detail);
+                }
+            }
+            catch (Exception ex)
+            {
+                if (_logger.IsEnabled(LogLevel.Warning))
+                {
+                    _logger.LogWarning(ex, "Background automatic processing failed for file {FileId}", fileId);
+                }
+            }
+        }, _applicationLifetime.ApplicationStopping);
     }
 
     private static string GenerateUniqueFileName(string originalFileName)

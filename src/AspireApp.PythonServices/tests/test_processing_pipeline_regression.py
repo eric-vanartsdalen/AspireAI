@@ -428,6 +428,58 @@ class ProcessingPipelineRegressionTests(unittest.TestCase):
             )
             self.assertEqual(3, handoff_service.document_requests)
 
+    def test_lightrag_readiness_uses_local_status_store_when_http_status_is_stale(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            staged_input_path = Path(temp_dir) / "inputs" / "000062-docs-github.md"
+            staged_input_path.parent.mkdir(parents=True, exist_ok=True)
+            staged_input_path.write_text("# staged", encoding="utf-8")
+            doc_status_store_path = Path(temp_dir) / "rag_storage" / "kv_store_doc_status.json"
+            doc_status_store_path.parent.mkdir(parents=True, exist_ok=True)
+            doc_status_store_path.write_text(
+                json.dumps(
+                    {
+                        "doc-62": {
+                            "id": "doc-62",
+                            "file_path": staged_input_path.name,
+                            "status": "processed",
+                            "updated_at": "2026-04-21T13:16:12.483483+00:00",
+                        }
+                    }
+                ),
+                encoding="utf-8",
+            )
+
+            class StaleHttpLightRagHandoffService(LightRagHandoffService):
+                def __init__(self, input_dir: Path, status_store: Path):
+                    super().__init__(
+                        input_dir=input_dir,
+                        service_url="http://lightrag.test",
+                        scan_timeout_seconds=1.0,
+                        doc_status_store_path=status_store,
+                    )
+
+                def _json_request(self, method: str, path: str, payload=None, timeout=None):
+                    if method == "GET" and path == "/documents":
+                        return {
+                            "statuses": {
+                                "pending": [
+                                    {
+                                        "id": "doc-62",
+                                        "file_path": staged_input_path.name,
+                                        "status": "pending",
+                                    }
+                                ]
+                            }
+                        }
+
+                    raise AssertionError(f"Unexpected request {method} {path}")
+
+            handoff_service = StaleHttpLightRagHandoffService(staged_input_path.parent, doc_status_store_path)
+            readiness = handoff_service.get_document_status_by_file_path(staged_input_path)
+
+            self.assertIsNotNone(readiness)
+            self.assertEqual("processed", readiness["status"])
+
     def test_process_document_task_persists_pages_and_marks_processed(self):
         document = SimpleNamespace(
             id=42,
@@ -458,7 +510,8 @@ class ProcessingPipelineRegressionTests(unittest.TestCase):
         fake_embedding_service = FakeEmbeddingService()
         fake_claim_extractor = FakeClaimExtractionService()
 
-        with patch("app.routers.processing.EmbeddingService", return_value=fake_embedding_service), \
+        with patch.dict(os.environ, {"ENABLE_INGESTION_VECTOR_POPULATION": "true"}, clear=False), \
+            patch("app.routers.processing.EmbeddingService", return_value=fake_embedding_service), \
             patch("app.routers.processing.ClaimExtractionService", return_value=fake_claim_extractor):
             asyncio.run(
                 processing.process_document_task(
@@ -516,6 +569,49 @@ class ProcessingPipelineRegressionTests(unittest.TestCase):
         for embedding in neo4j.claim_embeddings.values():
             self.assertEqual(384, len(embedding))
 
+    def test_process_document_task_skips_optional_vector_population_by_default(self):
+        document = SimpleNamespace(
+            id=46,
+            filename="upload-timeout.pdf",
+            original_filename="upload-timeout.pdf",
+            file_path="C:\\data\\uploads\\upload-timeout.pdf",
+            mime_type="application/pdf",
+            processing_status="uploaded",
+            tenant_id="default",
+            source_type="upload",
+        )
+        db = FakeDatabaseService(document)
+        neo4j = FakeNeo4jService()
+        docling = SimpleNamespace(
+            process_document=lambda doc, path: (
+                SimpleNamespace(
+                    docling_document_path="/app/data/processed/documents/46/document.json",
+                    total_pages=1,
+                    neo4j_node_id=None,
+                    processing_metadata={"markdown_path": "/app/data/processed/documents/46/output.md"},
+                ),
+                [SimpleNamespace(page_number=1, content="Upload timeout regression content.", metadata={"page": 1})],
+            )
+        )
+
+        with patch.dict(os.environ, {"ENABLE_INGESTION_VECTOR_POPULATION": "false"}, clear=False), \
+            patch("app.routers.processing.EmbeddingService", side_effect=AssertionError("EmbeddingService should stay off by default")), \
+            patch("app.routers.processing.ClaimExtractionService", return_value=FakeClaimExtractionService()):
+            asyncio.run(
+                processing.process_document_task(
+                    document_id=46,
+                    db=db,
+                    docling=docling,
+                    neo4j=neo4j,
+                    lightrag_handoff=FakeLightRagHandoffService(),
+                )
+            )
+
+        self.assertEqual((46, "processed", None), db.status_updates[-1])
+        self.assertEqual((46, "ready", None), db.indexing_updates[-1])
+        self.assertEqual({}, neo4j.page_embeddings)
+        self.assertEqual({}, neo4j.claim_embeddings)
+
     def test_process_document_task_marks_timed_out_when_lightrag_readiness_times_out(self):
         document = SimpleNamespace(
             id=43,
@@ -561,6 +657,91 @@ class ProcessingPipelineRegressionTests(unittest.TestCase):
 
         self.assertEqual((43, "processed", None), db.status_updates[-1])
         self.assertEqual(("timed_out", "Timed out waiting for LightRAG readiness"), db.indexing_updates[-1][1:])
+
+    def test_process_document_task_keeps_indexing_active_and_reconciles_after_deferred_timeout(self):
+        document = SimpleNamespace(
+            id=62,
+            filename="docs-github.md",
+            original_filename="docs-github.md",
+            file_path="C:\\data\\uploads\\docs-github.md",
+            mime_type="text/markdown",
+            processing_status="uploaded",
+            tenant_id="default",
+            source_type="upload",
+        )
+        db = FakeDatabaseService(document)
+        neo4j = FakeNeo4jService()
+        docling = SimpleNamespace(
+            process_document=lambda doc, path: (
+                SimpleNamespace(
+                    docling_document_path="/app/data/processed/documents/62/document.json",
+                    total_pages=1,
+                    neo4j_node_id=None,
+                    processing_metadata={"markdown_path": "/app/data/processed/documents/62/output.md"},
+                ),
+                [SimpleNamespace(page_number=1, content="Deferred indexing content.", metadata={"page": 1})],
+            )
+        )
+
+        class DeferredReadyLightRagHandoffService(FakeLightRagHandoffService):
+            def __init__(self):
+                super().__init__(readiness_updates=[("queued", None), ("indexing", None)])
+                self.readiness_call_count = 0
+
+            def wait_for_document_readiness(self, staged_input_path, *, status_callback=None, **_kwargs):
+                self.readiness_call_count += 1
+                if self.readiness_call_count == 1:
+                    for status, error in self.readiness_updates:
+                        if status_callback is not None:
+                            status_callback(status, error)
+                    return {
+                        "indexing_status": "timed_out",
+                        "indexing_error": "Timed out after 300s waiting for LightRAG readiness",
+                        "document_status": {"file_path": staged_input_path, "status": "pending"},
+                        "readiness_deferred": True,
+                        "last_known_indexing_status": "indexing",
+                        "readiness_timeout_message": "Timed out after 300s waiting for LightRAG readiness",
+                    }
+
+                if status_callback is not None:
+                    status_callback("ready", None)
+                return {
+                    "indexing_status": "ready",
+                    "indexing_error": None,
+                    "document_status": {"file_path": staged_input_path, "status": "processed"},
+                }
+
+        lightrag_handoff = DeferredReadyLightRagHandoffService()
+
+        def run_reconciler_immediately(*, document_id, staged_input_path, db, lightrag_handoff, docling_document_path, remaining_attempts=1):
+            processing._continue_lightrag_readiness_sync(
+                document_id=document_id,
+                staged_input_path=staged_input_path,
+                db=db,
+                lightrag_handoff=lightrag_handoff,
+                docling_document_path=docling_document_path,
+                remaining_attempts=remaining_attempts,
+            )
+
+        with patch("app.routers.processing.EmbeddingService", return_value=FakeEmbeddingService()), \
+            patch("app.routers.processing.ClaimExtractionService", return_value=FakeClaimExtractionService()), \
+            patch("app.routers.processing._start_lightrag_readiness_reconciler", side_effect=run_reconciler_immediately), \
+            patch("app.routers.processing._update_lightrag_metadata"):
+            asyncio.run(
+                processing.process_document_task(
+                    document_id=62,
+                    db=db,
+                    docling=docling,
+                    neo4j=neo4j,
+                    lightrag_handoff=lightrag_handoff,
+                )
+            )
+
+        self.assertEqual((62, "processed", None), db.status_updates[-1])
+        self.assertEqual((62, "ready", None), db.indexing_updates[-1])
+        self.assertIn((62, "indexing", None), db.indexing_updates)
+        self.assertNotIn((62, "timed_out", "Timed out after 300s waiting for LightRAG readiness"), db.indexing_updates)
+        self.assertEqual(2, lightrag_handoff.readiness_call_count)
 
     def test_process_document_task_marks_failed_when_lightrag_readiness_reports_failed_status(self):
         document = SimpleNamespace(

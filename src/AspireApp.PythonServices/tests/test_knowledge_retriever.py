@@ -35,6 +35,7 @@ class FakeNeo4jService:
     def __init__(self, results):
         self.results = results
         self.calls = []
+        self.vector_calls = []
 
     def search_similar_content(self, query, limit=10):
         self.calls.append({"query": query, "limit": limit})
@@ -44,6 +45,14 @@ class FakeNeo4jService:
         """Search claims - returns empty by default for backward compatibility"""
         self.calls.append({"query": query, "limit": limit})
         return getattr(self, 'search_claims_results', [])
+
+    def search_claims_vector(self, query_embedding, limit=10, similarity_threshold=0.7):
+        self.vector_calls.append({"kind": "claim", "limit": limit, "threshold": similarity_threshold})
+        return getattr(self, "search_claims_vector_results", [])
+
+    def search_pages_vector(self, query_embedding, limit=10, similarity_threshold=0.7):
+        self.vector_calls.append({"kind": "page", "limit": limit, "threshold": similarity_threshold})
+        return getattr(self, "search_pages_vector_results", [])
 
 
 class CapturingRetriever(IKnowledgeRetriever):
@@ -200,6 +209,48 @@ class KnowledgeRetrieverTests(unittest.TestCase):
         self.assertEqual(
             ["document:7/page:2", "file:guide.pdf"],
             result.results[0].source_refs,
+        )
+
+    def test_semantic_knowledge_retriever_falls_back_to_text_when_vector_results_are_empty(self):
+        neo4j = FakeNeo4jService(
+            [
+                {
+                    "content": "Aspire AppHost coordinates the web and API projects.",
+                    "document_id": 7,
+                    "page_number": 2,
+                    "filename": "guide.pdf",
+                    "score": 0.63,
+                }
+            ]
+        )
+        neo4j.search_claims_results = []
+        neo4j.search_claims_vector_results = []
+        neo4j.search_pages_vector_results = []
+        retriever = SemanticKnowledgeRetriever(
+            neo4j,
+            embedding_service=_FakeEmbeddingService(embedding=[0.1, 0.2, 0.3]),
+        )
+
+        result = asyncio.run(
+            retriever.retrieve(
+                "Aspire",
+                tenant_id="tenant-a",
+                correlation_id="corr-semantic-fallback",
+                limit=3,
+            )
+        )
+
+        self.assertEqual("tenant-a", result.tenant_id)
+        self.assertEqual("corr-semantic-fallback", result.correlation_id)
+        self.assertEqual(1, len(result.results))
+        self.assertEqual("Aspire AppHost coordinates the web and API projects.", result.results[0].content)
+        self.assertEqual(
+            [{"kind": "claim", "limit": 3, "threshold": 0.7}, {"kind": "page", "limit": 3, "threshold": 0.7}],
+            neo4j.vector_calls,
+        )
+        self.assertEqual(
+            [{"query": "Aspire", "limit": 3}, {"query": "Aspire", "limit": 3}],
+            neo4j.calls,
         )
 
     def test_brain_knowledge_retriever_returns_lightrag_results_without_fallback(self):

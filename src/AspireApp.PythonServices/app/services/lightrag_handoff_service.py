@@ -20,16 +20,23 @@ class LightRagHandoffService:
         scan_timeout_seconds: float = 15.0,
         readiness_timeout_seconds: float = 300.0,
         readiness_poll_interval_seconds: float = 1.0,
+        doc_status_store_path: str | Path | None = None,
     ):
         data_root = Path(os.getenv("ASPIRE_DATA_PATH", "/app/data"))
         configured_input_dir = input_dir or os.getenv("LIGHTRAG_INPUT_DIR")
         configured_service_url = service_url if service_url is not None else os.getenv("LIGHTRAG_URL")
+        configured_doc_status_store_path = doc_status_store_path or os.getenv("LIGHTRAG_DOC_STATUS_PATH")
 
         self.input_dir = Path(configured_input_dir) if configured_input_dir else data_root / "inputs"
         self.service_url = (configured_service_url or "http://lightrag:9621").rstrip("/")
         self.scan_timeout_seconds = scan_timeout_seconds
         self.readiness_timeout_seconds = readiness_timeout_seconds
         self.readiness_poll_interval_seconds = readiness_poll_interval_seconds
+        self.doc_status_store_path = (
+            Path(configured_doc_status_store_path)
+            if configured_doc_status_store_path
+            else data_root / "rag_storage" / "kv_store_doc_status.json"
+        )
 
     def handoff_document(self, document: Document, markdown_path: str | Path) -> Dict[str, Any]:
         staged_path = self.stage_markdown(document, markdown_path)
@@ -155,12 +162,18 @@ class LightRagHandoffService:
         if last_poll_error:
             timeout_message = f"{timeout_message}: {last_poll_error}"
 
-        self._emit_status(status_callback, "timed_out", timeout_message)
+        last_known_status = current_status if current_status in {"queued", "indexing"} else None
+        readiness_deferred = last_known_status is not None
+        if not readiness_deferred:
+            self._emit_status(status_callback, "timed_out", timeout_message)
         return {
             "indexing_status": "timed_out",
             "indexing_error": timeout_message,
             "lightrag_document_id": last_observed_entry.get("id") if last_observed_entry else None,
             "document_status": last_observed_entry,
+            "readiness_deferred": readiness_deferred,
+            "last_known_indexing_status": last_known_status,
+            "readiness_timeout_message": timeout_message,
         }
 
     def request_document_delete(
@@ -294,10 +307,26 @@ class LightRagHandoffService:
 
     def get_document_status_by_file_path(self, file_path: str | Path) -> Dict[str, Any] | None:
         target_name = Path(str(file_path)).name.lower()
-        for document in self._iter_document_status_entries(self._json_request("GET", "/documents")):
-            current_file_path = Path(str(document.get("file_path", ""))).name.lower()
-            if current_file_path == target_name:
-                return document
+        http_error: Exception | None = None
+        http_status: Dict[str, Any] | None = None
+
+        try:
+            for document in self._iter_document_status_entries(self._json_request("GET", "/documents")):
+                current_file_path = Path(str(document.get("file_path", ""))).name.lower()
+                if current_file_path == target_name:
+                    http_status = document
+                    break
+        except Exception as exc:
+            http_error = exc
+
+        local_status = self._get_local_document_status_by_file_path(target_name)
+        selected_status = self._select_best_document_status(http_status, local_status)
+        if selected_status is not None:
+            return selected_status
+
+        if http_error is not None:
+            raise http_error
+
         return None
 
     def _iter_document_status_entries(self, documents_response: Dict[str, Any]) -> Iterable[Dict[str, Any]]:
@@ -320,6 +349,60 @@ class LightRagHandoffService:
                 entries.append(entry)
 
         return entries
+
+    def _get_local_document_status_by_file_path(self, file_path: str | Path) -> Dict[str, Any] | None:
+        target_name = Path(str(file_path)).name.lower()
+        if not self.doc_status_store_path.exists():
+            return None
+
+        try:
+            raw_payload = json.loads(self.doc_status_store_path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            return None
+
+        if not isinstance(raw_payload, dict):
+            return None
+
+        for document in raw_payload.values():
+            if not isinstance(document, dict):
+                continue
+
+            current_file_path = Path(str(document.get("file_path", ""))).name.lower()
+            if current_file_path != target_name:
+                continue
+
+            entry = dict(document)
+            status_group = str(entry.get("status") or "").strip().lower()
+            entry.setdefault("status_group", status_group)
+            return entry
+
+        return None
+
+    def _select_best_document_status(
+        self,
+        primary_status: Dict[str, Any] | None,
+        secondary_status: Dict[str, Any] | None,
+    ) -> Dict[str, Any] | None:
+        if primary_status is None:
+            return secondary_status
+        if secondary_status is None:
+            return primary_status
+
+        primary_priority = self._get_document_status_priority(primary_status)
+        secondary_priority = self._get_document_status_priority(secondary_status)
+        return secondary_status if secondary_priority > primary_priority else primary_status
+
+    def _get_document_status_priority(self, document_status: Dict[str, Any]) -> int:
+        normalized_status = self._normalize_document_status(
+            str(document_status.get("status") or document_status.get("status_group") or "")
+        )
+        if normalized_status in {"ready", "failed"}:
+            return 3
+        if normalized_status == "indexing":
+            return 2
+        if normalized_status == "queued":
+            return 1
+        return 0
 
     def _normalize_document_status(self, status: str) -> str:
         normalized = (status or "").strip().lower().replace("-", "_").replace(" ", "_")

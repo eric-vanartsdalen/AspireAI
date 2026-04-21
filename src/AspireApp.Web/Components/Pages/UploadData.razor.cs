@@ -717,12 +717,7 @@ public partial class UploadData : ComponentBase, IAsyncDisposable, IDisposable
             "uploaded",
             TenantContext.CurrentTenantId);
 
-        var automaticProcessing = await FileStorageService.TryStartAutomaticProcessingAsync(fileMetadata.Id);
-        var message = automaticProcessing.Attempted
-            ? automaticProcessing.Started
-                ? "File uploaded successfully. Processing started automatically."
-                : "File uploaded successfully, but automatic processing could not be started."
-            : "File uploaded successfully.";
+        QueueAutomaticProcessing(fileMetadata.Id, $"'{browserFile.Name}'");
 
         return new FileUploadResult
         {
@@ -731,7 +726,7 @@ public partial class UploadData : ComponentBase, IAsyncDisposable, IDisposable
             FileName = uniqueFileName,
             Size = browserFile.Size,
             FileHash = fileHash,
-            Message = message,
+            Message = "File uploaded successfully. Automatic processing is being queued.",
             ExistingFileId = fileMetadata.Id
         };
     }
@@ -798,12 +793,7 @@ public partial class UploadData : ComponentBase, IAsyncDisposable, IDisposable
             "uploaded",
             TenantContext.CurrentTenantId);
 
-        var automaticProcessing = await FileStorageService.TryStartAutomaticProcessingAsync(fileMetadata.Id);
-        var message = automaticProcessing.Attempted
-            ? automaticProcessing.Started
-                ? "Website URL added successfully. Processing started automatically."
-                : "Website URL added successfully, but automatic processing could not be started."
-            : "Website URL added successfully.";
+        QueueAutomaticProcessing(fileMetadata.Id, $"'{fileName}'");
 
         return new UrlUploadResult
         {
@@ -811,9 +801,59 @@ public partial class UploadData : ComponentBase, IAsyncDisposable, IDisposable
             IsDuplicate = false,
             Url = websiteUrl,
             FileName = fileName,
-            Message = message,
+            Message = "Website URL added successfully. Automatic processing is being queued.",
             ExistingFileId = fileMetadata.Id
         };
+    }
+
+    private void QueueAutomaticProcessing(int fileId, string displayName)
+    {
+        _ = Task.Run(async () =>
+        {
+            var automaticProcessing = await FileStorageService.TryStartAutomaticProcessingAsync(fileId);
+
+            await SafeRefreshAfterAutomaticProcessingAsync(displayName, automaticProcessing);
+        });
+    }
+
+    private async Task SafeRefreshAfterAutomaticProcessingAsync(
+        string displayName,
+        AutomaticProcessingDispatchResult automaticProcessing)
+    {
+        try
+        {
+            await InvokeAsync(async () =>
+            {
+                if (automaticProcessing.Attempted && automaticProcessing.Started)
+                {
+                    await LoadUploadedFiles();
+                    StateHasChanged();
+                    return;
+                }
+
+                _uploadErrors.Clear();
+                if (!string.IsNullOrWhiteSpace(automaticProcessing.Detail))
+                {
+                    _uploadErrors.Add(automaticProcessing.Detail);
+                }
+
+                _uploadMessage = automaticProcessing.Attempted
+                    ? $"Saved {displayName}, but automatic processing could not be started."
+                    : $"Saved {displayName}. Automatic processing is currently unavailable.";
+                _messageClass = "warning";
+
+                await LoadUploadedFiles();
+                StateHasChanged();
+            });
+        }
+        catch (ObjectDisposedException)
+        {
+        }
+        catch (InvalidOperationException ex) when (
+            ex.Message.Contains("renderer", StringComparison.OrdinalIgnoreCase) ||
+            ex.Message.Contains("disposed", StringComparison.OrdinalIgnoreCase))
+        {
+        }
     }
 
     private static string GenerateUniqueFileName(string originalFileName)
