@@ -174,6 +174,41 @@ public class BasicAspireAppHostTests : IClassFixture<TestFixture>
     }
 
     [Fact, Priority(2)]
+    public async Task DesktopSidebarClosesAfterNavigationSelection()
+    {
+        await WithPageAsync(async page =>
+        {
+            await page.GotoAsync(_data.WebfrontendUri, _data.Options);
+            await WaitForPageLoadCompletion(page);
+            await SignInAsDemoUserAsync(page);
+
+            var desktopToggle = page.Locator(".sidebar-toggle").First;
+            await WaitForLocator(desktopToggle, 30_000);
+
+            await desktopToggle.ClickAsync(new LocatorClickOptions { Delay = 100, Force = true });
+            await page.WaitForFunctionAsync(
+                "() => document.querySelector('.page')?.classList.contains('sidebar-open') === true",
+                new PageWaitForFunctionOptions { Timeout = 5_000 });
+
+            var chatLink = page.GetByRole(AriaRole.Link, new() { Name = "Chat" }).First;
+            await WaitForLocator(chatLink, 30_000);
+            await WaitForNavigationTargetWithinViewportAsync(chatLink);
+            await chatLink.ClickAsync(new LocatorClickOptions { Delay = 100, Force = true });
+
+            await page.WaitForURLAsync(
+                url => url.Contains("/chat", StringComparison.OrdinalIgnoreCase),
+                new PageWaitForURLOptions { Timeout = 30_000 });
+            await WaitForPageLoadCompletion(page);
+            await page.WaitForFunctionAsync(
+                "() => document.querySelector('.page')?.classList.contains('sidebar-open') === false",
+                new PageWaitForFunctionOptions { Timeout = 5_000 });
+
+            Assert.False(await IsDesktopSidebarOpenAsync(page));
+            Assert.False(await page.Locator(".sidebar-backdrop").First.IsVisibleAsync());
+        });
+    }
+
+    [Fact, Priority(2)]
     public async Task OllamaLoads()
     {
         Console.WriteLine($"Navigating to Ollama Frontend at: {_data.OllamaUri}");

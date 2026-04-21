@@ -30,6 +30,30 @@
 
 <!-- Append new learnings below. Each entry is something lasting about the project. -->
 
+### 2026-04-24 — Desktop menu-close regression was fixed in the layout; the first failing browser proof was a viewport seam, not a product failure
+
+**Task:** Review Jeff's Web UI fix for the desktop slide-out menu staying open after selecting a nav item, then add focused regression coverage.
+
+**Concrete findings:**
+1. `MainLayout.razor` is the right ownership boundary for this behavior because it owns `_sidebarOpen`, the backdrop, and the hamburger toggle; Jeff's `NavigationManager.LocationChanged` hook closes the desktop drawer centrally instead of scattering per-link handlers through `NavMenu.razor`.
+2. The new live Playwright regression in `BasicAspireAppHostTests.DesktopSidebarClosesAfterNavigationSelection` is the right proof seam because it exercises the real Blazor shell after mock sign-in and verifies both URL change and `sidebar-open` removal.
+3. The first browser run failed on `Element is outside of the viewport` for the `Chat` link even though the product fix was sound; the missing seam was waiting for the nav target to finish sliding fully into viewport before clicking.
+4. Adding `WaitForNavigationTargetWithinViewportAsync(chatLink)` made the regression stable without weakening the assertion about post-navigation sidebar dismissal.
+
+**Validation:**
+- `dotnet test .\src\AspireApp.WebTest\AspireApp.WebTest.csproj --no-build --filter "FullyQualifiedName~AspireApp.WebTest.Tests.MainLayoutTests.ClosesSidebar_WhenLocationChanges|FullyQualifiedName~AspireApp.WebTest.Tests.BasicAspireAppHostTests.DesktopSidebarClosesAfterNavigationSelection"` ✅
+- `dotnet build .\src\AspireApp.WebTest\AspireApp.WebTest.csproj` ✅
+
+**Reviewer verdict on Jeff's implementation:**
+- **No rejection.** The product fix is correct and layout-owned.
+- **QA follow-up:** the regression test needed an explicit viewport wait after opening the drawer so browser animation timing does not masquerade as a product bug.
+
+**Key file paths:**
+- `src\AspireApp.Web\Components\Layout\MainLayout.razor`
+- `src\AspireApp.WebTest\Tests\MainLayoutTests.cs`
+- `src\AspireApp.WebTest\Tests\BasicAspireAppHostTests.cs`
+- `.squad\skills\blazor-layout-navigation-close\SKILL.md`
+
 ### 2026-04-21 — LightRAG timeout regression was split across two seams: optional Ollama load and missing LightRAG embedding binding
 
 **Task:** Reproduce the reported upload/chat timeout and review the current Jeff/Jarvis timeout work.

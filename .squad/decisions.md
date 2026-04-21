@@ -32,6 +32,7 @@
 > **Note (2026-04-22T21:17:21Z):** Merged 2 inbox decisions from retrieval flow investigation for YouTube-ingested content session (Jeff, Jarvis). Key outcomes: (1) Jeff investigated Web → ApiService → Python handoff; confirmed no dropped .NET document-scope signal in shared contracts (design limitation, not code bug). (2) Jarvis fixed downstream LightRAG retriever — now supplements sparse single-document LightRAG results with semantic hits before returning to caller. (3) YouTube transcript processing resilient to LightRAG eventual consistency. (4) Regression coverage validates single-document LightRAG result widening. (5) 48 Python tests passing. No exact duplicates found. Inbox cleared.
 > **Note (2026-04-23T06:07:48Z):** Merged 3 inbox decisions from search latency review session (Bob, Jarvis, Jeff). Key outcomes: (1) Neo4j indexing is not the latency fix — LightRAG HTTP (40-60s) is primary bottleneck, not Neo4j queries (<1s fallback). (2) Critique mode latency is structural (4 LLM calls + 3 serial LightRAG retrievals = 150-270s minimum); parallelization of retrieval calls is highest-impact fix. (3) Web HttpClient timeout (120s) fires before intended Blazor token (180s) — design clarity issue, not performance defect. (4) Recommendations: [1] Parallelize critique retrieval via `asyncio.gather` (Jarvis, ~20 lines, 3x speedup), [2] Raise Web HttpClient timeout to 240s (Jeff, 1-2 lines), [3] Convert service instantiation to singletons (Jarvis, ~15 lines), [4] SSE streaming + progress events (medium effort), [5] Invert retrieval priority (post-P2-C, high effort). No exact duplicates found. Inbox cleared.
 > **Note (2026-04-24T10:06:52Z):** Merged 1 inbox decision from LightRAG readiness polling feasibility investigation (Jarvis). Key outcome: LightRAG completion **can** be polled per-document before surfacing source as ready. Repo already exposes per-document LightRAG status keyed by staged file path. Decision: introduce `indexing_status` field (states: `not_requested`, `queued`, `indexing`, `ready`, `failed`, `timed_out`); poll per-document after `_attempt_lightrag_handoff()`; keep `processed` flag for Docling/Neo4j completion; bound polling with timeout; surface honest failures. Ownership: Jarvis (polling + schema), Jeff (UI indicators), Buster (end-to-end test). No exact duplicates found. Inbox cleared.
+> **Note (2026-04-24T10-26-00Z):** Merged 2 inbox decisions from desktop menu-close fix + regression coverage session (Jeff, Buster). Key outcomes: (1) Desktop slide-out menu now closes on route change via `NavigationManager.LocationChanged` subscription in `MainLayout.razor`; ownership centralized instead of scattered per-link handlers. (2) Regression coverage: bUnit test `MainLayoutTests.ClosesSidebar_WhenLocationChanges` validates layout logic; live browser test `BasicAspireAppHostTests.DesktopSidebarClosesAfterNavigationSelection` validates full Aspire shell with explicit viewport-settle wait to prevent animation-timing false negatives. (3) QA review: Buster did not reject implementation; design ownership boundary is sound. (4) Key learning: Browser animation timing is a test responsibility, not a product bug — use explicit waits instead of workarounds in code. (5) All validation passing: `dotnet build`, unit test, focused browser regression. No exact duplicates found. Inbox cleared. See session log `2026-04-24-menu-close-fix.md` and orchestration logs for details.
 > **Note (2026-04-21T08:24:27Z):** Merged 2 inbox decisions from freshness investigation session (Bob, Jarvis, Jeff, Buster). Key outcomes: (1) Two-phase status problem identified—docs marked "processed" before LightRAG indexing completes (30–300s window), causing UI shows ✅ but chat returns empty ❌. (2) Root cause: `_attempt_lightrag_handoff()` fire-and-forget; no polling for actual index completion. (3) Architecture recommendation: separate "processing complete" (Neo4j) from "retrieval-ready" (LightRAG indexed) via `indexing_status` field + polling loop. (4) Test coverage gap: no end-to-end cycle test validates upload→process→reload→query freshness. (5) .NET side clean (no caching issues); issue localized to Python processing/indexing layer. (6) Ownership assigned: Jarvis (polling + schema), Jeff (UI indicators), Buster (test implementation). No exact duplicates found. Inbox cleared. See session log `2026-04-21T08-24-27Z-freshness-investigation.md` and orchestration logs for full details.
 
 <!-- Decisions are appended below. Each entry starts with ## -->
@@ -4538,3 +4539,52 @@ LightRAG documentation shows that `/documents/upload` already indexes in backgro
 - LightRAG indexing now runs one file at a time in this deployment profile, reducing timeout pressure without inventing a non-existent setting
 
 **Owner:** Jeff — .NET Dev
+
+## Close Desktop Slide-Out Navigation from Layout on Route Change — Jeff, Buster — 2026-04-24
+
+**Context:**
+The desktop Web shell was keeping the sidebar open after clicking a nav item and navigating to a new route, making the navigation UX feel broken.
+
+**Decision:**
+Treat sidebar dismissal as layout-owned behavior. Subscribe `MainLayout` to `NavigationManager.LocationChanged` and close the sidebar whenever the route changes. Keep `NavMenu.razor` declarative; do not add per-link close handlers.
+
+**Why:**
+- The layout already owns `_sidebarOpen`, the backdrop, and the hamburger toggle button
+- Route-change-driven dismissal covers all internal navigation uniformly, not just one specific link
+- Avoids scattered duplicate handlers
+- Easy to test (bUnit for logic, Playwright for full orchestration)
+
+**Implementation:**
+- `MainLayout.razor`: Subscribe in `OnInitializedAsync()`, set `_sidebarOpen = false` on every location change, unsubscribe via `IDisposable`
+- Test coverage: `MainLayoutTests.ClosesSidebar_WhenLocationChanges` (unit), `BasicAspireAppHostTests.DesktopSidebarClosesAfterNavigationSelection` (live browser)
+
+**Validation:**
+- `dotnet build --nologo` ✅
+- Unit test: `ClosesSidebar_WhenLocationChanges` ✅
+- Live browser regression: `DesktopSidebarClosesAfterNavigationSelection` ✅
+
+**Owner:** Jeff — .NET Dev, Blazor
+
+## Sidebar-Close Browser Regressions Must Wait for Nav Target Viewport Settle — Buster — 2026-04-24
+
+**Context:**
+Buster added a live browser regression test (`DesktopSidebarClosesAfterNavigationSelection`) to validate Jeff's sidebar-close fix. The first test run failed with "Element is outside viewport" when trying to click the `Chat` link, even though the product code was correct. Root cause: The drawer animation was still settling; Playwright tried to click before the target slid fully into view.
+
+**Decision:**
+- Keep the product fix as-is; do **not** reject Jeff's implementation
+- Treat post-open viewport settling as a **test responsibility**, not a product code issue
+- In Playwright shell tests, wait for the nav target to finish sliding into viewport before clicking it (use `WaitForNavigationTargetWithinViewportAsync(element)`)
+
+**Why:**
+- Browser animations are real and expected; they are not bugs
+- Explicit waits prevent false negatives that masquerade as product regressions
+- Preserves a real-user interaction test (user clicks + navigation happens) without falling back to brittle JavaScript workarounds
+
+**Implementation:**
+- Added explicit `WaitForNavigationTargetWithinViewportAsync()` in `BasicAspireAppHostTests` before clicking nav targets in drawer-dependent tests
+- This becomes a **reusable pattern** for all future drawer/slide-out regression tests
+
+**Validation:**
+- `dotnet test .\src\AspireApp.WebTest\AspireApp.WebTest.csproj --no-build --filter "FullyQualifiedName~BasicAspireAppHostTests.DesktopSidebarClosesAfterNavigationSelection"` ✅
+
+**Owner:** Buster — QA/Test Lead

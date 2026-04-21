@@ -70,6 +70,36 @@
 **Validation:**
 - `dotnet restore` ✅
 - `dotnet build .\AspireApp.sln --no-restore` ✅
+
+### 2026-04-24 — Desktop Menu-Close Regression Was Fixed at the Right Ownership Boundary; Playwright Viewport Timing Is a Test Responsibility
+
+**Context:**
+- Desktop Web UI kept the slide-out menu open after clicking a nav item and navigating to a new route.
+- Jeff fixed by subscribing `MainLayout` to `NavigationManager.LocationChanged` and closing sidebar on route change.
+- Buster added live browser regression test to validate fix.
+
+**The Fix — Why This Ownership Works:**
+- The layout already owns `_sidebarOpen`, the backdrop element, and the hamburger toggle button.
+- Route-change-driven dismissal covers all internal navigation uniformly without scattering per-link handlers through `NavMenu.razor`.
+- Implementation is simple: subscribe in `OnInitializedAsync()`, set `_sidebarOpen = false` on every location change, unsubscribe via `IDisposable`.
+- BUnit test `MainLayoutTests.ClosesSidebar_WhenLocationChanges` validates the logic quickly.
+
+**Playwright Timing Discovery:**
+- First browser test run (`BasicAspireAppHostTests.DesktopSidebarClosesAfterNavigationSelection`) failed with "Element is outside viewport" when trying to click the `Chat` link.
+- Root cause: Playwright clicked before the drawer animation completed settling inside viewport.
+- **This was NOT a product code bug.** Browser animations are real timing.
+- Buster's fix: Add explicit `WaitForNavigationTargetWithinViewportAsync()` before clicking nav targets in drawer-dependent tests.
+
+**Key Learning:**
+- Animation timing failures are a **test responsibility**, not a product issue.
+- Explicit waits preserve real-user interaction semantics without brittle workarounds.
+- This becomes a reusable pattern for all future drawer/slide-out navigation tests.
+
+**Result:**
+- Product code clean ✅
+- Unit test passing ✅
+- Live browser regression stable and meaningful ✅
+- Future drawer tests have a clear pattern to follow ✅
 - `BasicAspireAppHostTests.AspireDashboardLoads` ✅
 
 ### 2026-04-21 — LightRAG Has No Auto-Index Toggle for Our Scan-Based Handoff
@@ -418,6 +448,7 @@ Build verified successfully. Tests were running but took longer than expected du
 - `dotnet build AspireApp.sln --no-restore`
 
 **Key paths:**
+
 - `src\AspireApp.Web\Components\Pages\Chat.razor.cs`
 - `src\AspireApp.Web\Services\BrainChatClient.cs`
 - `src\AspireApp.Web\Services\ChatConversationService.cs`
@@ -1131,6 +1162,25 @@ The failing UI test checks `Assert.Equal("uploaded", uploadedFile.Status)` at li
 - Prepares for Phase 2 ingestion: Python will read tenant_id from files table
 - Prepares for Phase 3 Gateway: Chat will inject TenantContext and pass tenant_id to POST /brain/chat
 - Defers authentication to Phase 6: hardcoded tenant list acceptable for dev (default, tenant-a, tenant-b, demo)
+
+### 2026-04-24 — Blazor layout-owned sidebar state should close on route changes
+
+**Status:** Implemented and validated for the Web shell navigation regression.
+
+**Key insight:**
+- `src\AspireApp.Web\Components\Layout\MainLayout.razor` owns the desktop slide-out sidebar state, so the layout should also listen to `NavigationManager.LocationChanged` and clear `_sidebarOpen` when the route changes.
+- Keeping the close behavior in the layout avoids per-link JavaScript or duplicated nav-item callbacks in `NavMenu.razor`.
+- Fast regression coverage belongs in `src\AspireApp.WebTest\Tests\MainLayoutTests.cs`, where a bUnit layout render can prove the sidebar closes on `NavigationManager.NavigateTo`.
+- Browser coverage also belongs in `src\AspireApp.WebTest\Tests\BasicAspireAppHostTests.cs`, because the regression depends on real navigation plus the rendered desktop shell.
+
+**Validation:**
+- `dotnet build --nologo`
+- `dotnet test src\AspireApp.WebTest\AspireApp.WebTest.csproj --no-build --filter "FullyQualifiedName=AspireApp.WebTest.Tests.MainLayoutTests.ClosesSidebar_WhenLocationChanges" --logger "console;verbosity=minimal"`
+
+**Key paths:**
+- `src\AspireApp.Web\Components\Layout\MainLayout.razor`
+- `src\AspireApp.WebTest\Tests\MainLayoutTests.cs`
+- `src\AspireApp.WebTest\Tests\BasicAspireAppHostTests.cs`
 
 **First Tenant Context Slice Decision:**
 - Scoped service pattern isolates context per Blazor SignalR circuit (session-based, no auth yet)

@@ -1,5 +1,7 @@
 ﻿@inherits LayoutComponentBase
+@implements IDisposable
 @inject AuthenticationContext AuthenticationContext
+@inject NavigationManager NavigationManager
 @inject TenantContextService TenantContext
 
 <div class="page @(_sidebarOpen ? "sidebar-open" : "")">
@@ -62,8 +64,32 @@
 @code {
     private bool _sidebarOpen;
 
+    protected override void OnInitialized()
+    {
+        NavigationManager.LocationChanged += HandleLocationChanged;
+    }
+
     private void ToggleSidebar()
     {
         _sidebarOpen = !_sidebarOpen;
+    }
+
+    private void HandleLocationChanged(object? sender, LocationChangedEventArgs e)
+    {
+        if (!_sidebarOpen)
+        {
+            return;
+        }
+
+        _ = InvokeAsync(() =>
+        {
+            _sidebarOpen = false;
+            StateHasChanged();
+        });
+    }
+
+    public void Dispose()
+    {
+        NavigationManager.LocationChanged -= HandleLocationChanged;
     }
 }
