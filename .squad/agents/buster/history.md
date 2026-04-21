@@ -30,6 +30,23 @@
 
 <!-- Append new learnings below. Each entry is something lasting about the project. -->
 
+### 2026-04-24 — Tenant sidebar-close regressions need real tenant membership state, not private-state shortcuts
+
+**Task:** Review Jeff's tenant-dropdown sidebar-close implementation, add focused regression coverage, and validate the shell closes after a tenant switch.
+
+**Concrete findings:**
+1. Jeff's product fix in `MainLayout.razor` is the right ownership boundary: the layout owns `_sidebarOpen`, so subscribing it to `TenantContext.OnTenantChanged` keeps tenant-triggered dismissal centralized instead of leaking shell behavior into `TenantSelector.razor`.
+2. The live Aspire regression in `BasicAspireAppHostTests.DesktopSidebarClosesAfterTenantSelection` is the right end-to-end seam because it seeds a real extra tenant, switches through the real dropdown, and proves both sidebar dismissal and visible tenant binding update.
+3. The bUnit regression initially failed because the test tried to switch to `tenant-beta` without a real recognized tenant in `TenantContextService`; reflecting or shortcutting private state is the wrong seam for this service because `CurrentTenantId` validation enforces known tenants.
+4. Seeding tenants through an in-memory `UploadDbContext` + `TenantManagementService` makes the regression honest: the test now exercises the same tenant-recognition rules the app uses before asserting the sidebar closes.
+
+**Validation:**
+- `dotnet test .\src\AspireApp.WebTest\AspireApp.WebTest.csproj --no-restore --filter "FullyQualifiedName~AspireApp.WebTest.Tests.MainLayoutTests|FullyQualifiedName~AspireApp.WebTest.Tests.BasicAspireAppHostTests.DesktopSidebarClosesAfterTenantSelection"` ✅
+
+**Reviewer verdict on Jeff's implementation:**
+- **No rejection.** The layout-level product change is correct.
+- **QA correction:** the focused unit regression needed a real tenant-state setup before it could prove the behavior reliably.
+
 ### 2026-04-24 — Desktop menu-close regression was fixed in the layout; the first failing browser proof was a viewport seam, not a product failure
 
 **Task:** Review Jeff's Web UI fix for the desktop slide-out menu staying open after selecting a nav item, then add focused regression coverage.

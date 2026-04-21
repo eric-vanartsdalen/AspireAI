@@ -34,6 +34,25 @@
 
 ## Learnings
 
+### 2026-04-24 — Layout-owned sidebar dismissal should follow tenant-context changes too, not just route changes
+
+**Context:**
+- Eric reported that the desktop slide-out menu now closed after normal nav clicks, but stayed open when the user switched tenants from the sidebar dropdown.
+- The existing ownership pattern already lived in `MainLayout`: it owned `_sidebarOpen`, the backdrop, and the route-change dismissal behavior.
+
+**What I Changed:**
+- Kept dismissal logic in `MainLayout.razor` and subscribed the layout to `TenantContextService.OnTenantChanged`.
+- Routed both `NavigationManager.LocationChanged` and tenant-change events through the same close helper instead of pushing callbacks into `TenantSelector`.
+- Added focused regression coverage in bUnit and the live Aspire browser suite.
+
+**Key Learning:**
+- **Layout ownership applies to non-navigation shell events too.** If the layout owns the drawer state, tenant-context changes should close it from the layout just like route changes do.
+- **Keep child components dumb.** `TenantSelector` should only change tenant context; the shell decides whether that interaction dismisses the sidebar.
+
+**Validation:**
+- `dotnet build .\AspireApp.sln` ✅
+- `dotnet test .\src\AspireApp.WebTest\AspireApp.WebTest.csproj --no-build --filter "FullyQualifiedName~MainLayoutTests|FullyQualifiedName~BasicAspireAppHostTests.DesktopSidebarClosesAfter"` ✅
+
 ### 2026-04-21 — AppHost Must Serialize LightRAG File Indexing via `MAX_PARALLEL_INSERT` to Match Ollama Constraint
 
 **Context:**

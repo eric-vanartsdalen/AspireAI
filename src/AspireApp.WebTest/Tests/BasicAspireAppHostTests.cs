@@ -209,6 +209,68 @@ public class BasicAspireAppHostTests : IClassFixture<TestFixture>
     }
 
     [Fact, Priority(2)]
+    public async Task DesktopSidebarClosesAfterTenantSelection()
+    {
+        var tenantId = $"sidebar-tenant-{Guid.NewGuid():N}";
+        var tenantName = $"Sidebar Tenant {tenantId[^8..]}";
+
+        await EnsureTenantMembershipAsync(tenantId, tenantName);
+
+        try
+        {
+            await WithPageAsync(async page =>
+            {
+                await page.GotoAsync(_data.WebfrontendUri, _data.Options);
+                await WaitForPageLoadCompletion(page);
+                await SignInAsDemoUserAsync(page);
+
+                await page.WaitForFunctionAsync(
+                    """
+                    tenantId => {
+                        const select = document.querySelector('#tenant-select');
+                        return select && Array.from(select.options).some(option => option.value === tenantId);
+                    }
+                    """,
+                    tenantId,
+                    new PageWaitForFunctionOptions { Timeout = 30_000 });
+
+                var desktopToggle = page.Locator(".sidebar-toggle").First;
+                await WaitForLocator(desktopToggle, 30_000);
+                await desktopToggle.ClickAsync(new LocatorClickOptions { Delay = 100, Force = true });
+                await page.WaitForFunctionAsync(
+                    "() => document.querySelector('.page')?.classList.contains('sidebar-open') === true",
+                    new PageWaitForFunctionOptions { Timeout = 5_000 });
+
+                var tenantSelector = page.Locator("#tenant-select").First;
+                await WaitForNavigationTargetWithinViewportAsync(tenantSelector);
+                await tenantSelector.SelectOptionAsync(new SelectOptionValue { Value = tenantId });
+
+                await page.WaitForFunctionAsync(
+                    """
+                    tenantId => {
+                        const page = document.querySelector('.page');
+                        const tenantMarker = document.querySelector('[data-auth-tenant]');
+                        return page?.classList.contains('sidebar-open') === false &&
+                            tenantMarker?.getAttribute('data-auth-tenant') === tenantId;
+                    }
+                    """,
+                    tenantId,
+                    new PageWaitForFunctionOptions { Timeout = 5_000 });
+
+                Assert.False(await IsDesktopSidebarOpenAsync(page));
+                Assert.False(await page.Locator(".sidebar-backdrop").First.IsVisibleAsync());
+                Assert.Equal(
+                    tenantId,
+                    await page.Locator("[data-auth-tenant]").First.GetAttributeAsync("data-auth-tenant"));
+            });
+        }
+        finally
+        {
+            await DeleteTenantAsync(tenantId);
+        }
+    }
+
+    [Fact, Priority(2)]
     public async Task OllamaLoads()
     {
         Console.WriteLine($"Navigating to Ollama Frontend at: {_data.OllamaUri}");
@@ -658,6 +720,54 @@ public class BasicAspireAppHostTests : IClassFixture<TestFixture>
         }
 
         return tenantId;
+    }
+
+    private async Task EnsureTenantMembershipAsync(string tenantId, string tenantName)
+    {
+        await using var connection = new NpgsqlConnection(_data.UploadStoreConnectionString);
+        await connection.OpenAsync(TestContext.Current.CancellationToken);
+        await using var transaction = await connection.BeginTransactionAsync(TestContext.Current.CancellationToken);
+
+        await using (var tenantCommand = new NpgsqlCommand(
+                         """
+                         INSERT INTO tenants (id, name, owner_user_id, is_protected, created_at, updated_at)
+                         VALUES (@id, @name, @ownerUserId, FALSE, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+                         ON CONFLICT (id) DO NOTHING
+                         """,
+                         connection,
+                         transaction))
+        {
+            tenantCommand.Parameters.AddWithValue("id", tenantId);
+            tenantCommand.Parameters.AddWithValue("name", tenantName);
+            tenantCommand.Parameters.AddWithValue("ownerUserId", DemoUserId);
+            await tenantCommand.ExecuteNonQueryAsync(TestContext.Current.CancellationToken);
+        }
+
+        await using (var membershipCommand = new NpgsqlCommand(
+                         """
+                         INSERT INTO tenant_memberships (tenant_id, user_id, is_default, created_at)
+                         VALUES (@tenantId, @userId, FALSE, CURRENT_TIMESTAMP)
+                         ON CONFLICT (tenant_id, user_id) DO NOTHING
+                         """,
+                         connection,
+                         transaction))
+        {
+            membershipCommand.Parameters.AddWithValue("tenantId", tenantId);
+            membershipCommand.Parameters.AddWithValue("userId", DemoUserId);
+            await membershipCommand.ExecuteNonQueryAsync(TestContext.Current.CancellationToken);
+        }
+
+        await transaction.CommitAsync(TestContext.Current.CancellationToken);
+    }
+
+    private async Task DeleteTenantAsync(string tenantId)
+    {
+        await using var connection = new NpgsqlConnection(_data.UploadStoreConnectionString);
+        await connection.OpenAsync(TestContext.Current.CancellationToken);
+
+        await using var command = new NpgsqlCommand("DELETE FROM tenants WHERE id = @tenantId", connection);
+        command.Parameters.AddWithValue("tenantId", tenantId);
+        await command.ExecuteNonQueryAsync(TestContext.Current.CancellationToken);
     }
 
     private async Task DeleteExistingTestUploadsAsync(HttpClient webClient, string? targetFilePath = null)

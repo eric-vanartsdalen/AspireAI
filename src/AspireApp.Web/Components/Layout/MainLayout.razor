@@ -67,6 +67,7 @@
     protected override void OnInitialized()
     {
         NavigationManager.LocationChanged += HandleLocationChanged;
+        TenantContext.OnTenantChanged += HandleTenantChanged;
     }
 
     private void ToggleSidebar()
@@ -76,12 +77,22 @@
 
     private void HandleLocationChanged(object? sender, LocationChangedEventArgs e)
     {
+        _ = CloseSidebarAsync();
+    }
+
+    private void HandleTenantChanged()
+    {
+        _ = CloseSidebarAsync();
+    }
+
+    private Task CloseSidebarAsync()
+    {
         if (!_sidebarOpen)
         {
-            return;
+            return Task.CompletedTask;
         }
 
-        _ = InvokeAsync(() =>
+        return InvokeAsync(() =>
         {
             _sidebarOpen = false;
             StateHasChanged();
@@ -91,5 +102,6 @@
     public void Dispose()
     {
         NavigationManager.LocationChanged -= HandleLocationChanged;
+        TenantContext.OnTenantChanged -= HandleTenantChanged;
     }
 }
