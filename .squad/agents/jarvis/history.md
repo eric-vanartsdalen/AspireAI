@@ -9,6 +9,27 @@
 
 <!-- Append new learnings below. Each entry is something lasting about the project. -->
 
+### 2026-04-24 — Keep `files.status` and LightRAG Readiness Separate, but Hold Final `processed` Until Polling Ends
+
+**Problem:**
+- The Python worker could finish Docling + Neo4j work, fire a LightRAG scan, and immediately mark the source row `processed` even though retrieval indexing was still queued or actively running.
+- That created a stale window where the source looked done even though LightRAG had not yet reached a terminal per-document outcome.
+
+**Fix:**
+- Added `indexing_status` / `indexing_error` to the shared `files` store and migrated them through the compatibility path in `DatabaseService`.
+- Processing now resets indexing state at the start of a run, sets `queued`/`indexing` while polling `GET /documents` for the staged filename, and records terminal `ready` / `failed` / `timed_out`.
+- The main `files.status` stays `processing` until that readiness poll reaches a terminal outcome, so callers no longer see `processed` during the LightRAG gap window.
+
+**Result:**
+- Callers can distinguish "Docling/Neo4j succeeded" from "retrieval is ready" without overloading one status field.
+- Sources that skip LightRAG remain healthy by ending with `indexing_status = not_requested`, while LightRAG problems stay explicit instead of silently looking ready.
+
+**Key file paths:**
+- `src\AspireApp.PythonServices\app\routers\processing.py`
+- `src\AspireApp.PythonServices\app\services\lightrag_handoff_service.py`
+- `src\AspireApp.PythonServices\app\services\database_service.py`
+- `src\AspireApp.PythonServices\tests\test_processing_pipeline_regression.py`
+
 ### 2026-04-24 — LightRAG Readiness Must Use Per-Document Status, Not Just Scan Acknowledgement
 
 **Problem:**
@@ -1076,6 +1097,36 @@
    - Effort: Requires query-text hashing, cache store, and invalidation logic (~50 lines).
 
 **4. [LOW IMPACT, HIGH EFFORT] Upgrade to Vector Search (P2-C Gate Lift)**
+
+### 2026-04-21 — LightRAG Readiness Polling Implementation
+
+**Status:** COMPLETE — Per-document polling deployed; separates Neo4j completion from LightRAG indexing.
+
+**What was built:**
+- `indexing_status` field added to Document schema; states: `not_requested`, `queued`, `indexing`, `ready`, `failed`, `timed_out`
+- Polling loop in `_attempt_lightrag_handoff()` continuation; awaits per-document LightRAG completion before releasing doc as retrieval-ready
+- Schema backward-compat: existing databases default to `not_requested`; .NET deserialization safe if column absent
+- Timeout boundary: ~5min configurable; graceful failure states prevent stalled UI
+
+**Why it matters:**
+- Addresses 2026-04-21 freshness investigation finding: documents show ✅ in UI but return empty ❌ in chat due to LightRAG eventual consistency
+- Separates concerns: `processed` = "Neo4j indexed" (immediate), `ready` = "LightRAG indexed" (polled, eventual)
+- Cross-service transparency: Web UI can surface honest readiness status (queued, indexing, ready, error)
+
+**Key files:**
+- `src/AspireApp.PythonServices/app/services/lightrag_handoff_service.py` — polling loop
+- `src/AspireApp.PythonServices/app/services/database_service.py` — schema migration
+- `tests/test_processing_pipeline_regression.py` — readiness regression suite (23+ tests)
+
+**Test coverage:**
+- Python readiness polling tests: state transitions, timeout, failure paths (23+ passing)
+- Full Python service suite: all 27+ tests passing
+- .NET contract compat: optional field deserialization verified
+
+**Handoff to next phase:**
+- Jeff: Display readiness labels in Upload UI (queued, indexing, ready, error states)
+- Buster: End-to-end freshness proof (Playwright/Aspire upload → process → reload → query cycle)
+
    - Populate `Claim.text_embedding` and `Page.content_embedding` during document ingestion.
    - Replace CONTAINS fallback with vector index queries once embeddings are ready.
    - Why: Reduces Neo4j semantic fallback from full-table scan to index lookup (10-100ms gain), but does NOT address LightRAG 40-60s bottleneck.

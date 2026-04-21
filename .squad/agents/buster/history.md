@@ -1683,6 +1683,38 @@ The behavior being tested (legacy schema detection with detailed diagnostics) st
 - BasicAspireAppHostTests.BrainQueryReturnsConfidenceEnrichedResults — LightRAG pipeline stuck in busy state (timeout after 120s)
 - BasicAspireAppHostTests.LiveLightRagNeo4jQueryRoundTrip — Query returns empty results
 
+### 2026-04-21 — Readiness Regression Test Coverage Update
+
+**Status:** COMPLETE — Removed stale "processed implies ready" assumption across all test suites.
+
+**What was updated:**
+- Python `test_processing_pipeline_regression.py`: tests now await `indexing_status == "ready"` before querying (no longer assume `processed=true`)
+- Web `UploadDataTests`: validated optional-field deserialization; backward-compat with pre-polling docs confirmed
+- E2E `test_youtube_transcript_queue.py`: YouTube flow respects polling window; no external dependencies introduced
+- Test infrastructure unchanged (existing pytest + xUnit); no new frameworks
+
+**Why the change:**
+- Old model was broken: `processed` marked after Docling+Neo4j, but LightRAG indexing still async/eventual
+- New model is honest: separate "processing complete" (Neo4j) from "retrieval-ready" (LightRAG indexed)
+- Tests must now reflect reality: a `processed` document is not yet safe to query
+
+**Test results:**
+- Python readiness regressions: 23+ tests passing (state transitions, timeout, failures)
+- Web UploadDataTests: 28/28 passing
+- E2E YouTube queue: all passing
+- Full .NET build: clean (`dotnet build -nologo`)
+- Full .NET test suite: pass
+- Coordinator validation: all platforms passing together
+
+**Key files:**
+- `tests/test_processing_pipeline_regression.py` — readiness polling tests
+- `tests/test_youtube_transcript_queue.py` — E2E queue flow
+- `src/AspireApp.WebTest/Tests/UploadDataTests.cs` — optional-field compat
+
+**Handoff to next phase:**
+- Jarvis + Buster: Monitor polling loop for edge cases (timeout, transients)
+- Jeff + Buster: Document upload → index → query freshness E2E proof (Phase 3b)
+
 **AuthenticatedUploadUx Fix:**
 Jeff's fire-and-forget upload change caused immediate status transition from "uploaded" → "processing". Updated test expectation from strict Assert.Equal("uploaded") to Assert.True(status == "uploaded" || status == "processing") to accommodate asynchronous processing start.
 

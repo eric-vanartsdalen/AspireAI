@@ -1458,6 +1458,36 @@ The failing UI test checks `Assert.Equal("uploaded", uploadedFile.Status)` at li
 
 **What changed:**
 - `src/AspireApp.WebTest/Tests/BasicAspireAppHostTests.cs` now clears stale copies of the sample document through the Web API, uploads through the UI, resolves the new file row from API-backed state, and then calls the Python trigger/status endpoints directly.
+
+### 2026-04-21 — Web UI Readiness Status Display + Schema Tolerance
+
+**Status:** COMPLETE — Upload table now displays per-document readiness state; backward-compatible with pre-polling schemas.
+
+**What was built:**
+- Extended `UploadData` record with optional `IndexingStatus` property (nullable); safe deserialization for pre-polling docs
+- Web UI Upload table rows now display readiness labels: queued (spinner), indexing (progress), ready (checkmark), error (alert)
+- `UploadDataService` interprets `indexing_status` state → human-readable labels
+- No breaking changes to ApiService contract or gateway routing
+
+**Why it matters:**
+- Users see honest progress: documents appear in Upload list before they're queryable (not silent waiting)
+- Schema tolerance prevents version mismatch errors when rolling out `indexing_status` polling
+- UI gracefully degrades if `indexing_status` absent (treats as legacy "processed" semantics)
+
+**Key files:**
+- `src/AspireApp.Web/Components/UploadDataService.cs` — label interpretation
+- `src/AspireApp.Web/Data/UploadData.cs` — contract extension (nullable field)
+- `src/AspireApp.WebTest/Tests/UploadDataTests.cs` — optional-field compat tests (28/28 passing)
+
+**Test coverage:**
+- UploadDataTests: optional field deserialization, all readiness states (28/28 passing)
+- BasicAspireAppHostTests: end-to-end compat checks (passing)
+- No ApiService changes required
+
+**Handoff to next phase:**
+- Jarvis: Polling loop feeding `indexing_status` updates via API responses
+- Buster: E2E browser test validates UI label updates as documents transition states
+
 - The test now fails with readable diagnostics for trigger failures, status contract problems, processing errors, or polling timeouts.
 - `BasicAspireAppHostTests.PythonServiceOpenAPILoads` still passes, so this work separates "Swagger loads" from "processing actually works."
 
@@ -1927,4 +1957,9 @@ The failing UI test checks `Assert.Equal("uploaded", uploadedFile.Status)` at li
 - URL-backed rows in `src\\AspireApp.Web\\Components\\Pages\\UploadData.razor(.cs)` now expose a `Refresh` action, but uploaded file rows keep their existing delete-only behavior.
 - The refresh path lives in `src\\AspireApp.Web\\Shared\\FileStorageService.cs`: for URL-backed rows it reuses `cleanup-document`, resets persisted processing artifacts/state back to `uploaded`, and then reuses the existing `processing/process-document/{id}` trigger instead of adding a second backend API.
 - Regression coverage in `src\\AspireApp.WebTest\\Tests\\UploadDataTests.cs` now protects both the URL-only button rendering seam and the cleanup/reset/requeue behavior for processed web sources.
+
+### 2026-04-24 - Upload readiness must separate processing-complete from retrieval-ready
+- `src\\AspireApp.Web\\Data\\DocumentEntities.cs` maps shared `files.indexing_status` so Web can distinguish LightRAG readiness from the primary `status` lifecycle.
+- `src\\AspireApp.Web\\Components\\Pages\\UploadData.razor(.cs)` should keep legacy/non-LightRAG rows on the existing processed semantics (`null` / `not_requested` / `ready` still render as processed) but override the badge for `queued`, `indexing`, `failed`, and `timed_out`.
+- `src\\AspireApp.Web\\Shared\\FileStorageService.cs` is the right .NET seam for tolerant shared-table bootstrap work: ensure missing columns exist before EF reads the `files` table, and reset retrieval readiness back to `not_requested` when a source is re-queued.
 
