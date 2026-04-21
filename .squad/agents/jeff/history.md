@@ -34,6 +34,45 @@
 
 ## Learnings
 
+### 2026-12-20 — Chat Reload Diagnosis: Fresh Knowledge Not Appearing
+
+**Context:** User uploaded website, it processed successfully, reloaded chat page, but new knowledge didn't appear in chat responses. Requested audit of .NET side for stale request state or reload behavior issues.
+
+**Investigation Scope:**
+- Upload completion path (FileUploadController)
+- Chat page reload behavior (OnInitializedAsync, LoadConversationSummariesAsync)
+- Conversation persistence (SelectConversationAsync, ApplyConversationDetail)
+- Request shaping to BrainChatClient (CallBackgroundAI parameters)
+- Conversation history building (BuildConversationHistoryForGateway)
+
+**Key Findings — .NET Side EXONERATED:**
+1. **Upload Processing:** URL uploads trigger `TryStartAutomaticProcessingAsync()` synchronously (line 278-279 FileUploadController.cs) — no background delays that would create race conditions
+2. **Page Reload:** `OnInitializedAsync()` always calls fresh `LoadConversationSummariesAsync()` → DB query with no client-side caching
+3. **Conversation Loading:** `SelectConversationAsync()` rebuilds `_chatHistory` from DB each time (lines 218-230) — no stale in-memory state
+4. **Request Parameters:** `CallBackgroundAI()` passes fresh context to BRAIN gateway (lines 990-996):
+   - `tenantId`: Current tenant from TenantContext (no caching detected)
+   - `conversationId`: Current active conversation ID
+   - `conversationHistory`: Last 12 messages from fresh `_chatHistory`
+   - No filters or exclusions that would prevent fresh knowledge retrieval
+5. **History Building:** `BuildConversationHistoryForGateway()` is simple last-N logic (max 12 messages) with no date/content filtering
+
+**Root Cause Determination:**
+- .NET correctly passes tenant ID and all context to BRAIN gateway
+- No stale state, no caching, no reload issues in Blazor chat component
+- **Issue MUST be in BRAIN gateway or Python processing pipeline:**
+  - Knowledge graph may not be committed/visible despite "processed" status
+  - BRAIN `/brain/chat` endpoint may query stale state or use cached results
+  - Processing completion race: status updated before Neo4j ingestion finishes
+
+**Artifact Created:**
+- `chat-reload-diagnosis.md` in repo root with full evidence trail and failure point analysis
+- Recommended next steps for Python/BRAIN team (Jarvis) to verify Neo4j knowledge graph state and gateway retrieval logic
+
+**Key File References:**
+- `FileUploadController.cs` (line 278-279): Upload → processing trigger
+- `Chat.razor.cs` (lines 103-140, 164-189, 204-230, 337-349, 990-996, 1082-1103): Reload + request shaping
+- `BrainChatClient.cs` (lines 66-74): Request envelope construction
+
 ### 2026-12-19 — Performance Bottleneck Analysis: Chat Timeouts
 
 **Context:** Eric reported chat response latency (80–120s for regular search, 180s for Critique Mode with timeouts). Requested investigation of .NET timeout/resilience limits and whether architecture adds avoidable latency.

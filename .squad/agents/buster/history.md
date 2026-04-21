@@ -30,6 +30,47 @@
 
 <!-- Append new learnings below. Each entry is something lasting about the project. -->
 
+### 2026-04-16 — Post-Upload Retrieval Regression: Data Freshness Gap in Test Suite
+
+**Task:** Audit test coverage for: upload website → marked processed → reload chat → new knowledge unavailable.
+
+**Critical Findings:**
+1. **Cycle Not Tested:** No integration test validates end-to-end: Process Document (write to Neo4j) → Reload Chat → Query Retriever → Gets Fresh Results. Processing and retrieval are tested in isolation but never sequenced.
+2. **Graph DB Visibility Window Unknown:** No test confirms when Neo4j makes ingested data queryable after processing. "processed" status may be marked before LightRAG indexing finishes.
+3. **Async Boundary Unexplored:** No test validates Chat component refreshes retriever context on reload (may cache retriever/LightRAG state).
+4. **Transaction Isolation Untested:** No verification that processing writes are visible to concurrent retrievers in separate transactions.
+
+**Suspected Root Causes (requires deeper investigation):**
+- Status "processed" set before LightRAG handoff completes indexing
+- Chat component caches retriever state on first load, no refresh on reload
+- LightRAG queue lag: handoff service queues but doesn't confirm completion
+- Neo4j transaction isolation: writes not visible to readers in separate transaction
+
+**Test Files Analyzed:**
+- `UploadDataTests.cs` — covers upload → queue, not processing completion
+- `test_lightrag_retriever.py` — covers retrieval in isolation, faked Neo4j
+- `test_knowledge_retriever.py` — covers retriever contracts, no data lifecycle
+- `BrainGatewayPhase2Tests.cs` — covers gateway mapping, faked backend responses
+- `test_processing_pipeline_regression.py` — processing in isolation, no retrieval validation
+- `BasicAspireAppHostTests.cs` — E2E flow exists but no assertion that retrieval results *change* post-upload
+
+**Test Gap Categories:**
+1. **End-to-End Cycle:** Need integration test: upload → wait for "processed" → query immediately → assert new doc in results
+2. **Freshness Assertion:** Need test that retriever queries Neo4j on each request, not cached
+3. **Timing Boundary:** Need test confirming LightRAG indexing complete before status marked "processed"
+4. **Chat Component:** Need test confirming Chat reloads retriever context, doesn't cache across page reloads
+
+**Key File Paths:**
+- `src/AspireApp.WebTest/Tests/UploadDataTests.cs`
+- `src/AspireApp.WebTest/Tests/BrainGatewayPhase2Tests.cs`
+- `src/AspireApp.WebTest/Tests/BasicAspireAppHostTests.cs`
+- `src/AspireApp.PythonServices/tests/test_processing_pipeline_regression.py`
+- `src/AspireApp.PythonServices/tests/test_lightrag_retriever.py`
+- `src/AspireApp.Web/Components/Pages/Chat.razor.cs`
+- `src/AspireApp.Web/Components/Pages/UploadData.razor.cs`
+- `src/AspireApp.PythonServices/app/routers/processing.py`
+- `src/AspireApp.PythonServices/app/routers/brain.py`
+
 ### 2026-04-16 — Upload/delete Playwright flake was a test seam, not a product regression
 
 **Task:** Reproduce the reported `BasicAspireAppHostTests.DeleteUploadedTestFile` failure (`Navigation target 'Upload Documents' did not become clickable within 30000ms`).

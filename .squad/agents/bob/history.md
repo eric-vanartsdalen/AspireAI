@@ -48,6 +48,43 @@
 4. **Enable SSE streaming** (Jeff + Jarvis, medium effort): User sees "Searching..." → "Reasoning..." → "Done" instead of silent wait.
 5. **Post-P2-C: Invert retrieval priority** (Jarvis, future): Neo4j vector first (1-5s), LightRAG supplement (40-60s). Hot path drops from 40-60s to 1-5s for populated embeddings.
 
+### 2026-04-16 — Processing-to-Retrieval Gap: LightRAG Async Handoff Creates Stale-State Window
+
+**Context:** User uploaded website, processing completed, reloaded chat, new information not found. Investigate why processed data isn't retrieval-ready immediately.
+
+**Root Cause:**
+- **Status marked "processed" before LightRAG ingestion completes:** Line 429 (`db.update_file_status(document_id, "processed")`) executes immediately after `_attempt_lightrag_handoff()` (line 398-402), which only *requests* a scan via `/documents/scan` API but doesn't wait for completion.
+- **LightRAG async workflow:** `handoff_document()` → `stage_markdown()` (copies file) → `trigger_scan()` (HTTP POST, returns immediately) → background pipeline processes → eventually writes to `kv_store_doc_status.json`.
+- **Timing gap:** Document shows "processed" in UI within ~5-15s, but LightRAG may take 30-300s to index (especially with Ollama entity extraction). User reloads chat during this window.
+- **Retrieval failure mode:** `LightRagRetriever.retrieve()` queries LightRAG first; if doc not in index yet, falls back to Neo4j. Neo4j *does* have the data (pages ingested lines 308-336), but confidence enrichment fails (line 52-59 in retrievers.py) because LightRAG didn't provide scores, triggering fallback logic that may return empty results.
+
+**Affected Boundary:**
+- Processing router (processing.py:398-429): Fire-and-forget handoff, immediate status update
+- LightRAG handoff service (lightrag_handoff_service.py:30-56): Synchronous staging, async scan trigger
+- Retrieval layer (retrievers.py:52-99): Confidence enrichment depends on LightRAG or Neo4j provenance; unresolved confidence returns None
+- Chat UI: Reloads conversation/tenant context on page load (Chat.razor.cs:103-140), hitting retrieval immediately
+
+**Architectural Implications:**
+1. **Contract mismatch:** "processed" status doesn't mean "retrieval-ready." Should be two states: `processed` (Neo4j populated) + `indexed` (LightRAG ready).
+2. **Async visibility gap:** No polling mechanism to check LightRAG ingestion completion before marking retrieval-ready.
+3. **Fallback brittleness:** Neo4j fallback *should* work but confidence enrichment logic (line 70-99) is fragile when LightRAG metadata missing.
+4. **User expectation:** UI shows "processed" → user assumes chat will find it → retrieval fails silently or returns low-confidence results filtered out.
+
+**Recommended Fixes (Priority Order):**
+1. **Add `indexed` status field** (database_service.py + files table): Track LightRAG ingestion separately from Neo4j processing.
+2. **Polling loop in handoff** (lightrag_handoff_service.py:54-56): After `trigger_scan()`, poll `/documents` until doc appears in `kv_store_doc_status.json` with status "processed" before returning.
+3. **Two-phase status update** (processing.py:429): Mark `processed` after Neo4j, mark `indexed` after LightRAG polling completes.
+4. **Strengthen Neo4j fallback** (retrievers.py:70-99): When LightRAG missing and Neo4j provenance resolves, use source_confidence from canonical document instead of failing closed with None.
+5. **UI feedback** (Chat/UploadData): Show "Indexing in progress..." badge until `indexed=True`, disable chat queries for unindexed docs.
+
+**Key File Paths:**
+- Processing workflow: `src/AspireApp.PythonServices/app/routers/processing.py:398-429`
+- LightRAG handoff: `src/AspireApp.PythonServices/app/services/lightrag_handoff_service.py:30-56`
+- Retrieval fallback: `src/AspireApp.PythonServices/app/brain/knowledge/retrievers.py:52-99`
+- Status tracking: `data/rag_storage/kv_store_doc_status.json`
+
+**Decision:** Flagged for team discussion. Quick fix: Add polling in handoff before marking processed. Long-term: Separate processing vs indexing states, expose both in UI.
+
 **Key Decision:** Critique Mode is **structurally expensive by design** (4 LLM calls + 3 retrieval calls). No pure performance fix; requires parallelization + streaming for UX. Honest timeline: recommendations 1-3 are quick wins (this sprint); 4-5 are deeper design.
 
 **Decisions Recorded:** All three new decisions now in `.squad/decisions.md` (Neo4j Indexing, Retrieval Parallelization, Timeout Boundary Alignment).

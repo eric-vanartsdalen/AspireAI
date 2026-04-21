@@ -83,6 +83,73 @@
 - `src/AspireApp.PythonServices/app/routers/processing.py`
 - `src/AspireApp.PythonServices/tests/test_processing_pipeline_regression.py`
 
+### 2026-04-22 — LightRAG Ingestion Pipeline is Asynchronous and Non-Blocking
+
+**Problem:**
+- User uploads a URL, processing completes quickly, and chat reload shows processing success—but the new content is still missing from chat.
+- Investigating why a freshly processed website doesn't immediately appear in chat retrieval.
+
+**Root Cause Analysis:**
+
+1. **Processing Success != Retrieval Readiness**
+   - `_process_document_task_sync` in `processing.py` marks document status as "processed" (line 429) *before* LightRAG has finished indexing.
+   - The handoff sequence (lines 398-402): Neo4j/embedding population completes → `_attempt_lightrag_handoff` called → document marked "processed".
+   - LightRAG handoff (line 465) only stages the markdown and triggers `/documents/scan` API—it does NOT wait for ingestion completion.
+   - `trigger_scan()` in `lightrag_handoff_service.py` (line 54-56) returns immediately after receiving scan acknowledgment.
+
+2. **Two Storage Layers with Different Latency**
+   - **Neo4j (synchronous)**: Pages, claims, embeddings written during processing (lines 300-393)—immediately available for `SemanticKnowledgeRetriever`.
+   - **LightRAG (asynchronous)**: Markdown staged in `data/inputs/`, scan triggered, but actual entity extraction + graph building happens in background.
+   - Evidence: `data/inputs/__enqueued__/000061-docs-github.md` shows file still queued in LightRAG pipeline.
+
+3. **Chat Retrieval Uses LightRAG-First Strategy**
+   - `BrainKnowledgeRetriever` (retrievers.py:652-666) tries `_light_rag_retriever.retrieve()` first.
+   - If LightRAG returns results (even if incomplete), chat uses them and may not supplement with Neo4j semantic fallback unless result set is sparse.
+   - Recent fix (history line 20) supplements single-doc results, but doesn't help if LightRAG returns *zero* results for brand-new content.
+
+4. **Gap Window Timing**
+   - Document processing completes in ~10-30 seconds (docling + Neo4j + handoff).
+   - LightRAG scan queue processing can take 30-120+ seconds depending on doc size, Ollama load, entity extraction.
+   - User reloads chat during this gap → Neo4j has data, LightRAG doesn't yet → retrieval misses fresh content.
+
+**Evidence from Codebase:**
+- `lightrag_handoff_service.py:30-38`: `handoff_document` stages file + triggers scan, but doesn't poll for completion.
+- `processing.py:465`: Handoff can fail silently (logged as warning), document still marked "processed".
+- `kv_store_doc_status.json`: Shows LightRAG documents tracked separately from main processing status.
+
+**Why This Happens with URLs Specifically:**
+- URL sources fetch content to `data/url_content/url_{id}.md` (processing.py:234).
+- Markdown export path exists immediately, triggering LightRAG handoff.
+- File uploads may have delayed markdown export, reducing visible gap.
+
+**Failure Points:**
+1. LightRAG service unavailable → handoff fails, Neo4j data orphaned.
+2. LightRAG pipeline busy → document queued in `__enqueued__/`, delay extends.
+3. Entity extraction fails → document marked "failed" in LightRAG, never indexed.
+4. Chat reload timing → user queries before background scan completes.
+
+**Mitigation Options (Not Implemented):**
+- Wait for LightRAG scan completion before marking document "processed".
+- Fallback to Neo4j semantic search when LightRAG returns empty results.
+- Add processing pipeline status field: "processed_neo4j", "processed_lightrag".
+- Return "processing" status until both layers ready.
+
+**Result:**
+- Processing success accurately reflects Neo4j state, but chat retrieval depends on LightRAG completion.
+- Gap is architectural: two-phase ingestion (synchronous Neo4j, async LightRAG) with single completion flag.
+- Chat should explicitly handle "partially available" content or polling should wait for both layers.
+
+**Key Pattern:**
+- **Dual-layer ingestion timing:** When processing writes to multiple stores with different latency characteristics, completion status must reflect the slowest layer or retrieval must gracefully degrade to available layers.
+- **Asynchronous handoff does not equal ingestion completion:** Triggering an external API scan != content being queryable in that system.
+
+**Key file paths:**
+- `src/AspireApp.PythonServices/app/routers/processing.py` (lines 398-429: handoff + status update)
+- `src/AspireApp.PythonServices/app/services/lightrag_handoff_service.py` (line 30-56: async handoff)
+- `src/AspireApp.PythonServices/app/brain/knowledge/retrievers.py` (lines 623-691: LightRAG-first retrieval)
+- `data/inputs/__enqueued__/` (LightRAG scan queue)
+- `data/rag_storage/kv_store_doc_status.json` (LightRAG indexing status)
+
 ### 2026-04-22 — YouTube Channel Ingestion Needs Consent-Resilient Resolution + Feed-First Expansion
 
 **Problem:**

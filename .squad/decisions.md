@@ -29,6 +29,7 @@
 > **Note (2026-04-20T07:07:50Z):** Merged 3 inbox decisions from YouTube transcript rate-limiting queue implementation session (Bob, Jarvis, Buster). Key outcomes: (1) Architecture approved: persistent PostgreSQL queue (no external scheduler dependency like APScheduler/Celery). (2) Jarvis implemented schema (`youtube_transcript_queue` + `youtube_transcript_attempts`), async drainer (1 attempt/min, 50/day cap), throttle enforcement methods. (3) Buster added two-seam regression coverage: router seam (enqueue mechanics), database seam (throttle policy). (4) Restart safety via persisted attempt history. (5) 27+ tests passing. (6) Enqueue gate in `_process_child_documents()` redirects YouTube children to queue; retry path (uploaded/error) validated. No exact duplicates found. Inbox cleared.
 > **Note (2026-04-22T21:17:21Z):** Merged 2 inbox decisions from retrieval flow investigation for YouTube-ingested content session (Jeff, Jarvis). Key outcomes: (1) Jeff investigated Web → ApiService → Python handoff; confirmed no dropped .NET document-scope signal in shared contracts (design limitation, not code bug). (2) Jarvis fixed downstream LightRAG retriever — now supplements sparse single-document LightRAG results with semantic hits before returning to caller. (3) YouTube transcript processing resilient to LightRAG eventual consistency. (4) Regression coverage validates single-document LightRAG result widening. (5) 48 Python tests passing. No exact duplicates found. Inbox cleared.
 > **Note (2026-04-23T06:07:48Z):** Merged 3 inbox decisions from search latency review session (Bob, Jarvis, Jeff). Key outcomes: (1) Neo4j indexing is not the latency fix — LightRAG HTTP (40-60s) is primary bottleneck, not Neo4j queries (<1s fallback). (2) Critique mode latency is structural (4 LLM calls + 3 serial LightRAG retrievals = 150-270s minimum); parallelization of retrieval calls is highest-impact fix. (3) Web HttpClient timeout (120s) fires before intended Blazor token (180s) — design clarity issue, not performance defect. (4) Recommendations: [1] Parallelize critique retrieval via `asyncio.gather` (Jarvis, ~20 lines, 3x speedup), [2] Raise Web HttpClient timeout to 240s (Jeff, 1-2 lines), [3] Convert service instantiation to singletons (Jarvis, ~15 lines), [4] SSE streaming + progress events (medium effort), [5] Invert retrieval priority (post-P2-C, high effort). No exact duplicates found. Inbox cleared.
+> **Note (2026-04-21T08:24:27Z):** Merged 2 inbox decisions from freshness investigation session (Bob, Jarvis, Jeff, Buster). Key outcomes: (1) Two-phase status problem identified—docs marked "processed" before LightRAG indexing completes (30–300s window), causing UI shows ✅ but chat returns empty ❌. (2) Root cause: `_attempt_lightrag_handoff()` fire-and-forget; no polling for actual index completion. (3) Architecture recommendation: separate "processing complete" (Neo4j) from "retrieval-ready" (LightRAG indexed) via `indexing_status` field + polling loop. (4) Test coverage gap: no end-to-end cycle test validates upload→process→reload→query freshness. (5) .NET side clean (no caching issues); issue localized to Python processing/indexing layer. (6) Ownership assigned: Jarvis (polling + schema), Jeff (UI indicators), Buster (test implementation). No exact duplicates found. Inbox cleared. See session log `2026-04-21T08-24-27Z-freshness-investigation.md` and orchestration logs for full details.
 
 <!-- Decisions are appended below. Each entry starts with ## -->
 
@@ -3931,4 +3932,344 @@ When BrainKnowledgeRetriever gets LightRAG results that are sparse or collapse t
 ### Related Decision
 
 - Jeff's BRAIN Retrieval Handoff Gap (2026-04-22) — established that root cause is downstream Python retrieval, not dropped .NET signal
+
+---
+
+## Processing vs Indexing Status Gap — Bob (Lead/Architect) — 2026-04-21
+
+**Author:** Bob (Lead/Architect)  
+**Status:** PROPOSED — Awaiting Phase 3 Roadmap Prioritization  
+**Scope:** Architectural fix for data availability freshness window between processing completion and retrieval readiness
+
+### Context
+
+Investigated user scenario where newly uploaded documents appear "processed" in UI but chat queries return empty results (30–300 second window). Parallel audit revealed:
+
+- **Bob:** Identified two-phase status problem (processed ≠ indexed)
+- **Jarvis:** Traced fire-and-forget LightRAG handoff in Python pipeline
+- **Jeff:** Confirmed no .NET-side caching or staleness issues
+- **Buster:** Flagged test coverage gap (no end-to-end cycle test)
+
+### Problem Statement
+
+**Status Boundary Mismatch:**
+- `db.update_file_status("processed")` executes immediately after `trigger_scan()` handoff
+- LightRAG indexing may take 30–300 seconds in background
+- During window: UI shows ✅ "processed", but Chat queries return empty ❌
+- Users reload chat during indexing window, retrieval fails or returns stale results
+
+**Root Cause:**
+- `_attempt_lightrag_handoff()` (processing.py:398-402) calls `trigger_scan()` which returns immediately without waiting for background pipeline completion
+- No polling mechanism to verify LightRAG ingestion before marking status
+- Async visibility gap prevents UI from signaling "indexing in progress" to user
+
+### Decision
+
+**Separate "processing complete" (Neo4j populated) from "retrieval-ready" (LightRAG indexed) via two-phase status update with polling.**
+
+#### Schema Change
+
+Add `indexing_status` field to `files` table:
+- **Values:** `pending` → `indexing` → `indexed` (or `error`)
+- **Default:** `pending` for newly uploaded documents
+- **Update Logic:** Two-phase workflow in processing router
+
+#### Processing Workflow (Proposed)
+
+```python
+# Phase 1: Process document (Neo4j)
+await _extract_with_docling(file_id, file_path)
+await _store_document_with_neo4j(doc)
+db.update_file_status(file_id, "processed")
+
+# Phase 2: Index for retrieval (LightRAG)
+db.update_indexing_status(file_id, "indexing")
+await _attempt_lightrag_handoff(file_id)
+
+# Phase 2a: Poll for completion (NEW)
+success = await poll_lightrag_status(file_id, timeout=300)  # 5 min timeout
+if success:
+    db.update_indexing_status(file_id, "indexed")
+else:
+    db.update_indexing_status(file_id, "error")
+```
+
+#### Polling Implementation
+
+Add to `lightrag_handoff_service.py`:
+- Poll `GET /kv_store_doc_status.json` from LightRAG endpoint (5–10s intervals)
+- Wait for document ID to appear in status response
+- Timeout after 300 seconds with error state
+- Return completion signal only after confirmed in index
+
+#### Retrieval Fallback Strengthening
+
+Enhance `app/brain/knowledge/retrievers.py`:
+- Use `source_confidence` from canonical Neo4j document when LightRAG metadata missing
+- Fallback to Neo4j-only path during `indexing_status="indexing"` window
+- Prevents empty results and confidence degradation during indexing
+
+#### UI Feedback (Optional Phase 2)
+
+Show "Indexing..." badge in `UploadData.razor`:
+- Display until `indexed_status="indexed"`
+- Optionally disable chat queries on unindexed documents
+- Signal to user that results may be stale
+
+### Files Affected
+
+**Python Changes:**
+- `app/routers/processing.py` — Two-phase status logic
+- `app/services/lightrag_handoff_service.py` — Polling loop
+- `app/services/database_service.py` — Schema + methods for `indexing_status`
+- `app/brain/knowledge/retrievers.py` — Fallback strengthening
+- Database migration script — Add column
+
+**C# Changes:**
+- `Components/Pages/UploadData.razor.cs` — UI indicators (Phase 2)
+
+### Ownership & Timeline
+
+| Owner | Task | Effort | Timeline |
+|-------|------|--------|----------|
+| **Jarvis** | Polling logic + schema + DB service | ~4 hours | 1–2 days |
+| **Jarvis** | Fallback strengthening + tests | ~2 hours | 1–2 days |
+| **Jeff** | UI indicators (optional) | ~2 hours | 1 day |
+| **Buster** | Integration tests (cycle + freshness) | ~6 hours | 2–3 days |
+| **Bob** | Architecture review | ~1 hour | On PR |
+
+### Impact If Fixed
+
+- ✅ Eliminates 30–300s freshness regression window
+- ✅ Chat queries see data as soon as Neo4j population complete
+- ✅ LightRAG indexing asynchronous; doesn't block processing
+- ✅ Stronger retrieval fallback for eventual consistency issues
+
+### Impact If Not Fixed
+
+- ❌ Future uploads silently fail to appear in chat during indexing window
+- ❌ Silent data availability bug similar to observed regression
+- ❌ Users lose trust in document ingestion feature
+- ❌ No test framework prevents recurrence
+
+### Alternatives Considered
+
+| Alternative | Assessment |
+|---|---|
+| Ignore gap, rely on fallback | ❌ Rejected—confidence enrichment fragile, UX suffers |
+| Make LightRAG synchronous | ❌ Rejected—blocks processing 30–300s, serial bottleneck |
+| Remove LightRAG dependency | ❌ Rejected—LightRAG provides entity extraction + graph reasoning not in Neo4j yet |
+| Polling with exponential backoff | ✅ Recommended—handles variable indexing speed |
+
+### Test Coverage Standard (Proposed)
+
+**Future data retrieval features must include:**
+- End-to-end cycle test (upload → process → query → assert fresh data)
+- Freshness validation (no caching between requests)
+- Timing boundary assertion (async boundaries clear)
+
+### Decision Deadline
+
+Awaiting Phase 3 roadmap prioritization. Recommend **HIGH PRIORITY** due to:
+- User-visible regression
+- Architectural clarity needed for Phase 3
+- Prevents test coverage gaps in future features
+
+### Related Decisions
+
+- **Buster's Post-Upload Retrieval Gap** (2026-04-21) — Test coverage gap assessment
+- **Jeff's Search Latency Review** (2026-04-23) — LightRAG HTTP confirmed as primary bottleneck
+
+---
+
+## Post-Upload Retrieval Data Freshness Test Gap — Buster (QA/Tester) — 2026-04-21
+
+**Author:** Buster (QA/Tester)  
+**Status:** IDENTIFIED — Requires Implementation (Phase 3 Planning)  
+**Severity:** HIGH (Data Availability Bug)  
+**Scope:** Test coverage gap for end-to-end upload/process/reload/query cycle
+
+### Problem Statement
+
+**User Scenario (Failing):**
+1. Upload website via Upload Documents page
+2. Page shows status "processed"
+3. Reload Chat page
+4. Query for new information → **results are empty** (regression)
+
+**Critical Finding:** Current test suite all pass, but **would NOT catch this regression** because no test validates the complete end-to-end cycle.
+
+### Test Coverage Gap Analysis
+
+| Layer | What's Tested | What's Missing |
+|-------|---|---|
+| Upload → Queue | ✅ File persisted, status queued | ❌ Processing completion confirmation |
+| Processing → Graph DB | ✅ Individual steps in isolation | ❌ Timing: when data becomes queryable |
+| Retrieval | ✅ Query shapes, contract mapping | ❌ Freshness: does retriever see new data? |
+| Chat Component | ✅ Focus state, conversation list | ❌ Refresh behavior on reload |
+| **End-to-End Cycle** | ❌ **NOT TESTED** | Upload → process → reload → query → assert fresh |
+
+### Tests That Would NOT Catch This Bug
+
+- `UploadDataTests.UploadFiles_PersistsSelectedFile_ForCurrentTenant()` — checks "queued" status, not completion
+- `test_lightrag_retriever.py` — fakes LightRAG responses, never hits real Neo4j
+- `BrainGatewayPhase2Tests.QueryKnowledgeAsync_MapsContractShapedKnowledgeResult()` — fakes backend responses
+- `BasicAspireAppHostTests.FlowEndToEnd()` — has processing wait/visibility, but **no assertion that results change**
+
+### Required Test Coverage (Priority Order)
+
+#### 1. End-to-End Cycle Test (HIGH PRIORITY)
+
+**Validates:** Upload document → process → reload chat → query → fresh results returned
+
+```
+1. Upload document via API / UI
+2. Poll until status = "processed" (within 30s timeout)
+3. Reload chat page / create new chat session
+4. Query retriever with content from newly uploaded document
+5. Assert: results include new document (not empty)
+6. Assert: document not in results before upload (baseline)
+```
+
+**Files:**
+- `src/AspireApp.WebTest/Tests/BrainGatewayPhase2Tests.cs` — .NET integration test
+- `src/AspireApp.PythonServices/tests/test_ingestion_retrieval_cycle.py` — Python integration test
+
+#### 2. Data Freshness Test (HIGH PRIORITY)
+
+**Validates:** No caching between requests; retriever sees updated data immediately
+
+```
+1. Query 1: retriever returns old results (baseline)
+2. Externally insert new document into Neo4j
+3. Query 2: same retriever instance, immediate re-query
+4. Assert: results now include new document (not cached)
+5. Assert: no persistent in-memory cache prevents visibility
+```
+
+**File:** `src/AspireApp.PythonServices/tests/test_ingestion_retrieval_cycle.py`
+
+#### 3. Timing Boundary Test (MEDIUM PRIORITY)
+
+**Validates:** LightRAG indexing complete before status marked "processed"
+
+```
+1. Process document through full pipeline
+2. Assert: LightRAG indexing complete before status update
+3. Assert: subsequent retriever query sees data immediately
+4. Assert: no race condition between status update and index visibility
+```
+
+**File:** `src/AspireApp.PythonServices/tests/test_processing_pipeline_regression.py`
+
+#### 4. Chat Component Refresh Test (MEDIUM PRIORITY)
+
+**Validates:** Page reload doesn't use stale retriever instances
+
+```
+1. Initialize Chat component, query retriever (old results)
+2. Externally add new document to Neo4j
+3. Trigger page reload / component reinit
+4. Query retriever (new instance)
+5. Assert: new data is visible (not cached from previous init)
+```
+
+**File:** `src/AspireApp.WebTest/Tests/ChatDataFreshnessTests.cs`
+
+### Test Implementation Details
+
+#### End-to-End Cycle Test Pseudocode
+
+```csharp
+[Fact]
+public async Task UploadDocument_ProcessCompletes_ChatRetrievalReturnsFreshData()
+{
+    // 1. Upload document
+    var uploadResponse = await _httpClient.PostAsync(
+        "/api/ingest/upload",
+        new MultipartFormDataContent { /* file */ });
+    var documentId = /* extract from response */;
+
+    // 2. Poll for processed status
+    var startTime = DateTime.UtcNow;
+    while (DateTime.UtcNow - startTime < TimeSpan.FromSeconds(30))
+    {
+        var status = await _httpClient.GetFromJsonAsync<UploadStatusResponse>(
+            $"/api/ingest/status/{documentId}");
+        if (status.ProcessingStatus == "processed") break;
+        await Task.Delay(500);
+    }
+
+    // 3. Query chat with content from new document
+    var chatRequest = new BrainChatRequest
+    {
+        Query = "What is [specific fact from uploaded doc]?",
+        Mode = "regular"
+    };
+    var chatResponse = await _httpClient.PostAsJsonAsync(
+        "/api/brain/chat", chatRequest);
+
+    // 4. Assert fresh data returned
+    var answer = await chatResponse.Content.ReadAsAsync<BrainChatResponse>();
+    Assert.NotNull(answer.Evidence);
+    Assert.NotEmpty(answer.Evidence); // Fresh results, not empty
+    Assert.Contains(documentId, /* extract from evidence sources */);
+}
+```
+
+### Root Cause Hypothesis (Requires Investigation)
+
+Four potential failure points:
+
+1. **Async Boundary (Status → Indexing):** Document marked "processed" before LightRAG indexing complete
+2. **Chat Component Cache:** Retriever service cached on first init, page reload uses stale instance
+3. **LightRAG Queue Lag:** Processing returns before background indexing starts
+4. **Neo4j Transaction Isolation:** Processing commits don't see retriever queries
+
+*See Bob's "Processing vs Indexing Status Gap" decision (2026-04-21) for primary suspect: async boundary.*
+
+### Implementation Ownership
+
+| Owner | Task | Priority |
+|---|---|---|
+| **Buster** | End-to-End Cycle test (C# + Python) | 1 |
+| **Buster** | Data Freshness test (Python) | 1 |
+| **Buster** | Timing Boundary test (Python) | 2 |
+| **Jarvis** | Root cause investigation (if tests fail) | 2 |
+| **Buster** | Chat Component Refresh test (C#) | 2 |
+| **Team** | Establish as standard for future features | 3 |
+
+### Team Standard Decision (Proposed)
+
+**Adopt as requirement for future data retrieval features:**
+
+> Any feature involving data upload, processing, and retrieval must include:
+> 1. End-to-end cycle test (upload → process → query → assert fresh)
+> 2. Freshness validation (no caching between requests)
+> 3. Timing boundary assertion (async boundaries clear)
+
+This prevents silent data availability regressions and documents expected behavior.
+
+### Impact Summary
+
+**If Tests Implemented & Pass:**
+- ✅ Regression caught early if processing status boundary changes
+- ✅ Freshness guardrails prevent silent failures
+- ✅ Async timing documented and validated
+- ✅ Future features inherit standard
+
+**If Tests Not Implemented:**
+- ❌ Similar data availability bugs may recur undetected
+- ❌ No baseline proof of end-to-end correctness
+- ❌ Test suite false confidence in concurrent features
+
+### Decision Deadline
+
+Awaiting Phase 3 roadmap prioritization. Recommend **HIGH PRIORITY** as blocker for data retrieval confidence.
+
+### Related Decisions
+
+- **Bob's Processing vs Indexing Status Gap** (2026-04-21) — Architectural fix for root cause
+- **Jeff's .NET Audit** (2026-04-21) — Confirmed issue localized to Python layer
+- **Jarvis's Python Trace** (2026-04-21) — Identified fire-and-forget LightRAG handoff
 
