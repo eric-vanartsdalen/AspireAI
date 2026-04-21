@@ -21,6 +21,7 @@ AspireAI mounts `./data` into both the Python service and the LightRAG container
 - Prefer markdown for the staged artifact because it preserves document structure and is easy to inspect.
 - Keep staged filenames deterministic (`{document_id}-{sanitized-name}.md`) so retries overwrite cleanly.
 - Use `GET /documents` (preferred) or `data\rag_storage\kv_store_doc_status.json` to observe per-document terminal status; `pipeline_status.busy` is only a global liveness signal.
+- LightRAG's documented file-indexing concurrency knob is `MAX_PARALLEL_INSERT`; it is not a boolean auto-index flag. When AspireAI also constrains `MAX_ASYNC=1`, set `MAX_PARALLEL_INSERT=1` to serialize file ingestion and reduce contention during scan-based handoff.
 - Do not make the canonical Docling/SQLite success path depend on LightRAG availability unless the product explicitly requires it.
 - If the product needs a "ready" badge, model it as a second readiness/indexing state rather than overloading the main document `processed` status.
 - When LightRAG runs against Ollama, set both `LLM_BINDING=ollama` **and** `EMBEDDING_BINDING=ollama`; a missing embedding binding can leave `/documents` alive while Neo4j-backed graph growth never happens.

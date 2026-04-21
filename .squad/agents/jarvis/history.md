@@ -9,6 +9,41 @@
 
 <!-- Append new learnings below. Each entry is something lasting about the project. -->
 
+### 2026-04-21 — LightRAG File Indexing Concurrency Must Match Backend Constraint via `MAX_PARALLEL_INSERT`
+
+**Problem:**
+- Eric asked whether LightRAG exposes a setting that makes documents index automatically "on upload" to address timeout issues.
+- AspireAI stages markdown into LightRAG's shared `INPUT_DIR` and explicitly triggers `POST /documents/scan`, not the upload endpoint.
+- Recent uploads were reaching `Index timeout failure` during LightRAG processing, which could be mitigated by reducing contention.
+
+**What We Found:**
+- LightRAG's `/documents/upload` endpoint already indexes in background by design.
+- No separate boolean "index on upload" flag exists for the `INPUT_DIR` + `/documents/scan` flow.
+- The documented file-level concurrency control is `MAX_PARALLEL_INSERT`, described as the number of parallel files processed in one batch during indexing.
+
+**What We Did:**
+- Updated `src\AspireApp.AppHost\AppHost.cs` to set `.WithEnvironment("MAX_PARALLEL_INSERT", "1")` for the LightRAG container service.
+- This matches the existing `MAX_ASYNC=1` constraint against Ollama and keeps file indexing serialized in this deployment profile.
+
+**Result:**
+- Scan-based handoff semantics unchanged.
+- File-level LightRAG indexing now runs one document at a time, reducing timeout pressure from avoidable contention against the constrained Ollama backend.
+- Configuration stays honest to LightRAG's documented behavior (no invented flags).
+
+**Key Patterns:**
+- **Configuration honesty:** Don't invent fictional settings; understand the actual documented tuning knobs.
+- **Constraint matching:** When one backend (Ollama) limits concurrency, match that constraint in dependent stages (LightRAG file indexing).
+- **AppHost coordination:** Container-level environment variables are the surface for this kind of tuning.
+
+**Key Files:**
+- `src\AspireApp.AppHost\AppHost.cs` — LightRAG service registration with `MAX_PARALLEL_INSERT=1`
+- `.squad/decisions/inbox/jarvis-lightrag-setting.md` — Decision artifact (merged to decisions.md)
+- `.squad/orchestration-log/20260421T171255Z-jarvis.md` — Orchestration log
+- `.squad/log/20260421T171255Z-lightrag-setting.md` — Session log (shared with Jeff)
+
+**Validation:**
+- `python -m pytest src\AspireApp.PythonServices\tests\test_processing_pipeline_regression.py -q` — 18/18 passed ✅
+
 ### 2026-04-26 — LightRAG Readiness Timeouts Need Deferred Reconciliation, Not Frozen Failure
 
 **Problem:**
@@ -1442,6 +1477,22 @@ eo4j_service to LightRagRetriever for enrichment when LightRAG lacks scores
 **User Preferences:**
 - Keep the fix surgical.
 - Prove the dependency-install path works again with minimal, concrete validation.
+
+### 2026-04-21 — LightRAG insert concurrency tuning
+
+**Context:** Uploads were reaching LightRAG `Index timeout failure` while AspireAI stages markdown into `INPUT_DIR` and triggers `POST /documents/scan`.
+
+**Finding:**
+- LightRAG does not expose a boolean "index on upload" flag for the shared `INPUT_DIR` flow.
+- The documented knob for file-level indexing parallelism is `MAX_PARALLEL_INSERT`.
+- LightRAG's own API docs say upload/text endpoints index asynchronously by default, while files dropped into `INPUT_DIR` still require an explicit scan trigger.
+
+**Project decision:**
+- Because AspireAI already constrains LightRAG LLM concurrency with `MAX_ASYNC=1`, set `MAX_PARALLEL_INSERT=1` as well.
+- This keeps LightRAG file ingestion serialized and better aligned with our one-document-at-a-time handoff pattern.
+
+**Key file path:**
+- Runtime config: `src/AspireApp.AppHost/AppHost.cs`
 
 ---
 

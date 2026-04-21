@@ -34,6 +34,63 @@
 
 ## Learnings
 
+### 2026-04-21 — AppHost Must Serialize LightRAG File Indexing via `MAX_PARALLEL_INSERT` to Match Ollama Constraint
+
+**Context:**
+- Eric asked whether LightRAG exposes a setting that makes documents index automatically "on upload" to address timeout issues.
+- AspireAI wires a LightRAG container in AppHost, but the product does not call LightRAG's `/documents/upload` API.
+- The Python pipeline stages markdown into the shared `INPUT_DIR` and explicitly calls `POST /documents/scan`.
+
+**What I Confirmed:**
+- LightRAG's `/documents/upload` endpoint already indexes in background by design.
+- There is no separate boolean "index on upload" flag for the `INPUT_DIR` + `/documents/scan` flow.
+- The documented AppHost-relevant concurrency knob is `MAX_PARALLEL_INSERT`, which controls how many files LightRAG indexes in parallel during scan operations.
+
+**Practical Decision:**
+- Do **not** add a fictional "index on upload" AppHost flag.
+- Treat upload-time indexing as LightRAG endpoint behavior, not as a tunable setting.
+- For our scan-based handoff, use the documented `MAX_PARALLEL_INSERT=1` setting.
+- This matches the existing `MAX_ASYNC=1` constraint against Ollama and reduces avoidable contention.
+
+**Result:**
+- AppHost configuration now sets `.WithEnvironment("MAX_PARALLEL_INSERT", "1")` on the LightRAG container service.
+- File-level indexing runs one document at a time, reducing timeout pressure from unnecessary concurrent LightRAG embedding calls against a constrained Ollama backend.
+- Scan-based handoff semantics are unchanged.
+
+**Key Pattern:**
+- **AppHost Configuration Honesty:** Don't invent fictional environment variables. Understand the actual documented tuning knobs and apply them consistently when multiple services compete for the same backend resource.
+- **Cross-Service Constraint Matching:** When Ollama is constrained to `MAX_ASYNC=1`, mirror that in dependent stages (LightRAG `MAX_PARALLEL_INSERT=1`) to prevent unnecessary contention.
+
+**Key File Paths:**
+- `src\AspireApp.AppHost\AppHost.cs` — LightRAG service registration with `MAX_PARALLEL_INSERT=1`
+- `.squad/decisions/inbox/jeff-lightrag-setting.md` — Decision artifact (merged to decisions.md)
+- `.squad/orchestration-log/20260421T171255Z-jeff.md` — Orchestration log
+- `.squad/log/20260421T171255Z-lightrag-setting.md` — Session log (shared with Jarvis)
+
+**Validation:**
+- `dotnet restore` ✅
+- `dotnet build .\AspireApp.sln --no-restore` ✅
+- `BasicAspireAppHostTests.AspireDashboardLoads` ✅
+
+### 2026-04-21 — LightRAG Has No Auto-Index Toggle for Our Scan-Based Handoff
+
+**Context:**
+- Eric asked whether LightRAG exposes a setting that makes documents index automatically "on upload" so AppHost could flip it on for the timeout issue.
+
+**What I Confirmed:**
+- LightRAG's documented `POST /documents/upload` endpoint already indexes asynchronously by design; there is no separate boolean environment flag that turns upload indexing on.
+- AspireAI does **not** use that endpoint for ingestion. Our Python pipeline stages markdown into LightRAG's shared `INPUT_DIR` and explicitly triggers `POST /documents/scan`.
+- For that scan-based flow, the documented AppHost-relevant tuning knob is `MAX_PARALLEL_INSERT`, which controls how many files LightRAG indexes in parallel.
+
+**Practical Decision:**
+- Keep the existing scan-based handoff.
+- When AspireAI also constrains `MAX_ASYNC=1` against the same Ollama backend, set `MAX_PARALLEL_INSERT=1` so LightRAG serializes file ingestion and avoids extra contention.
+
+**Key file paths:**
+- `src\AspireApp.AppHost\AppHost.cs`
+- `src\AspireApp.PythonServices\app\services\lightrag_handoff_service.py`
+- `.squad\skills\lightrag-handoff\SKILL.md`
+
 ### 2026-04-21 — Upload Dispatch Must Not Block the Blazor Circuit
 
 **Context:** Eric reported upload-page timeouts after the row flipped to "Processing", plus chat calls timing out while LightRAG-backed responses were still in flight.

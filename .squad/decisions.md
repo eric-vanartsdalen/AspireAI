@@ -4498,3 +4498,43 @@ Live Aspire validation (`BasicAspireAppHostTests.LiveLightRagNeo4jQueryRoundTrip
 - **Jarvis's Deferred Reconciliation** (2026-04-21) — Keeps document `queued/indexing` while LightRAG progresses
 - **Jeff's Non-Blocking Dispatch** (2026-04-21) — Upload no longer blocks waiting for Python
 - **Session Log:** `.squad/log/20260421-timeout-stabilization.md`
+
+> **Note (2026-04-21T17:12:55Z):** Merged 2 inbox decisions from LightRAG file indexing concurrency configuration session (Jarvis, Jeff). Key outcome: Eric asked whether LightRAG exposes a setting for auto-indexing "on upload" to address timeout issues. Conclusion: no such flag exists; LightRAG's `/documents/upload` endpoint already indexes asynchronously by design. AspireAI uses scan-based handoff (stages markdown, triggers `/documents/scan`). Documented concurrency control is `MAX_PARALLEL_INSERT` (counts parallel files in a batch). Decision: set `MAX_PARALLEL_INSERT=1` in AppHost to serialize file indexing and match existing `MAX_ASYNC=1` constraint against Ollama. Reduces avoidable contention. Validation: Jarvis 18 pytest passed, Jeff dotnet build + AppHost health check ✅. No contradictions detected (both agents converge on same tuning knob). Inbox cleared. Orchestration logs: `20260421T171255Z-jarvis.md`, `20260421T171255Z-jeff.md`. Session log: `.squad/log/20260421T171255Z-lightrag-setting.md`.
+
+## LightRAG File Indexing Concurrency Should Be Serialized When AspireAI Runs Constrained Ollama — Jarvis — 2026-04-21
+
+**Context:**
+AspireAI stages markdown into LightRAG's shared `INPUT_DIR` and explicitly triggers `POST /documents/scan` rather than using the LightRAG upload endpoint directly. Recent uploads were reaching `Index timeout failure` during LightRAG indexing.
+
+**Decision:**
+Use LightRAG's documented file-level indexing concurrency setting, `MAX_PARALLEL_INSERT`, as the relevant control and set it to `1` in runtime configuration.
+
+**Why:**
+LightRAG documentation describes `MAX_PARALLEL_INSERT` as the number of parallel files processed in one batch during indexing. There is no separate boolean "index on upload" flag for the `INPUT_DIR` + `/documents/scan` flow. AspireAI already sets `MAX_ASYNC=1`, so matching `MAX_PARALLEL_INSERT=1` keeps ingestion serialized and reduces avoidable contention against the same constrained Ollama backend.
+
+**Impact:**
+- Upload/text endpoints in LightRAG still index asynchronously by design
+- Our scan-based handoff remains unchanged semantically
+- File-level LightRAG indexing now runs one document at a time, reducing timeout pressure in this deployment profile
+
+**Owner:** Jarvis — Python / Data Dev
+
+---
+
+## AppHost Should Serialize LightRAG File Indexing for the Current Scan-Based Handoff — Jeff — 2026-04-21
+
+**Context:**
+Eric asked whether LightRAG exposes a setting that makes documents index automatically on upload. In AspireAI, AppHost wires a LightRAG container, but the product does not call LightRAG's `/documents/upload` API. Instead, the Python pipeline stages markdown into the shared `INPUT_DIR` and then explicitly calls `POST /documents/scan`.
+
+**Decision:**
+Do **not** add a fictional "index on upload" AppHost flag. Treat upload-time indexing as LightRAG endpoint behavior, not configuration. For AspireAI's real scan-based handoff, use the documented concurrency knob `MAX_PARALLEL_INSERT=1`.
+
+**Why:**
+LightRAG documentation shows that `/documents/upload` already indexes in background by design, while scan-based ingestion depends on an explicit `/documents/scan` trigger. The relevant documented environment knob for this flow is `MAX_PARALLEL_INSERT`, described as the number of parallel files processed in one batch. Because AspireAI already constrains `MAX_ASYNC=1` against Ollama, matching `MAX_PARALLEL_INSERT=1` reduces avoidable indexing contention.
+
+**Impact:**
+- AppHost configuration stays honest to LightRAG's documented behavior
+- AspireAI keeps the existing markdown staging + scan integration path
+- LightRAG indexing now runs one file at a time in this deployment profile, reducing timeout pressure without inventing a non-existent setting
+
+**Owner:** Jeff — .NET Dev
