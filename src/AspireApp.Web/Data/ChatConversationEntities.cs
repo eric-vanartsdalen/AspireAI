@@ -41,7 +41,7 @@ public sealed class ChatConversation
     [Required]
     [Column("chat_mode")]
     [MaxLength(20)]
-    public string ChatMode { get; set; } = "regular";
+    public string ChatMode { get; set; } = "simple";
 
     public ICollection<ChatConversationMessage> Messages { get; set; } = [];
 }

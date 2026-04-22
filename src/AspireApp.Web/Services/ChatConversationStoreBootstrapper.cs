@@ -32,7 +32,7 @@ public sealed class ChatConversationStoreBootstrapper(UploadDbContext dbContext)
                 tenant_id character varying(100) NULL,
                 title character varying(200) NOT NULL,
                 title_source character varying(20) NOT NULL DEFAULT 'fallback',
-                chat_mode character varying(20) NOT NULL DEFAULT 'regular',
+                chat_mode character varying(20) NOT NULL DEFAULT 'simple',
                 created_at timestamp with time zone NOT NULL DEFAULT NOW(),
                 updated_at timestamp with time zone NOT NULL DEFAULT NOW(),
                 last_message_at timestamp with time zone NULL
@@ -64,9 +64,16 @@ public sealed class ChatConversationStoreBootstrapper(UploadDbContext dbContext)
                     WHERE table_name = 'chat_conversations' AND column_name = 'chat_mode'
                 ) THEN
                     ALTER TABLE chat_conversations
-                    ADD COLUMN chat_mode character varying(20) NOT NULL DEFAULT 'regular';
+                    ADD COLUMN chat_mode character varying(20) NOT NULL DEFAULT 'simple';
                 END IF;
             END $$;
+            """,
+            cancellationToken);
+
+        await _dbContext.Database.ExecuteSqlRawAsync(
+            """
+            ALTER TABLE chat_conversations
+            ALTER COLUMN chat_mode SET DEFAULT 'simple';
             """,
             cancellationToken);
 

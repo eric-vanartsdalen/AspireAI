@@ -19,7 +19,7 @@ namespace AspireApp.WebTest.Tests;
 public sealed class ChatConversationServiceTests
 {
     [Fact]
-    public async Task StartConversationAsync_PersistsOwnerScopedConversationWithFallbackTitle()
+    public async Task StartConversationAsync_PersistsOwnerScopedConversationWithFallbackTitle_AndDefaultsToSimpleMode()
     {
         await using var context = CreateDbContext();
         var service = CreateService(context);
@@ -32,11 +32,13 @@ public sealed class ChatConversationServiceTests
 
         Assert.Equal("How do I configure Neo4j indexes", summary.Title);
         Assert.Equal("tenant-alpha", summary.TenantId);
+        Assert.Equal(ChatConversationModes.Simple, summary.ChatMode);
         Assert.Equal(1, summary.MessageCount);
 
         var conversation = await context.ChatConversations.SingleAsync(TestContext.Current.CancellationToken);
         Assert.Equal("demo-taylor-jones", conversation.OwnerUserId);
         Assert.Equal("tenant-alpha", conversation.TenantId);
+        Assert.Equal(ChatConversationModes.Simple, conversation.ChatMode);
         Assert.Equal(ChatConversationTitleSources.Fallback, conversation.TitleSource);
 
         var message = await context.ChatConversationMessages.SingleAsync(TestContext.Current.CancellationToken);
@@ -127,7 +129,7 @@ public sealed class ChatConversationServiceTests
     }
 
     [Fact]
-    public async Task StartConversationAsync_AndUpdateChatModeAsync_PersistNormalizedChatMode()
+    public async Task StartConversationAsync_AndUpdateChatModeAsync_PersistSelectedModeAcrossReloads()
     {
         await using var context = CreateDbContext();
         var service = CreateService(context);
@@ -135,23 +137,31 @@ public sealed class ChatConversationServiceTests
         var started = await service.StartConversationAsync(
             "demo-taylor-jones",
             "tenant-alpha",
-            "Walk me through critique mode",
-            chatMode: "CRITIQUE",
+            "Walk me through the available chat modes",
             cancellationToken: TestContext.Current.CancellationToken);
 
-        Assert.Equal(ChatConversationModes.Critique, started.ChatMode);
+        Assert.Equal(ChatConversationModes.Simple, started.ChatMode);
 
         var createdConversation = await context.ChatConversations.SingleAsync(TestContext.Current.CancellationToken);
-        Assert.Equal(ChatConversationModes.Critique, createdConversation.ChatMode);
+        Assert.Equal(ChatConversationModes.Simple, createdConversation.ChatMode);
 
-        var updated = await service.UpdateChatModeAsync(
+        var enhanced = await service.UpdateChatModeAsync(
             started.ConversationId,
             "demo-taylor-jones",
-            "REGULAR",
+            "enhanced",
             TestContext.Current.CancellationToken);
 
-        Assert.NotNull(updated);
-        Assert.Equal(ChatConversationModes.Regular, updated!.ChatMode);
+        Assert.NotNull(enhanced);
+        Assert.Equal(ChatConversationModes.Enhanced, enhanced!.ChatMode);
+
+        var critique = await service.UpdateChatModeAsync(
+            started.ConversationId,
+            "demo-taylor-jones",
+            "CRITIQUE",
+            TestContext.Current.CancellationToken);
+
+        Assert.NotNull(critique);
+        Assert.Equal(ChatConversationModes.Critique, critique!.ChatMode);
 
         var reloaded = await service.GetConversationAsync(
             started.ConversationId,
@@ -159,8 +169,18 @@ public sealed class ChatConversationServiceTests
             TestContext.Current.CancellationToken);
 
         Assert.NotNull(reloaded);
-        Assert.Equal(ChatConversationModes.Regular, reloaded!.ChatMode);
-        Assert.Equal(ChatConversationModes.Regular, createdConversation.ChatMode);
+        Assert.Equal(ChatConversationModes.Critique, reloaded!.ChatMode);
+        Assert.Equal(ChatConversationModes.Critique, createdConversation.ChatMode);
+    }
+
+    [Theory]
+    [InlineData("regular")]
+    [InlineData("REGULAR")]
+    [InlineData("enhanced")]
+    [InlineData("ENHANCED")]
+    public void ChatConversationModes_Normalize_MapsLegacyRegularAndEnhancedValues_ToEnhancedAlias(string persistedMode)
+    {
+        Assert.Equal(ChatConversationModes.Enhanced, ChatConversationModes.Normalize(persistedMode));
     }
 
     [Fact]

@@ -436,6 +436,50 @@ public sealed class BrainGatewayPhase2Tests
         Assert.Equal("http://brain-gateway/brain/chat", handler.Requests[0].RequestUri?.ToString());
     }
 
+    [Theory]
+    [InlineData("simple")]
+    [InlineData("regular")]
+    [InlineData("critique")]
+    public async Task BrainChatClient_IncludesSelectedModeInGatewayPayload(string selectedMode)
+    {
+        var cancellationToken = TestContext.Current.CancellationToken;
+
+        using var handler = new StubHttpMessageHandler(
+        [
+            new HttpResponseMessage(HttpStatusCode.OK)
+            {
+                Content = JsonContent.Create(new WebServices.BrainChatResponse(
+                    "Mode-aware answer",
+                    0.82,
+                    [],
+                    [],
+                    []))
+            }
+        ]);
+
+        using var httpClient = new HttpClient(handler)
+        {
+            BaseAddress = new Uri("http://brain-gateway/")
+        };
+
+        var chatClient = new WebServices.BrainChatClient(
+            httpClient,
+            NullLogger<WebServices.BrainChatClient>.Instance);
+
+        _ = await chatClient.ChatAsync(
+            "Which mode is selected?",
+            selectedMode,
+            "tenant-a",
+            "conversation-1",
+            cancellationToken: cancellationToken);
+
+        Assert.Single(handler.Requests);
+        var requestBody = await handler.Requests[0].Content!.ReadAsStringAsync(cancellationToken);
+        using var payload = JsonDocument.Parse(requestBody);
+
+        Assert.Equal(selectedMode, payload.RootElement.GetProperty("mode").GetString());
+    }
+
     [Fact]
     public async Task BrainChatClient_IncludesConversationHistoryInGatewayPayload()
     {

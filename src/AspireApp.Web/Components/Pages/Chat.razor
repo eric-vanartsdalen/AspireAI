@@ -922,14 +922,25 @@ else
                 <label>Mode:</label>
                 <span class="chat-mode-option">
                     <input type="radio"
+                           id="mode-simple"
+                           name="chatMode"
+                           value="@ChatConversationModes.Simple"
+                           checked="@(SelectedChatMode == ChatConversationModes.Simple)"
+                           @onchange="@(() => OnChatModeChangedAsync(ChatConversationModes.Simple))"
+                           disabled="@IsAIResponsing"
+                           data-testid="chat-mode-simple" />
+                    <label for="mode-simple">Simple</label>
+                </span>
+                <span class="chat-mode-option">
+                    <input type="radio"
                            id="mode-regular"
                            name="chatMode"
-                           value="@ChatConversationModes.Regular"
-                           checked="@(SelectedChatMode == ChatConversationModes.Regular)"
-                           @onchange="@(() => OnChatModeChangedAsync(ChatConversationModes.Regular))"
+                           value="@ChatConversationModes.Enhanced"
+                           checked="@(SelectedChatMode == ChatConversationModes.Enhanced)"
+                           @onchange="@(() => OnChatModeChangedAsync(ChatConversationModes.Enhanced))"
                            disabled="@IsAIResponsing"
                            data-testid="chat-mode-regular" />
-                    <label for="mode-regular">Regular</label>
+                    <label for="mode-regular">Enhanced</label>
                 </span>
                 <span class="chat-mode-option">
                     <input type="radio"
@@ -943,9 +954,7 @@ else
                     <label for="mode-critique">Critique</label>
                 </span>
                 <span class="chat-mode-hint">
-                    @(SelectedChatMode == ChatConversationModes.Regular
-                        ? "Fast, knowledge-enhanced responses"
-                        : "Thorough, agent-verified answers")
+                    @SelectedChatModeHint
                 </span>
             </div>
 

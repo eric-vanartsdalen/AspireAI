@@ -7,7 +7,12 @@ namespace AspireApp.ApiService.Contracts;
 public enum ChatMode
 {
     [JsonStringEnumMemberName("regular")]
-    Regular,
+    Enhanced,
+
+    Regular = Enhanced,
+
+    [JsonStringEnumMemberName("simple")]
+    Simple,
 
     [JsonStringEnumMemberName("critique")]
     Critique
@@ -17,7 +22,7 @@ public sealed record BrainChatRequest(
     string TenantId,
     string CorrelationId,
     [property: JsonPropertyName("query")] string Query,
-    [property: JsonPropertyName("mode")] ChatMode Mode = ChatMode.Regular,
+    [property: JsonPropertyName("mode")] ChatMode Mode = ChatMode.Simple,
     [property: JsonPropertyName("conversation_id")] string? ConversationId = null,
     [property: JsonPropertyName("top_k")] int TopK = 5,
     [property: JsonPropertyName("conversation_history")] IReadOnlyList<ConversationMessage>? ConversationHistory = null)
