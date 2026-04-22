@@ -2289,3 +2289,30 @@ High — Three independent test failures all exhibit the same LightRAG stuck-in-
 **Session Log:** See .squad/log/20260421-timeout-stabilization.md
 **Decision File:** .squad/decisions.md (merged: LightRAG timeout fix must wire Ollama embeddings explicitly...)
 
+
+### 2026-04-26 — Three-mode chat regression needs route-aware tests, not just renamed labels
+
+**Task:** Audit and update chat-mode regression coverage for the Simple / Enhanced / Critique migration.
+
+**Concrete findings:**
+1. `Chat.razor.cs` now splits routing by mode: **Simple** bypasses `IBrainChatClient` and uses `QuerySimpleChatAsync()` against the local Semantic Kernel/Ollama path, while **Enhanced** and **Critique** still go through `BrainChatClient.ChatAsync(...)`.
+2. The user-facing rename is intentionally softer than a storage/wire rename: `ChatConversationModes.Enhanced` still aliases the legacy `"regular"` value, and `ApiService.Contracts.ChatMode.Enhanced` serializes as `"regular"` for compatibility. QA must therefore assert **labels/hints in the UI** and **routing values in transport**, not assume those strings are identical.
+3. Saved-conversation coverage must include both modern threads (`simple`, enhanced/`regular`, `critique`) and a legacy stored `"regular"` thread so the UI proves it loads into the **Enhanced** option.
+4. Jeff still has one real defect: `BrainContractModels.BrainChatRequest` defaults `Mode` to `Enhanced`, but the new three-mode contract says omitted mode should default to **Simple**. The focused contract regression fails on that seam only.
+
+**Validation:**
+- `dotnet test .\src\AspireApp.WebTest\AspireApp.WebTest.csproj --no-restore -v q --filter "(FullyQualifiedName~AspireApp.WebTest.Tests.ChatCritiqueModeTests|FullyQualifiedName~AspireApp.WebTest.Tests.ChatConversationServiceTests|FullyQualifiedName~AspireApp.WebTest.Tests.BrainGatewayPhase2Tests|FullyQualifiedName~AspireApp.WebTest.Tests.BrainContractRoundTripTests) & FullyQualifiedName!~BrainChatRequest_DefaultsToSimpleMode_WhenModeIsOmitted"` ✅
+- `dotnet test .\src\AspireApp.WebTest\AspireApp.WebTest.csproj --no-restore -v q --filter "FullyQualifiedName~AspireApp.WebTest.Tests.ChatCritiqueModeTests|FullyQualifiedName~AspireApp.WebTest.Tests.ChatConversationServiceTests|FullyQualifiedName~AspireApp.WebTest.Tests.BrainGatewayPhase2Tests|FullyQualifiedName~AspireApp.WebTest.Tests.BrainContractRoundTripTests"` ❌ — one expected failure remains: `BrainChatRequest_DefaultsToSimpleMode_WhenModeIsOmitted`
+
+**Reviewer verdict on Jeff's implementation:**
+- **Reject until fixed.** The UI/session behavior is covered, but the shared API contract still defaults omitted chat mode to Enhanced/legacy-regular instead of Simple.
+
+**Key file paths:**
+- `src\AspireApp.Web\Components\Pages\Chat.razor`
+- `src\AspireApp.Web\Components\Pages\Chat.razor.cs`
+- `src\AspireApp.Web\Services\ChatConversationService.cs`
+- `src\AspireApp.ApiService\Contracts\BrainContractModels.cs`
+- `src\AspireApp.WebTest\Tests\ChatCritiqueModeTests.cs`
+- `src\AspireApp.WebTest\Tests\ChatConversationServiceTests.cs`
+- `src\AspireApp.WebTest\Tests\BrainGatewayPhase2Tests.cs`
+- `src\AspireApp.WebTest\Tests\BrainContractRoundTripTests.cs`
