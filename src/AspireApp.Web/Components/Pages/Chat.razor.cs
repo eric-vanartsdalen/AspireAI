@@ -83,7 +83,7 @@ namespace AspireApp.Web.Components.Pages
         private bool IsInteractiveReady { get; set; }
 
         // Mode selector
-        private string SelectedChatMode { get; set; } = ChatConversationModes.Regular;
+        private string SelectedChatMode { get; set; } = ChatConversationModes.Simple;
 
         // Citation tracking: maps assistant message index to evidence from the gateway response
         private readonly Dictionary<int, BrainChatResponse> _messageEvidence = new();
@@ -91,6 +91,8 @@ namespace AspireApp.Web.Components.Pages
         private string ConversationStatusCssClass => ConversationStatusIsError ? "alert alert-danger" : "alert alert-info";
 
         private bool HasActiveConversation => ActiveConversationId.HasValue;
+
+        private string SelectedChatModeHint => ChatConversationModes.GetHint(SelectedChatMode);
 
         private string ConversationHeading => HasActiveConversation
             ? ActiveConversationTitle
@@ -356,7 +358,7 @@ namespace AspireApp.Web.Components.Pages
             IsEditingConversationTitle = false;
             ShouldFocusConversationTitleInput = false;
             ShouldFocusQuestionInput = false;
-            SelectedChatMode = ChatConversationModes.Regular;
+            SelectedChatMode = ChatConversationModes.Simple;
             Question = string.Empty;
             AIResponse = string.Empty;
             ElapsedTimeMessage = string.Empty;
@@ -987,22 +989,28 @@ namespace AspireApp.Web.Components.Pages
 
             try
             {
-                chatResponse = await BrainChatClient.ChatAsync(
-                    query: Status,
-                    mode: SelectedChatMode,
-                    tenantId: TenantContext.CurrentTenantId,
-                    conversationId: ActiveConversationId?.ToString(),
-                    conversationHistory: BuildConversationHistoryForGateway(Status),
-                    cancellationToken: linkedTokenSource.Token);
-
-                AIResponse = chatResponse.Answer;
-
-                // Track evidence for the next assistant message index
-                var nextAssistantIndex = _chatHistory.Count(m =>
-                    m.Role == AuthorRole.Assistant);
-                if (ShouldTrackAssistantResponseMetadata(chatResponse))
+                if (ChatConversationModes.IsSimple(SelectedChatMode))
                 {
-                    _messageEvidence[nextAssistantIndex] = chatResponse;
+                    AIResponse = await QuerySimpleChatAsync(linkedTokenSource.Token);
+                }
+                else
+                {
+                    chatResponse = await BrainChatClient.ChatAsync(
+                        query: Status,
+                        mode: SelectedChatMode,
+                        tenantId: TenantContext.CurrentTenantId,
+                        conversationId: ActiveConversationId?.ToString(),
+                        conversationHistory: BuildConversationHistoryForGateway(Status),
+                        cancellationToken: linkedTokenSource.Token);
+
+                    AIResponse = chatResponse.Answer;
+
+                    var nextAssistantIndex = _chatHistory.Count(m =>
+                        m.Role == AuthorRole.Assistant);
+                    if (ShouldTrackAssistantResponseMetadata(chatResponse))
+                    {
+                        _messageEvidence[nextAssistantIndex] = chatResponse;
+                    }
                 }
             }
             catch (OperationCanceledException) when (manualStopTokenSource.IsCancellationRequested)
@@ -1048,6 +1056,16 @@ namespace AspireApp.Web.Components.Pages
 
             await ScrollChatToBottomAsync();
             await FocusQuestionInput();
+        }
+
+        private async Task<string> QuerySimpleChatAsync(CancellationToken cancellationToken)
+        {
+            var chatCompletionService = GetOrCreateKernel().GetRequiredService<IChatCompletionService>();
+            var response = await chatCompletionService.GetChatMessageContentAsync(
+                _chatHistory,
+                cancellationToken: cancellationToken);
+
+            return response.Content ?? string.Empty;
         }
 
         private void StopAIResponse()

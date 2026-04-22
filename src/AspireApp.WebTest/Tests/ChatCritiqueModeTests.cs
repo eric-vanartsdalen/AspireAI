@@ -38,31 +38,52 @@ using TenantManagementService = web::AspireApp.Web.Services.TenantManagementServ
 namespace AspireApp.WebTest.Tests;
 
 /// <summary>
-/// Validates Critique-mode UI/product behavior:
-/// - Critique toggle is enabled
+/// Validates chat-mode UI/product behavior:
+/// - Simple is the default for new chats
+/// - Enhanced is the user-facing rename for Regular
+/// - Saved conversations preserve selected mode, including legacy Regular values
 /// - Selected mode propagates to BrainChatClient.ChatAsync
-/// - Reasoning steps render correctly
-/// - Regular mode continues working
+/// - Critique reasoning steps render correctly
 /// </summary>
 public sealed class ChatCritiqueModeTests
 {
     [Fact]
-    public async Task CritiqueToggle_IsEnabled_AfterProductLayerImplementation()
+    public void ModeSelector_DefaultsToSimple_ForNewChat()
     {
-        // Arrange: Set up minimal test context
         var chatClient = new RecordingBrainChatClient();
         using var testContext = CreateTestContext(brainChatClient: chatClient);
 
-        // Act: Render the chat component
         var cut = testContext.Render<Chat>();
 
-        // Assert: Critique radio button should be enabled (not disabled)
         cut.WaitForAssertion(() =>
         {
+            var simpleRadio = cut.Find("[data-testid='chat-mode-simple']");
             var critiqueRadio = cut.Find("[data-testid='chat-mode-critique']");
-            Assert.NotNull(critiqueRadio);
+
+            Assert.NotNull(simpleRadio.GetAttribute("checked"));
             Assert.False(critiqueRadio.HasAttribute("disabled"),
                 "Critique mode radio should be enabled after product layer implementation.");
+        });
+    }
+
+    [Fact]
+    public void ModeSelector_UsesEnhancedLabel_ForKnowledgeMode()
+    {
+        var chatClient = new RecordingBrainChatClient();
+        using var testContext = CreateTestContext(brainChatClient: chatClient);
+
+        var cut = testContext.Render<Chat>();
+
+        cut.WaitForAssertion(() =>
+        {
+            var modeLabels = cut.FindAll(".chat-mode-option label")
+                .Select(label => label.TextContent.Trim())
+                .ToList();
+
+            Assert.Contains("Simple", modeLabels);
+            Assert.Contains("Enhanced", modeLabels);
+            Assert.Contains("Critique", modeLabels);
+            Assert.DoesNotContain("Regular", modeLabels);
         });
     }
 
@@ -76,7 +97,7 @@ public sealed class ChatCritiqueModeTests
         var cut = testContext.Render<Chat>();
 
         // Wait for initial render
-        cut.WaitForAssertion(() => Assert.Single(cut.FindAll("[data-testid='chat-mode-regular']")));
+        cut.WaitForAssertion(() => Assert.Single(cut.FindAll("[data-testid='chat-mode-simple']")));
 
         // Act: Click the Critique radio button
         await cut.InvokeAsync(() =>
@@ -168,37 +189,66 @@ public sealed class ChatCritiqueModeTests
     }
 
     [Fact]
-    public async Task SendingMessage_InRegularMode_PassesRegularModeToClient()
+    public async Task SendingMessage_InSimpleMode_PassesSimpleModeToClient()
     {
-        // Arrange
+        var conversationService = new StubChatConversationService();
         var chatClient = new RecordingBrainChatClient();
-        using var testContext = CreateTestContext(brainChatClient: chatClient);
+        using var testContext = CreateTestContext(conversationService, chatClient);
 
         var cut = testContext.Render<Chat>();
 
-        // Ensure Regular mode is selected (default)
+        // Ensure Simple mode is selected (default)
         cut.WaitForAssertion(() =>
         {
-            var regularRadio = cut.Find("[data-testid='chat-mode-regular']");
-            Assert.NotNull(regularRadio.GetAttribute("checked"));
+            var simpleRadio = cut.Find("[data-testid='chat-mode-simple']");
+            Assert.NotNull(simpleRadio.GetAttribute("checked"));
         });
 
         // Act: Send a message
         await cut.InvokeAsync(async () =>
         {
             var input = cut.Find("[data-testid='chat-message-input']");
-            input.Input("Test regular query");
+            input.Input("Test simple query");
             
             var button = cut.Find("[data-testid='chat-send']");
             await button.ClickAsync(new Microsoft.AspNetCore.Components.Web.MouseEventArgs());
         });
 
-        // Assert: Client should have received mode="regular"
+        cut.WaitForAssertion(() =>
+        {
+            Assert.False(chatClient.LastRequest.HasValue);
+            Assert.Equal(ChatConversationModes.Simple, conversationService.LastStartedChatMode);
+        }, TimeSpan.FromSeconds(5));
+    }
+
+    [Fact]
+    public async Task SendingMessage_InEnhancedMode_PassesEnhancedAliasToClient()
+    {
+        var chatClient = new RecordingBrainChatClient();
+        using var testContext = CreateTestContext(brainChatClient: chatClient);
+
+        var cut = testContext.Render<Chat>();
+
+        await cut.InvokeAsync(() =>
+        {
+            var enhancedRadio = cut.Find("[data-testid='chat-mode-regular']");
+            enhancedRadio.Change(ChatConversationModes.Enhanced);
+        });
+
+        await cut.InvokeAsync(async () =>
+        {
+            var input = cut.Find("[data-testid='chat-message-input']");
+            input.Input("Test enhanced query");
+
+            var button = cut.Find("[data-testid='chat-send']");
+            await button.ClickAsync(new Microsoft.AspNetCore.Components.Web.MouseEventArgs());
+        });
+
         cut.WaitForAssertion(() =>
         {
             Assert.NotNull(chatClient.LastRequest);
-            Assert.Equal(ChatConversationModes.Regular, chatClient.LastRequest.Value.Mode);
-            Assert.Equal("Test regular query", chatClient.LastRequest.Value.Query);
+            Assert.Equal(ChatConversationModes.Enhanced, chatClient.LastRequest.Value.Mode);
+            Assert.Equal("Test enhanced query", chatClient.LastRequest.Value.Query);
         }, TimeSpan.FromSeconds(5));
     }
 
@@ -270,13 +320,13 @@ public sealed class ChatCritiqueModeTests
     }
 
     [Fact]
-    public async Task RegularResponse_WithoutReasoningSteps_DoesNotRenderReasoningPanel()
+    public async Task EnhancedResponse_WithoutReasoningSteps_DoesNotRenderReasoningPanel()
     {
         // Arrange
         var chatClient = new RecordingBrainChatClient
         {
             ResponseToReturn = new BrainChatResponse(
-                Answer: "Quick answer from regular mode.",
+                Answer: "Quick answer from enhanced mode.",
                 Confidence: 0.85,
                 Evidence: new[]
                 {
@@ -289,9 +339,12 @@ public sealed class ChatCritiqueModeTests
 
         var cut = testContext.Render<Chat>();
 
-        // Act: Send a message in Regular mode
+        // Act: Send a message in Enhanced mode
         await cut.InvokeAsync(async () =>
         {
+            var enhancedRadio = cut.Find("[data-testid='chat-mode-regular']");
+            enhancedRadio.Change(ChatConversationModes.Enhanced);
+
             var input = cut.Find("[data-testid='chat-message-input']");
             input.Input("Quick question");
             
@@ -377,11 +430,25 @@ public sealed class ChatCritiqueModeTests
 
         var cut = testContext.Render<Chat>();
 
-        // Assert: Initially shows Regular mode hint
+        // Assert: Initially shows Simple mode hint
         cut.WaitForAssertion(() =>
         {
             var modeHint = cut.Find(".chat-mode-hint");
-            Assert.Contains("Fast, knowledge-enhanced responses", modeHint.TextContent);
+            Assert.Contains("Direct model chat with your selected LLM", modeHint.TextContent);
+        });
+
+        // Act: Switch to Enhanced mode
+        await cut.InvokeAsync(() =>
+        {
+            var enhancedRadio = cut.Find("[data-testid='chat-mode-regular']");
+            enhancedRadio.Change(ChatConversationModes.Enhanced);
+        });
+
+        // Assert: Hint text should change for Enhanced mode
+        cut.WaitForAssertion(() =>
+        {
+            var modeHint = cut.Find(".chat-mode-hint");
+            Assert.Contains("Knowledge-enhanced responses with GraphRAG context", modeHint.TextContent);
         });
 
         // Act: Switch to Critique mode
@@ -400,27 +467,29 @@ public sealed class ChatCritiqueModeTests
     }
 
     [Fact]
-    public async Task ExistingConversation_LoadsWithStoredChatMode()
+    public async Task ExistingConversation_LoadsLegacyRegularValue_WithEnhancedOptionSelected()
     {
-        // Arrange
-        var conversationService = new StubChatConversationServiceWithCritiqueConversation();
+        var conversationService = new StubChatConversationServiceWithLegacyRegularConversation();
         var chatClient = new RecordingBrainChatClient();
         using var testContext = CreateTestContext(conversationService, chatClient);
 
         var cut = testContext.Render<Chat>();
 
-        // Act: Select the critique-mode conversation
         await cut.InvokeAsync(() =>
         {
             var conversationButton = cut.Find("[data-testid='chat-conversation-select']");
             conversationButton.Click();
         });
 
-        // Assert: Critique mode should be selected
         cut.WaitForAssertion(() =>
         {
+            var enhancedRadio = cut.Find("[data-testid='chat-mode-regular']");
             var critiqueRadio = cut.Find("[data-testid='chat-mode-critique']");
-            Assert.NotNull(critiqueRadio.GetAttribute("checked"));
+            var modeHint = cut.Find(".chat-mode-hint");
+
+            Assert.NotNull(enhancedRadio.GetAttribute("checked"));
+            Assert.Null(critiqueRadio.GetAttribute("checked"));
+            Assert.Contains("Knowledge-enhanced responses with GraphRAG context", modeHint.TextContent);
         });
     }
 
@@ -455,7 +524,7 @@ public sealed class ChatCritiqueModeTests
     }
 
     [Fact]
-    public async Task SelectingSavedConversation_UpdatesModeAcrossCritiqueAndRegularThreads()
+    public async Task SelectingSavedConversation_UpdatesModeAcrossSimpleEnhancedAndCritiqueThreads()
     {
         var conversationService = new StubChatConversationServiceWithMixedModes();
         var chatClient = new RecordingBrainChatClient();
@@ -477,24 +546,79 @@ public sealed class ChatCritiqueModeTests
             return null!;
         }
 
+        await cut.InvokeAsync(() => FindConversationButton(cut, "Simple mode conversation").Click());
+
+        cut.WaitForAssertion(() =>
+        {
+            var simpleRadio = cut.Find("[data-testid='chat-mode-simple']");
+            var enhancedRadio = cut.Find("[data-testid='chat-mode-regular']");
+            var critiqueRadio = cut.Find("[data-testid='chat-mode-critique']");
+            Assert.NotNull(simpleRadio.GetAttribute("checked"));
+            Assert.Null(enhancedRadio.GetAttribute("checked"));
+            Assert.Null(critiqueRadio.GetAttribute("checked"));
+        });
+
+        await cut.InvokeAsync(() => FindConversationButton(cut, "Enhanced mode conversation").Click());
+
+        cut.WaitForAssertion(() =>
+        {
+            var simpleRadio = cut.Find("[data-testid='chat-mode-simple']");
+            var enhancedRadio = cut.Find("[data-testid='chat-mode-regular']");
+            var critiqueRadio = cut.Find("[data-testid='chat-mode-critique']");
+            Assert.Null(simpleRadio.GetAttribute("checked"));
+            Assert.NotNull(enhancedRadio.GetAttribute("checked"));
+            Assert.Null(critiqueRadio.GetAttribute("checked"));
+        });
+
         await cut.InvokeAsync(() => FindConversationButton(cut, "Critique mode conversation").Click());
 
         cut.WaitForAssertion(() =>
         {
             var critiqueRadio = cut.Find("[data-testid='chat-mode-critique']");
-            var regularRadio = cut.Find("[data-testid='chat-mode-regular']");
+            var enhancedRadio = cut.Find("[data-testid='chat-mode-regular']");
+            var simpleRadio = cut.Find("[data-testid='chat-mode-simple']");
             Assert.NotNull(critiqueRadio.GetAttribute("checked"));
-            Assert.Null(regularRadio.GetAttribute("checked"));
+            Assert.Null(enhancedRadio.GetAttribute("checked"));
+            Assert.Null(simpleRadio.GetAttribute("checked"));
         });
+    }
 
-        await cut.InvokeAsync(() => FindConversationButton(cut, "Regular mode conversation").Click());
+    [Fact]
+    public async Task ChangingSavedConversationMode_PersistsAcrossReload()
+    {
+        var conversationService = new StubChatConversationService();
+        var chatClient = new RecordingBrainChatClient();
+        using var testContext = CreateTestContext(conversationService, chatClient);
+
+        var cut = testContext.Render<Chat>();
+
+        static AngleSharp.Dom.IElement FindConversationButton(Bunit.IRenderedComponent<Chat> component, string title)
+        {
+            foreach (var button in component.FindAll("[data-testid='chat-conversation-select']"))
+            {
+                if (button.TextContent.Contains(title, StringComparison.Ordinal))
+                {
+                    return button;
+                }
+            }
+
+            Assert.Fail($"Could not find a saved conversation button for '{title}'.");
+            return null!;
+        }
+
+        await cut.InvokeAsync(() => FindConversationButton(cut, "Existing conversation title").Click());
+        await cut.InvokeAsync(() =>
+        {
+            var critiqueRadio = cut.Find("[data-testid='chat-mode-critique']");
+            critiqueRadio.Change(ChatConversationModes.Critique);
+        });
+        await cut.InvokeAsync(() => cut.Find("[data-testid='chat-new-conversation']").Click());
+        await cut.InvokeAsync(() => FindConversationButton(cut, "Existing conversation title").Click());
 
         cut.WaitForAssertion(() =>
         {
             var critiqueRadio = cut.Find("[data-testid='chat-mode-critique']");
-            var regularRadio = cut.Find("[data-testid='chat-mode-regular']");
-            Assert.Null(critiqueRadio.GetAttribute("checked"));
-            Assert.NotNull(regularRadio.GetAttribute("checked"));
+            Assert.NotNull(critiqueRadio.GetAttribute("checked"));
         });
     }
 
@@ -553,6 +677,9 @@ public sealed class ChatCritiqueModeTests
 
         await cut.InvokeAsync(async () =>
         {
+            var enhancedRadio = cut.Find("[data-testid='chat-mode-regular']");
+            enhancedRadio.Change(ChatConversationModes.Enhanced);
+
             var input = cut.Find("[data-testid='chat-message-input']");
             input.Input("What changed after the upload?");
 
@@ -726,6 +853,23 @@ public sealed class ChatCritiqueModeTests
         private ChatConversationSummary? _activeSummary;
         private int _messageCount;
 
+        public string? LastStartedChatMode { get; private set; }
+        public string? LastUpdatedChatMode { get; private set; }
+
+        private static ChatConversationSummary BuildExistingSummary(string chatMode = ChatConversationModes.Enhanced)
+        {
+            return new ChatConversationSummary(
+                ConversationId,
+                "Existing conversation title",
+                "User preview",
+                "tenant-alpha",
+                chatMode,
+                1,
+                false,
+                Timestamp,
+                Timestamp);
+        }
+
         public Task<IReadOnlyList<ChatConversationSummary>> ListConversationsAsync(
             string ownerUserId,
             CancellationToken cancellationToken = default)
@@ -736,19 +880,7 @@ public sealed class ChatCritiqueModeTests
                 return Task.FromResult<IReadOnlyList<ChatConversationSummary>>([_activeSummary]);
             }
 
-            return Task.FromResult<IReadOnlyList<ChatConversationSummary>>(
-            [
-                new ChatConversationSummary(
-                    ConversationId,
-                    "Existing conversation title",
-                    "User preview",
-                    "tenant-alpha",
-                    ChatConversationModes.Regular,
-                    1,
-                    false,
-                    Timestamp,
-                    Timestamp)
-            ]);
+            return Task.FromResult<IReadOnlyList<ChatConversationSummary>>([BuildExistingSummary()]);
         }
 
         public Task<ChatConversationDetail?> GetConversationAsync(
@@ -784,7 +916,7 @@ public sealed class ChatCritiqueModeTests
                     conversationId,
                     "Existing conversation title",
                     "tenant-alpha",
-                    ChatConversationModes.Regular,
+                    BuildExistingSummary().ChatMode,
                     false,
                     Timestamp,
                     Timestamp,
@@ -802,18 +934,19 @@ public sealed class ChatCritiqueModeTests
             string ownerUserId,
             string? tenantId,
             string userMessage,
-            string chatMode = "regular",
+            string chatMode = ChatConversationModes.Simple,
             CancellationToken cancellationToken = default)
         {
             cancellationToken.ThrowIfCancellationRequested();
 
+            LastStartedChatMode = ChatConversationModes.Normalize(chatMode);
             _messageCount = 1;
             _activeSummary = new ChatConversationSummary(
                 ConversationId,
                 "New conversation",
                 userMessage,
                 tenantId,
-                ChatConversationModes.Normalize(chatMode),
+                LastStartedChatMode,
                 _messageCount,
                 false,
                 Timestamp,
@@ -863,7 +996,21 @@ public sealed class ChatCritiqueModeTests
             string chatMode,
             CancellationToken cancellationToken = default)
         {
-            throw new NotSupportedException();
+            cancellationToken.ThrowIfCancellationRequested();
+
+            if (conversationId != ConversationId)
+            {
+                return Task.FromResult<ChatConversationSummary?>(null);
+            }
+
+            _activeSummary ??= BuildExistingSummary();
+            LastUpdatedChatMode = ChatConversationModes.Normalize(chatMode);
+            _activeSummary = _activeSummary with
+            {
+                ChatMode = LastUpdatedChatMode
+            };
+
+            return Task.FromResult<ChatConversationSummary?>(_activeSummary);
         }
 
         public Task<bool> DeleteConversationAsync(
@@ -875,7 +1022,7 @@ public sealed class ChatCritiqueModeTests
         }
     }
 
-    private sealed class StubChatConversationServiceWithCritiqueConversation : IChatConversationService
+    private sealed class StubChatConversationServiceWithLegacyRegularConversation : IChatConversationService
     {
         private static readonly Guid ConversationId = Guid.Parse("33333333-3333-3333-3333-333333333333");
         private static readonly DateTime Timestamp = new(2026, 4, 22, 12, 0, 0, DateTimeKind.Utc);
@@ -895,10 +1042,10 @@ public sealed class ChatCritiqueModeTests
             [
                 new ChatConversationSummary(
                     ConversationId,
-                    "Critique mode conversation",
+                    "Legacy regular mode conversation",
                     "User preview",
                     "tenant-alpha",
-                    ChatConversationModes.Critique,
+                    ChatConversationModes.Regular,
                     1,
                     false,
                     Timestamp,
@@ -914,9 +1061,9 @@ public sealed class ChatCritiqueModeTests
             return Task.FromResult<ChatConversationDetail?>(
                 new ChatConversationDetail(
                     conversationId,
-                    "Critique mode conversation",
+                    "Legacy regular mode conversation",
                     "tenant-alpha",
-                    ChatConversationModes.Critique,
+                    ChatConversationModes.Regular,
                     false,
                     Timestamp,
                     Timestamp,
@@ -924,7 +1071,7 @@ public sealed class ChatCritiqueModeTests
                         new ChatConversationMessageRecord(
                             Guid.Parse("44444444-4444-4444-4444-444444444444"),
                             ChatConversationRoles.User,
-                            "Original critique prompt",
+                            "Original regular prompt",
                             1,
                             Timestamp)
                     ]));
@@ -934,7 +1081,7 @@ public sealed class ChatCritiqueModeTests
             string ownerUserId,
             string? tenantId,
             string userMessage,
-            string chatMode = "regular",
+            string chatMode = ChatConversationModes.Regular,
             CancellationToken cancellationToken = default)
         {
             cancellationToken.ThrowIfCancellationRequested();
@@ -942,7 +1089,7 @@ public sealed class ChatCritiqueModeTests
             _messageCount = 1;
             _activeSummary = new ChatConversationSummary(
                 ConversationId,
-                "Critique mode conversation",
+                "Legacy regular mode conversation",
                 userMessage,
                 tenantId,
                 ChatConversationModes.Normalize(chatMode),
@@ -1239,8 +1386,9 @@ public sealed class ChatCritiqueModeTests
 
     private sealed class StubChatConversationServiceWithMixedModes : IChatConversationService
     {
+        private static readonly Guid SimpleConversationId = Guid.Parse("44444444-4444-4444-4444-444444444444");
         private static readonly Guid CritiqueConversationId = Guid.Parse("55555555-5555-5555-5555-555555555555");
-        private static readonly Guid RegularConversationId = Guid.Parse("66666666-6666-6666-6666-666666666666");
+        private static readonly Guid EnhancedConversationId = Guid.Parse("66666666-6666-6666-6666-666666666666");
         private static readonly DateTime Timestamp = new(2026, 4, 22, 12, 0, 0, DateTimeKind.Utc);
 
         public Task<IReadOnlyList<ChatConversationSummary>> ListConversationsAsync(
@@ -1252,6 +1400,16 @@ public sealed class ChatCritiqueModeTests
             return Task.FromResult<IReadOnlyList<ChatConversationSummary>>(
             [
                 new ChatConversationSummary(
+                    SimpleConversationId,
+                    "Simple mode conversation",
+                    "Simple preview",
+                    "tenant-alpha",
+                    ChatConversationModes.Simple,
+                    2,
+                    false,
+                    Timestamp.AddMinutes(2),
+                    Timestamp.AddMinutes(2)),
+                new ChatConversationSummary(
                     CritiqueConversationId,
                     "Critique mode conversation",
                     "Critique preview",
@@ -1262,11 +1420,11 @@ public sealed class ChatCritiqueModeTests
                     Timestamp.AddMinutes(1),
                     Timestamp.AddMinutes(1)),
                 new ChatConversationSummary(
-                    RegularConversationId,
-                    "Regular mode conversation",
-                    "Regular preview",
+                    EnhancedConversationId,
+                    "Enhanced mode conversation",
+                    "Enhanced preview",
                     "tenant-alpha",
-                    ChatConversationModes.Regular,
+                    ChatConversationModes.Enhanced,
                     2,
                     false,
                     Timestamp,
@@ -1284,6 +1442,22 @@ public sealed class ChatCritiqueModeTests
             return Task.FromResult<ChatConversationDetail?>(
                 conversationId switch
                 {
+                    _ when conversationId == SimpleConversationId => new ChatConversationDetail(
+                        SimpleConversationId,
+                        "Simple mode conversation",
+                        "tenant-alpha",
+                        ChatConversationModes.Simple,
+                        false,
+                        Timestamp.AddMinutes(2),
+                        Timestamp.AddMinutes(2),
+                        [
+                            new ChatConversationMessageRecord(
+                                Guid.Parse("99999999-9999-9999-9999-999999999998"),
+                                ChatConversationRoles.User,
+                                "Original simple prompt",
+                                1,
+                                Timestamp.AddMinutes(2))
+                        ]),
                     _ when conversationId == CritiqueConversationId => new ChatConversationDetail(
                         CritiqueConversationId,
                         "Critique mode conversation",
@@ -1300,11 +1474,11 @@ public sealed class ChatCritiqueModeTests
                                 1,
                                 Timestamp.AddMinutes(1))
                         ]),
-                    _ when conversationId == RegularConversationId => new ChatConversationDetail(
-                        RegularConversationId,
-                        "Regular mode conversation",
+                    _ when conversationId == EnhancedConversationId => new ChatConversationDetail(
+                        EnhancedConversationId,
+                        "Enhanced mode conversation",
                         "tenant-alpha",
-                        ChatConversationModes.Regular,
+                        ChatConversationModes.Enhanced,
                         false,
                         Timestamp,
                         Timestamp,
@@ -1312,7 +1486,7 @@ public sealed class ChatCritiqueModeTests
                             new ChatConversationMessageRecord(
                                 Guid.Parse("88888888-8888-8888-8888-888888888888"),
                                 ChatConversationRoles.User,
-                                "Original regular prompt",
+                                "Original enhanced prompt",
                                 1,
                                 Timestamp)
                         ]),

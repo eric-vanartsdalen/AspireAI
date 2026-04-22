@@ -409,6 +409,29 @@ Build verified successfully. Tests were running but took longer than expected du
 
 <!-- Append new learnings below. Each entry is something lasting about the project. -->
 
+### 2026-04-22 — Chat now treats Simple as the default local-LLM path and keeps Enhanced on the legacy `regular` wire value
+
+**Status:** Implemented and validated for the three-mode chat slice.
+
+**Key insight:**
+- Eric asked for three chat modes with production-code-only changes: `Simple` should be the default for new chats, `Enhanced` should replace the old Regular product wording, and `Critique` should keep the deeper agentic flow.
+- The safe compatibility seam is `ChatConversationModes`: keep `Enhanced` mapped to the legacy `"regular"` storage/gateway value, normalize both `"regular"` and `"enhanced"` on load, and persist a real `"simple"` value only for the direct local-LLM path.
+- `src\AspireApp.Web\Components\Pages\Chat.razor.cs` should branch execution by mode: `Simple` goes straight to Semantic Kernel/Ollama with the in-memory `ChatHistory`, while non-simple modes continue through `BrainChatClient` so GraphRAG and critique behavior stay unchanged.
+- Default mode must be aligned in three places, not just the UI: Blazor draft state (`Chat.razor.cs`), conversation-service defaults (`ChatConversationService.cs`), and operational-store defaults (`ChatConversationEntities.cs` plus `ChatConversationStoreBootstrapper.cs`).
+
+**Validation:**
+- `dotnet build AspireApp.sln --no-restore --nologo --verbosity minimal /m:1`
+- `dotnet test src\AspireApp.WebTest\AspireApp.WebTest.csproj --no-build --filter "FullyQualifiedName~ChatConversationServiceTests|FullyQualifiedName~BrainGatewayPhase2Tests|FullyQualifiedName~BrainContractRoundTripTests" --logger "console;verbosity=minimal" /m:1`
+- Legacy `ChatCritiqueModeTests` still contain old two-mode/default-Regular assertions, so that suite now fails until Buster updates it for the new Simple-first UX.
+
+**Key paths:**
+- `src\AspireApp.Web\Components\Pages\Chat.razor`
+- `src\AspireApp.Web\Components\Pages\Chat.razor.cs`
+- `src\AspireApp.Web\Services\ChatConversationService.cs`
+- `src\AspireApp.Web\Services\ChatConversationStoreBootstrapper.cs`
+- `src\AspireApp.Web\Data\ChatConversationEntities.cs`
+- `src\AspireApp.ApiService\Contracts\BrainContractModels.cs`
+
 ### 2026-04-22 — BRAIN chat/query handoff has no document-scoping, and Python retrieval uses history instead
 
 **Status:** Investigated; no local .NET product fix applied.

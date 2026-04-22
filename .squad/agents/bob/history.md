@@ -1134,3 +1134,26 @@ YouTube channels return child_urls list (video URLs). Processing router creates 
 - Jeff not directly involved (UI polish deferred to Phase 3)
 
 **Next Phase:** Monitor YouTube ingestion flows; Phase 3 UI signal for queued-but-not-yet-processed videos
+
+### 2026-04-22 — Chat Mode Contract Default Must Follow Product Default
+
+**Context:** Buster rejected the three-mode artifact because `BrainChatRequest.Mode` in `src\AspireApp.ApiService\Contracts\BrainContractModels.cs` still defaulted to the legacy non-Simple path. Product behavior had already moved to Simple-by-default for new chats, so the shared API contract had become the last inconsistent seam.
+
+**Decision:** Set `BrainChatRequest.Mode` default to `ChatMode.Simple`. Keep `Enhanced` as the GraphRAG/legacy Regular alias and leave `Critique` behavior unchanged. Do not compensate in tests or callers for a bad default; the contract itself must encode the product default.
+
+**Why This Matters:**
+- Shared request defaults are behavior, not documentation. If the contract default drifts, new callers silently route to the wrong backend path.
+- Three-mode migrations must align four seams: UI draft state, persisted conversation defaults, transport contract defaults, and legacy alias normalization.
+- The cheapest regression net is one omitted-mode contract test plus the focused WebTest chat-mode matrix.
+
+**Validation:**
+- Focused suite: `dotnet test src\AspireApp.WebTest\AspireApp.WebTest.csproj --filter "FullyQualifiedName~BrainContractRoundTripTests|FullyQualifiedName~BrainGatewayPhase2Tests|FullyQualifiedName~ChatConversationServiceTests|FullyQualifiedName~ChatCritiqueModeTests"`
+- Build: `dotnet build AspireApp.sln --no-restore`
+- Result: 58 focused tests passed; solution build passed. Pre-existing warnings remain in `BasicAspireAppHostTests.cs`.
+
+**Key Files:**
+- `src\AspireApp.ApiService\Contracts\BrainContractModels.cs`
+- `src\AspireApp.WebTest\Tests\BrainContractRoundTripTests.cs`
+- `src\AspireApp.WebTest\Tests\BrainGatewayPhase2Tests.cs`
+- `src\AspireApp.WebTest\Tests\ChatConversationServiceTests.cs`
+- `src\AspireApp.WebTest\Tests\ChatCritiqueModeTests.cs`

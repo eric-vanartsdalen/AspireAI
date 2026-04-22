@@ -36,14 +36,22 @@ public static class ChatConversationTitleSources
 
 public static class ChatConversationModes
 {
-    public const string Regular = "regular";
+    public const string Simple = "simple";
+    public const string Enhanced = "regular";
+    public const string Regular = Enhanced;
     public const string Critique = "critique";
 
-    public static string Normalize(string mode)
+    public static string Normalize(string? mode)
     {
-        if (string.Equals(mode, Regular, StringComparison.OrdinalIgnoreCase))
+        if (string.Equals(mode, Simple, StringComparison.OrdinalIgnoreCase))
         {
-            return Regular;
+            return Simple;
+        }
+
+        if (string.Equals(mode, Enhanced, StringComparison.OrdinalIgnoreCase) ||
+            string.Equals(mode, "enhanced", StringComparison.OrdinalIgnoreCase))
+        {
+            return Enhanced;
         }
 
         if (string.Equals(mode, Critique, StringComparison.OrdinalIgnoreCase))
@@ -51,7 +59,23 @@ public static class ChatConversationModes
             return Critique;
         }
 
-        return Regular;
+        return Simple;
+    }
+
+    public static bool IsSimple(string? mode)
+    {
+        return string.Equals(Normalize(mode), Simple, StringComparison.Ordinal);
+    }
+
+    public static string GetHint(string? mode)
+    {
+        return Normalize(mode) switch
+        {
+            Simple => "Direct model chat with your selected LLM",
+            Enhanced => "Knowledge-enhanced responses with GraphRAG context",
+            Critique => "Thorough, agent-verified answers",
+            _ => "Direct model chat with your selected LLM"
+        };
     }
 }
 
@@ -88,7 +112,7 @@ public interface IChatConversationService
 {
     Task<IReadOnlyList<ChatConversationSummary>> ListConversationsAsync(string ownerUserId, CancellationToken cancellationToken = default);
     Task<ChatConversationDetail?> GetConversationAsync(Guid conversationId, string ownerUserId, CancellationToken cancellationToken = default);
-    Task<ChatConversationSummary> StartConversationAsync(string ownerUserId, string? tenantId, string userMessage, string chatMode = ChatConversationModes.Regular, CancellationToken cancellationToken = default);
+    Task<ChatConversationSummary> StartConversationAsync(string ownerUserId, string? tenantId, string userMessage, string chatMode = ChatConversationModes.Simple, CancellationToken cancellationToken = default);
     Task<ChatConversationSummary?> AddMessageAsync(Guid conversationId, string ownerUserId, string role, string content, CancellationToken cancellationToken = default, BrainChatResponse? assistantResponse = null);
     Task<ChatConversationSummary?> UpdateChatModeAsync(Guid conversationId, string ownerUserId, string chatMode, CancellationToken cancellationToken = default);
     Task<ChatConversationSummary?> RenameConversationAsync(Guid conversationId, string ownerUserId, string title, CancellationToken cancellationToken = default);
@@ -163,7 +187,7 @@ public sealed class ChatConversationService(
         string ownerUserId,
         string? tenantId,
         string userMessage,
-        string chatMode = ChatConversationModes.Regular,
+        string chatMode = ChatConversationModes.Simple,
         CancellationToken cancellationToken = default)
     {
         var normalizedOwnerUserId = NormalizeOwnerUserId(ownerUserId);

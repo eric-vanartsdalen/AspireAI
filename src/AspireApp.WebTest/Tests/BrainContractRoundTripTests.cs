@@ -234,7 +234,35 @@ public sealed class BrainContractRoundTripTests
     }
 
     [Fact]
-    public void BrainChatRequest_RoundTrips_FromPythonStyleJson()
+    public void BrainChatRequest_RoundTrips_SimpleMode_FromPythonStyleJson()
+    {
+        const string pythonJson = """
+            {
+              "tenant_id": "tenant-a",
+              "correlation_id": "corr-chat",
+              "query": "What is Aspire?",
+              "mode": "simple",
+              "conversation_id": null,
+              "conversation_history": [],
+              "top_k": 5
+            }
+            """;
+
+        var contract = JsonSerializer.Deserialize<Contracts.BrainChatRequest>(pythonJson, JsonOptions);
+
+        Assert.NotNull(contract);
+        Assert.Equal("tenant-a", contract.TenantId);
+        Assert.Equal("What is Aspire?", contract.Query);
+        Assert.Equal(Contracts.ChatMode.Simple, contract.Mode);
+        Assert.Null(contract.ConversationId);
+        Assert.Empty(contract.ConversationHistory ?? []);
+        Assert.Equal(5, contract.TopK);
+
+        AssertJsonEquivalent(pythonJson, JsonSerializer.Serialize(contract, JsonOptions));
+    }
+
+    [Fact]
+    public void BrainChatRequest_RoundTrips_LegacyRegularMode_AsEnhancedEnum()
     {
         const string pythonJson = """
             {
@@ -251,14 +279,22 @@ public sealed class BrainContractRoundTripTests
         var contract = JsonSerializer.Deserialize<Contracts.BrainChatRequest>(pythonJson, JsonOptions);
 
         Assert.NotNull(contract);
-        Assert.Equal("tenant-a", contract.TenantId);
-        Assert.Equal("What is Aspire?", contract.Query);
-        Assert.Equal(Contracts.ChatMode.Regular, contract.Mode);
-        Assert.Null(contract.ConversationId);
-        Assert.Empty(contract.ConversationHistory ?? []);
-        Assert.Equal(5, contract.TopK);
-
+        Assert.Equal(Contracts.ChatMode.Enhanced, contract.Mode);
         AssertJsonEquivalent(pythonJson, JsonSerializer.Serialize(contract, JsonOptions));
+    }
+
+    [Fact]
+    public void BrainChatRequest_DefaultsToSimpleMode_WhenModeIsOmitted()
+    {
+        var request = new Contracts.BrainChatRequest(
+            TenantId: "tenant-a",
+            CorrelationId: "corr-chat-default",
+            Query: "What is Aspire?");
+
+        Assert.Equal(Contracts.ChatMode.Simple, request.Mode);
+
+        using var payload = JsonDocument.Parse(JsonSerializer.Serialize(request, JsonOptions));
+        Assert.Equal("simple", payload.RootElement.GetProperty("mode").GetString());
     }
 
     [Fact]
