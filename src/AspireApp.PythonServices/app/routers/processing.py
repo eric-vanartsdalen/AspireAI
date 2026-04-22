@@ -2,6 +2,7 @@ import asyncio
 import json
 import shutil
 import os
+import threading
 from pathlib import Path
 
 from fastapi import APIRouter, HTTPException, Depends, BackgroundTasks
@@ -20,6 +21,10 @@ from ..models.models import BatchProcessingStartResponse, DocumentCleanupRespons
 router = APIRouter(prefix="/processing", tags=["processing"])
 logger = logging.getLogger(__name__)
 
+_youtube_transcript_queue_thread_lock = threading.Lock()
+_youtube_transcript_queue_thread: threading.Thread | None = None
+_youtube_transcript_queue_stop_event = threading.Event()
+
 
 def get_database_service():
     return DatabaseService()
@@ -31,6 +36,87 @@ def get_neo4j_service():
 
 def get_lightrag_handoff_service():
     return LightRagHandoffService()
+
+
+def _ingestion_vector_population_enabled() -> bool:
+    return os.getenv("ENABLE_INGESTION_VECTOR_POPULATION", "false").strip().lower() in {
+        "1",
+        "true",
+        "yes",
+        "on",
+    }
+
+
+def _is_youtube_transcript_document(document) -> bool:
+    return (
+        getattr(document, "source_type", None) == "youtube_video"
+        and bool(getattr(document, "source_url", None))
+    )
+
+
+def _ensure_youtube_transcript_queue_drainer() -> None:
+    global _youtube_transcript_queue_thread
+
+    with _youtube_transcript_queue_thread_lock:
+        if _youtube_transcript_queue_thread is not None and _youtube_transcript_queue_thread.is_alive():
+            return
+
+        _youtube_transcript_queue_stop_event.clear()
+        _youtube_transcript_queue_thread = threading.Thread(
+            target=_youtube_transcript_queue_worker_loop,
+            name="youtube-transcript-queue",
+            daemon=True,
+        )
+        _youtube_transcript_queue_thread.start()
+
+
+def stop_youtube_transcript_queue_drainer() -> None:
+    _youtube_transcript_queue_stop_event.set()
+
+
+def _youtube_transcript_queue_worker_loop() -> None:
+    logger.info("YouTube transcript queue drainer started")
+
+    while not _youtube_transcript_queue_stop_event.is_set():
+        try:
+            db = DatabaseService()
+            wait_seconds = db.get_youtube_transcript_queue_wait_seconds()
+
+            if wait_seconds is None:
+                logger.info("YouTube transcript queue drainer is idle")
+                return
+
+            if wait_seconds > 0:
+                _youtube_transcript_queue_stop_event.wait(timeout=wait_seconds)
+                continue
+
+            queued_attempt = db.claim_next_youtube_transcript()
+            if queued_attempt is None:
+                _youtube_transcript_queue_stop_event.wait(timeout=5.0)
+                continue
+
+            file_id = queued_attempt["file_id"]
+            document = db.get_document_by_id(file_id)
+            if document is None:
+                db.mark_youtube_transcript_completed(file_id)
+                continue
+
+            if document.processing_status == "processing":
+                _youtube_transcript_queue_stop_event.wait(timeout=1.0)
+                continue
+
+            db.update_file_status(file_id, "processing")
+            _process_document_task_sync(
+                file_id,
+                db,
+                get_docling_service(),
+                Neo4jService(),
+                LightRagHandoffService(),
+                mark_processing_started=False,
+            )
+        except Exception as exc:
+            logger.error("YouTube transcript queue drainer error: %s", exc, exc_info=True)
+            _youtube_transcript_queue_stop_event.wait(timeout=5.0)
 
 
 async def process_document_task(
@@ -66,11 +152,107 @@ def _normalize_processing_status(status: str | None) -> str:
     return status_map.get(normalized, normalized)
 
 
+def _start_lightrag_readiness_reconciler(
+    document_id: int,
+    staged_input_path: str,
+    db: DatabaseService,
+    lightrag_handoff: LightRagHandoffService,
+    docling_document_path: str | None,
+    remaining_attempts: int = 1,
+) -> None:
+    reconciliation_thread = threading.Thread(
+        target=_continue_lightrag_readiness_sync,
+        kwargs={
+            "document_id": document_id,
+            "staged_input_path": staged_input_path,
+            "db": db,
+            "lightrag_handoff": lightrag_handoff,
+            "docling_document_path": docling_document_path,
+            "remaining_attempts": remaining_attempts,
+        },
+        name=f"lightrag-readiness-{document_id}",
+        daemon=True,
+    )
+    reconciliation_thread.start()
+
+
+def _continue_lightrag_readiness_sync(
+    *,
+    document_id: int,
+    staged_input_path: str,
+    db: DatabaseService,
+    lightrag_handoff: LightRagHandoffService,
+    docling_document_path: str | None,
+    remaining_attempts: int,
+) -> None:
+    try:
+        readiness_result = lightrag_handoff.wait_for_document_readiness(
+            staged_input_path,
+            status_callback=lambda status, error: db.update_file_indexing_status(document_id, status, error),
+        )
+    except Exception as exc:
+        logger.warning(
+            "Deferred LightRAG readiness reconciliation failed for document %s: %s",
+            document_id,
+            exc,
+        )
+        db.update_file_indexing_status(document_id, "timed_out", str(exc))
+        _update_lightrag_metadata(
+            docling_document_path,
+            {
+                "indexing_status": "timed_out",
+                "indexing_error": str(exc),
+                "readiness_reconciliation": "failed",
+            },
+        )
+        return
+
+    if readiness_result.get("readiness_deferred") and remaining_attempts > 0:
+        last_known_status = readiness_result.get("last_known_indexing_status") or "indexing"
+        db.update_file_indexing_status(document_id, last_known_status)
+        _update_lightrag_metadata(
+            docling_document_path,
+            {
+                "indexing_status": last_known_status,
+                "indexing_error": None,
+                "readiness_reconciliation": "scheduled",
+                "readiness_timeout_message": readiness_result.get("readiness_timeout_message"),
+            },
+        )
+        _start_lightrag_readiness_reconciler(
+            document_id=document_id,
+            staged_input_path=staged_input_path,
+            db=db,
+            lightrag_handoff=lightrag_handoff,
+            docling_document_path=docling_document_path,
+            remaining_attempts=remaining_attempts - 1,
+        )
+        return
+
+    final_status = readiness_result.get("indexing_status", "timed_out")
+    final_error = readiness_result.get("indexing_error")
+    if final_status == "timed_out":
+        final_error = readiness_result.get("readiness_timeout_message") or final_error
+        db.update_file_indexing_status(document_id, "timed_out", final_error)
+
+    _update_lightrag_metadata(
+        docling_document_path,
+        {
+            "indexing_status": final_status,
+            "indexing_error": final_error,
+            "lightrag_document_id": readiness_result.get("lightrag_document_id"),
+            "document_status": readiness_result.get("document_status"),
+            "readiness_reconciliation": "completed",
+        },
+    )
+
+
 def _collect_child_document_ids(document, content, db: DatabaseService, fetcher) -> list[int]:
     child_document_ids: list[int] = []
 
     for child_url in content.child_urls or []:
         try:
+            child_source_type = _classify_url_source_type(fetcher, child_url)
             existing = db.find_duplicate_by_url(child_url, document.tenant_id)
             if existing:
                 existing_status = _normalize_processing_status(existing.get("status"))
@@ -91,53 +273,33 @@ def _collect_child_document_ids(document, content, db: DatabaseService, fetcher)
                         existing_status,
                     )
                     child_document_ids.append(existing_id)
+                    if child_source_type == "youtube_video":
+                        db.enqueue_youtube_transcript(
+                            file_id=existing_id,
+                            source_url=child_url,
+                            tenant_id=document.tenant_id,
+                        )
                     continue
 
             child_document_id = db.add_url_datasource(
                 source_name=_build_source_name_from_url(child_url),
                 source_url=child_url,
-                source_type=_classify_url_source_type(fetcher, child_url),
+                source_type=child_source_type,
                 status="uploaded",
                 tenant_id=document.tenant_id,
             )
             child_document_ids.append(child_document_id)
+            if child_source_type == "youtube_video":
+                db.enqueue_youtube_transcript(
+                    file_id=child_document_id,
+                    source_url=child_url,
+                    tenant_id=document.tenant_id,
+                )
             logger.info("Queued child URL for processing: %s (document %s)", child_url, child_document_id)
         except Exception as e:
             logger.warning(f"Failed to queue child URL {child_url}: {e}")
 
     return child_document_ids
-
-
-def _process_child_documents(
-    *,
-    parent_document_id: int,
-    child_document_ids: list[int],
-    db: DatabaseService,
-    docling,
-    neo4j: Neo4jService,
-    lightrag_handoff: LightRagHandoffService | None = None,
-) -> None:
-    for child_document_id in child_document_ids:
-        try:
-            logger.info(
-                "Automatically starting child URL document %s from parent %s",
-                child_document_id,
-                parent_document_id,
-            )
-            _process_document_task_sync(
-                child_document_id,
-                db,
-                docling,
-                neo4j,
-                lightrag_handoff,
-            )
-        except Exception as exc:
-            logger.warning(
-                "Automatic processing failed for child URL document %s from parent %s: %s",
-                child_document_id,
-                parent_document_id,
-                exc,
-            )
 
 
 def _fetch_url_content_sync(
@@ -165,6 +327,8 @@ def _fetch_url_content_sync(
     if content.has_children:
         logger.info(f"URL {document.source_url} has {len(content.child_urls)} child URLs to ingest")
         child_document_ids = _collect_child_document_ids(document, content, db, fetcher)
+        if child_document_ids:
+            _ensure_youtube_transcript_queue_drainer()
     
     # Save fetched content to a text file for docling processing
     data_path = Path(os.getenv("ASPIRE_DATA_PATH", "/app/data"))
@@ -204,6 +368,8 @@ def _process_document_task_sync(
 ):
     """Background task to process a document"""
     child_document_ids: list[int] = []
+    document = None
+    is_youtube_transcript = False
     try:
         logger.info(f"Starting processing for document {document_id}")
 
@@ -211,6 +377,7 @@ def _process_document_task_sync(
         document = db.get_document_by_id(document_id)
         if not document:
             raise Exception("Document not found")
+        is_youtube_transcript = _is_youtube_transcript_document(document)
 
         if mark_processing_started:
             db.update_file_status(document_id, "processing")
@@ -237,9 +404,16 @@ def _process_document_task_sync(
             # Create document node
             doc_node_id = neo4j.create_document_node(canonical_document)
             
-            # Initialize embedding service for P2-C population
-            embedding_service = EmbeddingService()
-            embedding_available = embedding_service.is_available()
+            embedding_service = None
+            embedding_available = False
+            if _ingestion_vector_population_enabled():
+                embedding_service = EmbeddingService()
+                embedding_available = embedding_service.is_available()
+            else:
+                logger.info(
+                    "Skipping optional Neo4j vector population during ingestion for document %s",
+                    document_id,
+                )
             
             # Create page nodes and populate embeddings
             page_node_ids = neo4j.create_page_nodes(canonical_document.pages, doc_node_id, document.id)
@@ -332,12 +506,23 @@ def _process_document_task_sync(
         # All Ollama-dependent work is finished.  Hand off to LightRAG now so its
         # own Ollama calls (LLM entity extraction + embedding) don't compete with
         # the page/claim embedding batches above.
-        _attempt_lightrag_handoff(
+        resolved_lightrag_handoff = lightrag_handoff or LightRagHandoffService()
+        lightrag_reconciliation_request = _attempt_lightrag_handoff(
             document=document,
             processed_doc=processed_doc,
-            lightrag_handoff=lightrag_handoff or LightRagHandoffService(),
+            db=db,
+            lightrag_handoff=resolved_lightrag_handoff,
         )
         _persist_processing_metadata(processed_doc)
+        if lightrag_reconciliation_request is not None:
+            _start_lightrag_readiness_reconciler(
+                document_id=document.id,
+                staged_input_path=lightrag_reconciliation_request["staged_input_path"],
+                db=db,
+                lightrag_handoff=resolved_lightrag_handoff,
+                docling_document_path=getattr(processed_doc, "docling_document_path", None),
+                remaining_attempts=lightrag_reconciliation_request.get("remaining_attempts", 1),
+            )
 
         db.update_file_ingestion_metadata(
             file_id=document_id,
@@ -364,39 +549,55 @@ def _process_document_task_sync(
         
         # Update status to processed
         db.update_file_status(document_id, "processed")
+        if is_youtube_transcript:
+            db.mark_youtube_transcript_completed(document_id)
         
         logger.info(f"Completed processing for document {document_id} with {len(pages)} pages")
         
     except Exception as e:
         logger.error(f"Error processing document {document_id}: {e}")
         db.update_file_status(document_id, "error", str(e))
+        if is_youtube_transcript:
+            try:
+                db.mark_youtube_transcript_failed(document_id, str(e))
+            except Exception as queue_error:
+                logger.warning(
+                    "Failed to record YouTube transcript queue error for document %s: %s",
+                    document_id,
+                    queue_error,
+                )
         raise
     finally:
         if child_document_ids:
-            _process_child_documents(
-                parent_document_id=document_id,
-                child_document_ids=child_document_ids,
-                db=db,
-                docling=docling,
-                neo4j=neo4j,
-                lightrag_handoff=lightrag_handoff,
-            )
+            _ensure_youtube_transcript_queue_drainer()
 
 
-def _attempt_lightrag_handoff(document, processed_doc, lightrag_handoff: LightRagHandoffService) -> None:
+def _attempt_lightrag_handoff(
+    document,
+    processed_doc,
+    db: DatabaseService,
+    lightrag_handoff: LightRagHandoffService,
+) -> dict[str, object] | None:
     metadata = getattr(processed_doc, "processing_metadata", None) or {}
     markdown_path = metadata.get("markdown_path")
 
     if not markdown_path:
+        db.update_file_indexing_status(document.id, "not_requested")
         logger.info(
             "Skipping LightRAG handoff for document %s because no markdown export was produced",
             document.id,
         )
-        return
+        metadata["lightrag"] = {
+            "scan_requested": False,
+            "indexing_status": "not_requested",
+        }
+        processed_doc.processing_metadata = metadata
+        return None
 
     try:
         handoff_result = lightrag_handoff.handoff_document(document, markdown_path)
     except Exception as exc:
+        db.update_file_indexing_status(document.id, "failed", str(exc))
         logger.warning(
             "LightRAG handoff failed for document %s: %s",
             document.id,
@@ -404,12 +605,43 @@ def _attempt_lightrag_handoff(document, processed_doc, lightrag_handoff: LightRa
         )
         metadata["lightrag"] = {
             "scan_requested": False,
+            "indexing_status": "failed",
+            "indexing_error": str(exc),
             "error": str(exc),
         }
     else:
+        reconciliation_request: dict[str, object] | None = None
+        if not bool(handoff_result.get("scan_requested")):
+            db.update_file_indexing_status(document.id, "not_requested")
+            handoff_result["indexing_status"] = "not_requested"
+        else:
+            staged_input_path = handoff_result.get("staged_input_path")
+            if not staged_input_path:
+                staged_input_path = str(lightrag_handoff.build_staged_path(document))
+                handoff_result["staged_input_path"] = staged_input_path
+
+            readiness_result = lightrag_handoff.wait_for_document_readiness(
+                staged_input_path,
+                status_callback=lambda status, error: db.update_file_indexing_status(document.id, status, error),
+            )
+            handoff_result.update(readiness_result)
+            if readiness_result.get("readiness_deferred"):
+                last_known_status = readiness_result.get("last_known_indexing_status") or "indexing"
+                db.update_file_indexing_status(document.id, last_known_status)
+                handoff_result["indexing_status"] = last_known_status
+                handoff_result["indexing_error"] = None
+                handoff_result["readiness_reconciliation"] = "scheduled"
+                reconciliation_request = {
+                    "staged_input_path": str(staged_input_path),
+                    "remaining_attempts": 1,
+                }
+
         metadata["lightrag"] = handoff_result
+        processed_doc.processing_metadata = metadata
+        return reconciliation_request
 
     processed_doc.processing_metadata = metadata
+    return None
 
 
 def _persist_processing_metadata(processed_doc) -> None:
@@ -419,6 +651,31 @@ def _persist_processing_metadata(processed_doc) -> None:
         return
 
     metadata_path = Path(document_path).with_name("metadata.json")
+    if not metadata_path.parent.exists():
+        return
+
+    metadata_path.write_text(
+        json.dumps(metadata, indent=2, ensure_ascii=False),
+        encoding="utf-8",
+    )
+
+
+def _update_lightrag_metadata(docling_document_path: str | None, lightrag_state: dict[str, object]) -> None:
+    if not docling_document_path:
+        return
+
+    metadata = _load_processing_metadata(docling_document_path)
+    if not metadata:
+        return
+
+    existing_lightrag = metadata.get("lightrag")
+    if not isinstance(existing_lightrag, dict):
+        existing_lightrag = {}
+
+    existing_lightrag.update(lightrag_state)
+    metadata["lightrag"] = existing_lightrag
+
+    metadata_path = Path(docling_document_path).with_name("metadata.json")
     if not metadata_path.parent.exists():
         return
 
@@ -517,7 +774,16 @@ async def process_document(
 
         if document.processing_status == "processing":
             raise HTTPException(status_code=409, detail="Document is already processing")
-        
+
+        if _is_youtube_transcript_document(document):
+            db.enqueue_youtube_transcript(
+                file_id=document_id,
+                source_url=document.source_url,
+                tenant_id=document.tenant_id,
+            )
+            _ensure_youtube_transcript_queue_drainer()
+            return ProcessingStartResponse(message=f"YouTube transcript queued for document {document_id}")
+         
         # Get the appropriate docling service
         docling = get_docling_service()
 
@@ -560,12 +826,25 @@ async def process_all_documents(
                 document_ids=[],
             )
         
-        # Get the appropriate docling service
-        docling = get_docling_service()
         queued_document_ids = []
-        
+        queued_youtube_ids = []
+        docling = None
+         
         # Start processing for each document
         for doc in unprocessed_docs:
+            if _is_youtube_transcript_document(doc):
+                db.enqueue_youtube_transcript(
+                    file_id=doc.id,
+                    source_url=doc.source_url,
+                    tenant_id=doc.tenant_id,
+                )
+                queued_document_ids.append(doc.id)
+                queued_youtube_ids.append(doc.id)
+                continue
+
+            if docling is None:
+                docling = get_docling_service()
+
             db.update_file_status(doc.id, "processing")
             background_tasks.add_task(
                 process_document_task,
@@ -576,9 +855,19 @@ async def process_all_documents(
                 mark_processing_started=False,
             )
             queued_document_ids.append(doc.id)
-        
+
+        if queued_youtube_ids:
+            _ensure_youtube_transcript_queue_drainer()
+
+        queued_message_parts: list[str] = []
+        immediate_count = len(queued_document_ids) - len(queued_youtube_ids)
+        if immediate_count:
+            queued_message_parts.append(f"Started processing {immediate_count} documents")
+        if queued_youtube_ids:
+            queued_message_parts.append(f"Queued {len(queued_youtube_ids)} YouTube transcripts")
+         
         return BatchProcessingStartResponse(
-            message=f"Started processing {len(queued_document_ids)} documents",
+            message="; ".join(queued_message_parts) or "No documents were queued",
             document_ids=queued_document_ids,
         )
         

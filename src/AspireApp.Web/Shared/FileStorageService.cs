@@ -12,6 +12,8 @@ public class FileStorageService(
     string dataDirectory,
     IDocumentProcessingCoordinator? documentProcessingCoordinator = null)
 {
+    private const string NpgsqlProviderName = "Npgsql.EntityFrameworkCore.PostgreSQL";
+
     private readonly UploadDbContext _context = context;
     private readonly ILogger<FileStorageService> _logger = logger;
     private readonly string _dataDirectory = dataDirectory;
@@ -49,6 +51,7 @@ public class FileStorageService(
 
             // Ensure database schema is created (EF Core handles this)
             await _context.Database.EnsureCreatedAsync();
+            await EnsureFileSchemaAsync();
 
             if (_logger.IsEnabled(LogLevel.Information))
             {
@@ -553,6 +556,7 @@ public class FileStorageService(
         file.ProcessingError = null;
         file.DoclingDocumentPath = null;
         file.TotalPages = null;
+        file.IndexingStatus = "not_requested";
         file.Neo4jDocumentNodeId = null;
 
         var existingPages = _context.DatasourcePages.Where(page => page.FileId == file.Id);
@@ -561,5 +565,28 @@ public class FileStorageService(
 
     private static string NormalizeStatus(string status) =>
         status.Trim().ToLowerInvariant();
+
+    private async Task EnsureFileSchemaAsync()
+    {
+        if (!string.Equals(_context.Database.ProviderName, NpgsqlProviderName, StringComparison.Ordinal))
+        {
+            return;
+        }
+
+        await _context.Database.ExecuteSqlRawAsync(
+            """
+            DO $$
+            BEGIN
+                IF NOT EXISTS (
+                    SELECT 1
+                    FROM information_schema.columns
+                    WHERE table_name = 'files' AND column_name = 'indexing_status'
+                ) THEN
+                    ALTER TABLE files
+                    ADD COLUMN indexing_status character varying(20) NOT NULL DEFAULT 'not_requested';
+                END IF;
+            END $$;
+            """);
+    }
 
 }

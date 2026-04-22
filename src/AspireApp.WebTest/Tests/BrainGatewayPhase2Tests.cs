@@ -269,6 +269,39 @@ public sealed class BrainGatewayPhase2Tests
     }
 
     [Fact]
+    public async Task ChatAsync_MapsPythonTimeout_ToGatewayTimeoutProblem()
+    {
+        var cancellationToken = TestContext.Current.CancellationToken;
+
+        using var handler = new ThrowingHttpMessageHandler(new TaskCanceledException("simulated timeout"));
+        using var httpClient = new HttpClient(handler)
+        {
+            BaseAddress = new Uri("http://python-service/")
+        };
+
+        var backendClient = new ApiServices.PythonBrainBackendClient(
+            httpClient,
+            NullLogger<ApiServices.PythonBrainBackendClient>.Instance);
+
+        var exception = await Assert.ThrowsAsync<ApiServices.BrainGatewayProblemException>(() =>
+            backendClient.ChatAsync(
+                new ApiContracts.BrainChatRequest(
+                    "tenant-a",
+                    "corr-timeout",
+                    "Did indexing finish?",
+                    ApiContracts.ChatMode.Regular,
+                    null,
+                    TopK: 5),
+                cancellationToken));
+
+        Assert.Equal(StatusCodes.Status504GatewayTimeout, exception.StatusCode);
+        Assert.Equal("BRAIN chat failed timed out", exception.Title);
+        Assert.Contains("timed out", exception.Message, StringComparison.OrdinalIgnoreCase);
+        Assert.Single(handler.Requests);
+        Assert.Equal("http://python-service/brain/chat", handler.Requests[0].RequestUri?.ToString());
+    }
+
+    [Fact]
     public async Task ChatAsync_PassesConversationHistory_ToPythonBrainRoute()
     {
         var cancellationToken = TestContext.Current.CancellationToken;
@@ -369,6 +402,36 @@ public sealed class BrainGatewayPhase2Tests
         Assert.Equal(
             "Critique mode unavailable: agent provider not configured (check OLLAMA_ENDPOINT).",
             exception.Message);
+        Assert.Single(handler.Requests);
+        Assert.Equal("http://brain-gateway/brain/chat", handler.Requests[0].RequestUri?.ToString());
+    }
+
+    [Fact]
+    public async Task BrainChatClient_MapsGatewayTimeout_ToFriendlyProblem()
+    {
+        var cancellationToken = TestContext.Current.CancellationToken;
+
+        using var handler = new ThrowingHttpMessageHandler(new TaskCanceledException("simulated timeout"));
+        using var httpClient = new HttpClient(handler)
+        {
+            BaseAddress = new Uri("http://brain-gateway/")
+        };
+
+        var chatClient = new WebServices.BrainChatClient(
+            httpClient,
+            NullLogger<WebServices.BrainChatClient>.Instance);
+
+        var exception = await Assert.ThrowsAsync<WebServices.BrainChatException>(() =>
+            chatClient.ChatAsync(
+                "What does the upload say?",
+                "regular",
+                "tenant-a",
+                "conversation-1",
+                cancellationToken: cancellationToken));
+
+        Assert.Equal(StatusCodes.Status504GatewayTimeout, exception.StatusCode);
+        Assert.Equal("BRAIN chat timed out", exception.Title);
+        Assert.Contains("timed out before a response was ready", exception.Message, StringComparison.OrdinalIgnoreCase);
         Assert.Single(handler.Requests);
         Assert.Equal("http://brain-gateway/brain/chat", handler.Requests[0].RequestUri?.ToString());
     }
@@ -694,7 +757,7 @@ public sealed class BrainGatewayPhase2Tests
             return _responses.Dequeue();
         }
 
-        private static async Task<HttpRequestMessage> CloneRequestAsync(HttpRequestMessage request, CancellationToken cancellationToken)
+        internal static async Task<HttpRequestMessage> CloneRequestAsync(HttpRequestMessage request, CancellationToken cancellationToken)
         {
             var clone = new HttpRequestMessage(request.Method, request.RequestUri);
             foreach (var header in request.Headers)
@@ -715,6 +778,19 @@ public sealed class BrainGatewayPhase2Tests
             }
 
             return clone;
+        }
+    }
+
+    private sealed class ThrowingHttpMessageHandler(Exception exceptionToThrow) : HttpMessageHandler
+    {
+        private readonly Exception _exceptionToThrow = exceptionToThrow;
+
+        public List<HttpRequestMessage> Requests { get; } = [];
+
+        protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
+        {
+            Requests.Add(await StubHttpMessageHandler.CloneRequestAsync(request, cancellationToken));
+            throw _exceptionToThrow;
         }
     }
 }

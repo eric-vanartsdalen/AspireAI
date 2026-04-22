@@ -30,6 +30,107 @@
 
 <!-- Append new learnings below. Each entry is something lasting about the project. -->
 
+### 2026-04-24 — Tenant sidebar-close regressions need real tenant membership state, not private-state shortcuts
+
+**Task:** Review Jeff's tenant-dropdown sidebar-close implementation, add focused regression coverage, and validate the shell closes after a tenant switch.
+
+**Concrete findings:**
+1. Jeff's product fix in `MainLayout.razor` is the right ownership boundary: the layout owns `_sidebarOpen`, so subscribing it to `TenantContext.OnTenantChanged` keeps tenant-triggered dismissal centralized instead of leaking shell behavior into `TenantSelector.razor`.
+2. The live Aspire regression in `BasicAspireAppHostTests.DesktopSidebarClosesAfterTenantSelection` is the right end-to-end seam because it seeds a real extra tenant, switches through the real dropdown, and proves both sidebar dismissal and visible tenant binding update.
+3. The bUnit regression initially failed because the test tried to switch to `tenant-beta` without a real recognized tenant in `TenantContextService`; reflecting or shortcutting private state is the wrong seam for this service because `CurrentTenantId` validation enforces known tenants.
+4. Seeding tenants through an in-memory `UploadDbContext` + `TenantManagementService` makes the regression honest: the test now exercises the same tenant-recognition rules the app uses before asserting the sidebar closes.
+
+**Validation:**
+- `dotnet test .\src\AspireApp.WebTest\AspireApp.WebTest.csproj --no-restore --filter "FullyQualifiedName~AspireApp.WebTest.Tests.MainLayoutTests|FullyQualifiedName~AspireApp.WebTest.Tests.BasicAspireAppHostTests.DesktopSidebarClosesAfterTenantSelection"` ✅
+
+**Reviewer verdict on Jeff's implementation:**
+- **No rejection.** The layout-level product change is correct.
+- **QA correction:** the focused unit regression needed a real tenant-state setup before it could prove the behavior reliably.
+
+### 2026-04-24 — Desktop menu-close regression was fixed in the layout; the first failing browser proof was a viewport seam, not a product failure
+
+**Task:** Review Jeff's Web UI fix for the desktop slide-out menu staying open after selecting a nav item, then add focused regression coverage.
+
+**Concrete findings:**
+1. `MainLayout.razor` is the right ownership boundary for this behavior because it owns `_sidebarOpen`, the backdrop, and the hamburger toggle; Jeff's `NavigationManager.LocationChanged` hook closes the desktop drawer centrally instead of scattering per-link handlers through `NavMenu.razor`.
+2. The new live Playwright regression in `BasicAspireAppHostTests.DesktopSidebarClosesAfterNavigationSelection` is the right proof seam because it exercises the real Blazor shell after mock sign-in and verifies both URL change and `sidebar-open` removal.
+3. The first browser run failed on `Element is outside of the viewport` for the `Chat` link even though the product fix was sound; the missing seam was waiting for the nav target to finish sliding fully into viewport before clicking.
+4. Adding `WaitForNavigationTargetWithinViewportAsync(chatLink)` made the regression stable without weakening the assertion about post-navigation sidebar dismissal.
+
+**Validation:**
+- `dotnet test .\src\AspireApp.WebTest\AspireApp.WebTest.csproj --no-build --filter "FullyQualifiedName~AspireApp.WebTest.Tests.MainLayoutTests.ClosesSidebar_WhenLocationChanges|FullyQualifiedName~AspireApp.WebTest.Tests.BasicAspireAppHostTests.DesktopSidebarClosesAfterNavigationSelection"` ✅
+- `dotnet build .\src\AspireApp.WebTest\AspireApp.WebTest.csproj` ✅
+
+**Reviewer verdict on Jeff's implementation:**
+- **No rejection.** The product fix is correct and layout-owned.
+- **QA follow-up:** the regression test needed an explicit viewport wait after opening the drawer so browser animation timing does not masquerade as a product bug.
+
+**Key file paths:**
+- `src\AspireApp.Web\Components\Layout\MainLayout.razor`
+- `src\AspireApp.WebTest\Tests\MainLayoutTests.cs`
+- `src\AspireApp.WebTest\Tests\BasicAspireAppHostTests.cs`
+- `.squad\skills\blazor-layout-navigation-close\SKILL.md`
+
+### 2026-04-21 — LightRAG timeout regression was split across two seams: optional Ollama load and missing LightRAG embedding binding
+
+**Task:** Reproduce the reported upload/chat timeout and review the current Jeff/Jarvis timeout work.
+
+**Concrete findings:**
+1. The focused Python + Blazor regression suites still passed, so the bug was not in the basic upload row/status rendering seam.
+2. The live Aspire regression `BasicAspireAppHostTests.LiveLightRagNeo4jQueryRoundTrip` reproduced the real break: LightRAG accepted the document, but Neo4j graph growth stayed at `0/0`, which meant LightRAG was not actually projecting graph data into Neo4j.
+3. `AppHost.cs` configured `LLM_BINDING=ollama` for LightRAG, but it did **not** set `EMBEDDING_BINDING=ollama`; combined with version-sensitive storage env naming, that left the container in a partially configured state that could index superficially while never growing the external Neo4j graph.
+4. The Python ingestion path also did extra Neo4j page/claim embedding work on the same Ollama instance before LightRAG handoff; that load is optional for the product path and is safer disabled by default until live validation proves it does not starve upload/chat responsiveness.
+
+**What held up after the fix:**
+- `dotnet test .\src\AspireApp.WebTest\AspireApp.WebTest.csproj --filter "FullyQualifiedName~AspireApp.WebTest.Tests.BasicAspireAppHostTests.FlowEndToEnd|FullyQualifiedName~AspireApp.WebTest.Tests.BasicAspireAppHostTests.LiveLightRagNeo4jQueryRoundTrip"` ✅
+- `dotnet test .\src\AspireApp.WebTest\AspireApp.WebTest.csproj --filter "FullyQualifiedName~AspireApp.WebTest.Tests.BrainGatewayPhase2Tests|FullyQualifiedName~AspireApp.WebTest.Tests.ChatCritiqueModeTests"` ✅
+- `python -m pytest src\AspireApp.PythonServices\tests\test_processing_pipeline_regression.py src\AspireApp.PythonServices\tests\test_youtube_transcript_queue.py src\AspireApp.PythonServices\tests\test_brain_chat.py src\AspireApp.PythonServices\tests\test_knowledge_retriever.py src\AspireApp.PythonServices\tests\test_lightrag_retriever.py` ✅
+
+**Reviewer verdict on Jeff/Jarvis timeout work:**
+- **No rejection.** Jeff’s explicit gateway timeout surfacing and non-blocking upload dispatch still validate.
+- **Main corrective follow-up:** LightRAG container wiring needed the missing embedding binding plus compatibility aliases, and Jarvis’s optional Neo4j embedding population needed a safer default so upload/chat paths stop competing for Ollama by default.
+
+### 2026-04-16 — Post-Upload Retrieval Regression: Data Freshness Gap in Test Suite
+
+**Task:** Audit test coverage for: upload website → marked processed → reload chat → new knowledge unavailable.
+
+**Critical Findings:**
+1. **Cycle Not Tested:** No integration test validates end-to-end: Process Document (write to Neo4j) → Reload Chat → Query Retriever → Gets Fresh Results. Processing and retrieval are tested in isolation but never sequenced.
+2. **Graph DB Visibility Window Unknown:** No test confirms when Neo4j makes ingested data queryable after processing. "processed" status may be marked before LightRAG indexing finishes.
+3. **Async Boundary Unexplored:** No test validates Chat component refreshes retriever context on reload (may cache retriever/LightRAG state).
+4. **Transaction Isolation Untested:** No verification that processing writes are visible to concurrent retrievers in separate transactions.
+
+**Suspected Root Causes (requires deeper investigation):**
+- Status "processed" set before LightRAG handoff completes indexing
+- Chat component caches retriever state on first load, no refresh on reload
+- LightRAG queue lag: handoff service queues but doesn't confirm completion
+- Neo4j transaction isolation: writes not visible to readers in separate transaction
+
+**Test Files Analyzed:**
+- `UploadDataTests.cs` — covers upload → queue, not processing completion
+- `test_lightrag_retriever.py` — covers retrieval in isolation, faked Neo4j
+- `test_knowledge_retriever.py` — covers retriever contracts, no data lifecycle
+- `BrainGatewayPhase2Tests.cs` — covers gateway mapping, faked backend responses
+- `test_processing_pipeline_regression.py` — processing in isolation, no retrieval validation
+- `BasicAspireAppHostTests.cs` — E2E flow exists but no assertion that retrieval results *change* post-upload
+
+**Test Gap Categories:**
+1. **End-to-End Cycle:** Need integration test: upload → wait for "processed" → query immediately → assert new doc in results
+2. **Freshness Assertion:** Need test that retriever queries Neo4j on each request, not cached
+3. **Timing Boundary:** Need test confirming LightRAG indexing complete before status marked "processed"
+4. **Chat Component:** Need test confirming Chat reloads retriever context, doesn't cache across page reloads
+
+**Key File Paths:**
+- `src/AspireApp.WebTest/Tests/UploadDataTests.cs`
+- `src/AspireApp.WebTest/Tests/BrainGatewayPhase2Tests.cs`
+- `src/AspireApp.WebTest/Tests/BasicAspireAppHostTests.cs`
+- `src/AspireApp.PythonServices/tests/test_processing_pipeline_regression.py`
+- `src/AspireApp.PythonServices/tests/test_lightrag_retriever.py`
+- `src/AspireApp.Web/Components/Pages/Chat.razor.cs`
+- `src/AspireApp.Web/Components/Pages/UploadData.razor.cs`
+- `src/AspireApp.PythonServices/app/routers/processing.py`
+- `src/AspireApp.PythonServices/app/routers/brain.py`
+
 ### 2026-04-16 — Upload/delete Playwright flake was a test seam, not a product regression
 
 **Task:** Reproduce the reported `BasicAspireAppHostTests.DeleteUploadedTestFile` failure (`Navigation target 'Upload Documents' did not become clickable within 30000ms`).
@@ -1642,6 +1743,38 @@ The behavior being tested (legacy schema detection with detailed diagnostics) st
 - BasicAspireAppHostTests.BrainQueryReturnsConfidenceEnrichedResults — LightRAG pipeline stuck in busy state (timeout after 120s)
 - BasicAspireAppHostTests.LiveLightRagNeo4jQueryRoundTrip — Query returns empty results
 
+### 2026-04-21 — Readiness Regression Test Coverage Update
+
+**Status:** COMPLETE — Removed stale "processed implies ready" assumption across all test suites.
+
+**What was updated:**
+- Python `test_processing_pipeline_regression.py`: tests now await `indexing_status == "ready"` before querying (no longer assume `processed=true`)
+- Web `UploadDataTests`: validated optional-field deserialization; backward-compat with pre-polling docs confirmed
+- E2E `test_youtube_transcript_queue.py`: YouTube flow respects polling window; no external dependencies introduced
+- Test infrastructure unchanged (existing pytest + xUnit); no new frameworks
+
+**Why the change:**
+- Old model was broken: `processed` marked after Docling+Neo4j, but LightRAG indexing still async/eventual
+- New model is honest: separate "processing complete" (Neo4j) from "retrieval-ready" (LightRAG indexed)
+- Tests must now reflect reality: a `processed` document is not yet safe to query
+
+**Test results:**
+- Python readiness regressions: 23+ tests passing (state transitions, timeout, failures)
+- Web UploadDataTests: 28/28 passing
+- E2E YouTube queue: all passing
+- Full .NET build: clean (`dotnet build -nologo`)
+- Full .NET test suite: pass
+- Coordinator validation: all platforms passing together
+
+**Key files:**
+- `tests/test_processing_pipeline_regression.py` — readiness polling tests
+- `tests/test_youtube_transcript_queue.py` — E2E queue flow
+- `src/AspireApp.WebTest/Tests/UploadDataTests.cs` — optional-field compat
+
+**Handoff to next phase:**
+- Jarvis + Buster: Monitor polling loop for edge cases (timeout, transients)
+- Jeff + Buster: Document upload → index → query freshness E2E proof (Phase 3b)
+
 **AuthenticatedUploadUx Fix:**
 Jeff's fire-and-forget upload change caused immediate status transition from "uploaded" → "processing". Updated test expectation from strict Assert.Equal("uploaded") to Assert.True(status == "uploaded" || status == "processing") to accommodate asynchronous processing start.
 
@@ -2092,3 +2225,67 @@ High — Three independent test failures all exhibit the same LightRAG stuck-in-
 - `src\AspireApp.PythonServices\app\routers\processing.py`
 - `src\AspireApp.PythonServices\tests\test_processing_pipeline_regression.py`
 - `src\AspireApp.PythonServices\app\services\database_service.py`
+
+### 2026-04-22 — YouTube transcript queue regressions belong at the router + DatabaseService seam
+
+**Task:** Add focused regression coverage for queued YouTube transcript behavior without hitting live YouTube.
+
+**What QA locked down:**
+- Child YouTube URLs discovered during channel processing must stay enqueued: `processing.py` should create child datasource rows, record queue entries via `enqueue_youtube_transcript(...)`, and avoid recursively processing those child documents immediately.
+- Queue throttle policy lives in `DatabaseService`, not the trigger endpoint: `claim_next_youtube_transcript(...)` and `get_youtube_transcript_queue_wait_seconds(...)` enforce the one-attempt-per-minute rule and the 50-attempts-per-UTC-day cap.
+- The daily cap is driven by `youtube_transcript_attempts.attempted_on` / `attempted_at`, not upload timestamps. Regression tests should seed explicit UTC attempt rows and prove a prior-day attempt does not consume today’s final slot.
+
+**Verification:**
+- `python -m pytest tests\test_youtube_transcript_queue.py tests\test_processing_pipeline_regression.py tests\test_phase2_ingestion.py -q` from `src\AspireApp.PythonServices` passed (19/19).
+
+**Key File Paths:**
+- `src\AspireApp.PythonServices\tests\test_youtube_transcript_queue.py`
+- `src\AspireApp.PythonServices\app\routers\processing.py`
+- `src\AspireApp.PythonServices\app\services\database_service.py`
+- `src\AspireApp.PythonServices\tests\fake_postgres.py`
+
+---
+
+## Session: YouTube Transcript Queue QA Coverage (2026-04-20T07:07:50Z)
+
+**Participants:** Bob (approval), Jarvis (implementation), Buster (QA)
+**Status:** COMPLETE — Two-seam regression coverage, 27+ tests passing
+**Output:** test_youtube_transcript_queue.py focused regression suite; router + database seams validated
+
+**Regression Coverage:**
+
+1. **Router Seam** (processing.py):
+   - Enqueue invoked for YouTube children only
+   - Non-YouTube children processed inline (existing path unbroken)
+   - Multiple children enqueued in single channel expansion
+   - Child rows remain uploaded until queue claims
+
+2. **Database Seam** (DatabaseService):
+   - claim_next_youtube_transcript() dispatch eligibility
+   - get_youtube_transcript_queue_wait_seconds() backoff timing
+   - 1-transcript-per-60-seconds enforcement
+   - 50-per-UTC-day quota enforcement
+   - Prior-day attempts do NOT consume today's quota
+
+**Test Results:**
+- test_youtube_transcript_queue.py: PASS (All tests)
+- test_processing_pipeline_regression.py: PASS (Child URL path updated)
+- test_p0_contract_audit.py: PASS (Contract boundaries verified)
+- Integration: PASS (27+ tests across all suites passing)
+
+**Key Testing Insight:** Two-seam coverage prevents bypass (router enqueue alone isn't proof of throttle enforcement; database tests prove the policy). Deterministic (no timing races).
+
+**Decision Record:** Merged 1 decision to decisions.md; orchestration log created
+
+**Residual Risk:** None identified. Both seams tightly coupled and fully covered.
+
+
+### 2026-04-21 — Timeout Stabilization Session: Aspire Runtime + Semantic Fallback Wiring
+
+**Session Work:** Live E2E testing revealed LightRAG graph never grows due to missing embedding binding and Ollama contention from optional ingestion work.
+
+**Buster Learning:** LightRAG container must set EMBEDDING_BINDING=ollama explicitly; both storage alias styles must be provided for version tolerance. Python vector population must be optional (default off) so it doesn't starve upload/chat. Semantic fallback prevents empty retriever even when vector work disabled.
+
+**Session Log:** See .squad/log/20260421-timeout-stabilization.md
+**Decision File:** .squad/decisions.md (merged: LightRAG timeout fix must wire Ollama embeddings explicitly...)
+

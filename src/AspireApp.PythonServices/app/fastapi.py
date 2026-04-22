@@ -134,10 +134,16 @@ async def startup_event():
         logger.info(f"Service capabilities: {service_info}")
     except Exception as e:
         logger.warning(f"Could not determine service capabilities: {e}")
+
+    try:
+        processing._ensure_youtube_transcript_queue_drainer()
+    except Exception as e:
+        logger.warning(f"Could not start YouTube transcript queue drainer: {e}")
     
     logger.info("Service initialization completed")
 
 @app.on_event("shutdown")
 async def shutdown_event():
     """Cleanup on shutdown"""
+    processing.stop_youtube_transcript_queue_drainer()
     logger.info("Shutting down AspireAI Document Processing Service")

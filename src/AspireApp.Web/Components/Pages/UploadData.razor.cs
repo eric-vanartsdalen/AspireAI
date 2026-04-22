@@ -717,12 +717,7 @@ public partial class UploadData : ComponentBase, IAsyncDisposable, IDisposable
             "uploaded",
             TenantContext.CurrentTenantId);
 
-        var automaticProcessing = await FileStorageService.TryStartAutomaticProcessingAsync(fileMetadata.Id);
-        var message = automaticProcessing.Attempted
-            ? automaticProcessing.Started
-                ? "File uploaded successfully. Processing started automatically."
-                : "File uploaded successfully, but automatic processing could not be started."
-            : "File uploaded successfully.";
+        QueueAutomaticProcessing(fileMetadata.Id, $"'{browserFile.Name}'");
 
         return new FileUploadResult
         {
@@ -731,7 +726,7 @@ public partial class UploadData : ComponentBase, IAsyncDisposable, IDisposable
             FileName = uniqueFileName,
             Size = browserFile.Size,
             FileHash = fileHash,
-            Message = message,
+            Message = "File uploaded successfully. Automatic processing is being queued.",
             ExistingFileId = fileMetadata.Id
         };
     }
@@ -798,12 +793,7 @@ public partial class UploadData : ComponentBase, IAsyncDisposable, IDisposable
             "uploaded",
             TenantContext.CurrentTenantId);
 
-        var automaticProcessing = await FileStorageService.TryStartAutomaticProcessingAsync(fileMetadata.Id);
-        var message = automaticProcessing.Attempted
-            ? automaticProcessing.Started
-                ? "Website URL added successfully. Processing started automatically."
-                : "Website URL added successfully, but automatic processing could not be started."
-            : "Website URL added successfully.";
+        QueueAutomaticProcessing(fileMetadata.Id, $"'{fileName}'");
 
         return new UrlUploadResult
         {
@@ -811,9 +801,59 @@ public partial class UploadData : ComponentBase, IAsyncDisposable, IDisposable
             IsDuplicate = false,
             Url = websiteUrl,
             FileName = fileName,
-            Message = message,
+            Message = "Website URL added successfully. Automatic processing is being queued.",
             ExistingFileId = fileMetadata.Id
         };
+    }
+
+    private void QueueAutomaticProcessing(int fileId, string displayName)
+    {
+        _ = Task.Run(async () =>
+        {
+            var automaticProcessing = await FileStorageService.TryStartAutomaticProcessingAsync(fileId);
+
+            await SafeRefreshAfterAutomaticProcessingAsync(displayName, automaticProcessing);
+        });
+    }
+
+    private async Task SafeRefreshAfterAutomaticProcessingAsync(
+        string displayName,
+        AutomaticProcessingDispatchResult automaticProcessing)
+    {
+        try
+        {
+            await InvokeAsync(async () =>
+            {
+                if (automaticProcessing.Attempted && automaticProcessing.Started)
+                {
+                    await LoadUploadedFiles();
+                    StateHasChanged();
+                    return;
+                }
+
+                _uploadErrors.Clear();
+                if (!string.IsNullOrWhiteSpace(automaticProcessing.Detail))
+                {
+                    _uploadErrors.Add(automaticProcessing.Detail);
+                }
+
+                _uploadMessage = automaticProcessing.Attempted
+                    ? $"Saved {displayName}, but automatic processing could not be started."
+                    : $"Saved {displayName}. Automatic processing is currently unavailable.";
+                _messageClass = "warning";
+
+                await LoadUploadedFiles();
+                StateHasChanged();
+            });
+        }
+        catch (ObjectDisposedException)
+        {
+        }
+        catch (InvalidOperationException ex) when (
+            ex.Message.Contains("renderer", StringComparison.OrdinalIgnoreCase) ||
+            ex.Message.Contains("disposed", StringComparison.OrdinalIgnoreCase))
+        {
+        }
     }
 
     private static string GenerateUniqueFileName(string originalFileName)
@@ -869,15 +909,69 @@ public partial class UploadData : ComponentBase, IAsyncDisposable, IDisposable
         };
     }
 
-    private static string GetStatusClass(string status)
+    private static string GetStatusBadgeClass(FileMetadata file)
     {
-        return status.ToLowerInvariant() switch
+        return GetReadinessStatusOverride(file) switch
+        {
+            "queued" or "indexing" => "status-processing",
+            "failed" or "timed_out" => "status-error",
+            _ => GetStatusClass(file.Status)
+        };
+    }
+
+    private static string GetStatusLabel(FileMetadata file)
+    {
+        return GetReadinessStatusOverride(file) switch
+        {
+            "queued" => "Index queued",
+            "indexing" => "Indexing",
+            "failed" => "Index failed",
+            "timed_out" => "Index timed out",
+            _ => GetStatusLabel(file.Status)
+        };
+    }
+
+    private static string GetStatusClass(string? status)
+    {
+        return status?.Trim().ToLowerInvariant() switch
         {
             "uploaded" => "status-uploaded",
             "pending" => "status-pending",
             "processing" => "status-processing",
+            "processed" => "status-processed",
             "error" => "status-error",
             _ => "status-pending"
+        };
+    }
+
+    private static string GetStatusLabel(string? status)
+    {
+        return status?.Trim().ToLowerInvariant() switch
+        {
+            "uploaded" => "Uploaded",
+            "pending" => "Pending",
+            "processing" => "Processing",
+            "processed" => "Processed",
+            "error" => "Error",
+            null or "" => "Unknown",
+            _ => status
+        };
+    }
+
+    private static string? GetReadinessStatusOverride(FileMetadata file)
+    {
+        if (!string.Equals(file.Status, "processed", StringComparison.OrdinalIgnoreCase))
+        {
+            return null;
+        }
+
+        return file.IndexingStatus?.Trim().ToLowerInvariant() switch
+        {
+            "queued" => "queued",
+            "indexing" => "indexing",
+            "failed" => "failed",
+            "timed_out" => "timed_out",
+            _ => null
         };
     }
 

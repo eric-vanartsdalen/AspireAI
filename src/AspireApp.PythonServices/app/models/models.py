@@ -17,6 +17,9 @@ class Document(BaseModel):
     source_type: str = "upload"
     source_confidence: Optional[float] = None
     source_url: Optional[str] = None
+    indexing_status: str = "not_requested"
+    indexing_error: Optional[str] = None
+    ready: bool = False
 
 
 class ProcessedDocument(BaseModel):
@@ -52,6 +55,9 @@ class ProcessingStatus(BaseModel):
     error_message: Optional[str] = None
     started_at: Optional[datetime] = None
     completed_at: Optional[datetime] = None
+    indexing_status: str = "not_requested"
+    indexing_error: Optional[str] = None
+    ready: bool = False
 
 
 class ProcessingStartResponse(BaseModel):

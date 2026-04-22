@@ -1,5 +1,7 @@
 ﻿@inherits LayoutComponentBase
+@implements IDisposable
 @inject AuthenticationContext AuthenticationContext
+@inject NavigationManager NavigationManager
 @inject TenantContextService TenantContext
 
 <div class="page @(_sidebarOpen ? "sidebar-open" : "")">
@@ -17,7 +19,6 @@
             <button class="sidebar-toggle" @onclick="ToggleSidebar" title="Toggle navigation">
                 ☰
             </button>
-            <a href="https://learn.microsoft.com/aspnet/core/" target="_blank">About</a>
 
             <AuthorizeView Context="authState">
                 <Authorized>
@@ -63,8 +64,44 @@
 @code {
     private bool _sidebarOpen;
 
+    protected override void OnInitialized()
+    {
+        NavigationManager.LocationChanged += HandleLocationChanged;
+        TenantContext.OnTenantChanged += HandleTenantChanged;
+    }
+
     private void ToggleSidebar()
     {
         _sidebarOpen = !_sidebarOpen;
+    }
+
+    private void HandleLocationChanged(object? sender, LocationChangedEventArgs e)
+    {
+        _ = CloseSidebarAsync();
+    }
+
+    private void HandleTenantChanged()
+    {
+        _ = CloseSidebarAsync();
+    }
+
+    private Task CloseSidebarAsync()
+    {
+        if (!_sidebarOpen)
+        {
+            return Task.CompletedTask;
+        }
+
+        return InvokeAsync(() =>
+        {
+            _sidebarOpen = false;
+            StateHasChanged();
+        });
+    }
+
+    public void Dispose()
+    {
+        NavigationManager.LocationChanged -= HandleLocationChanged;
+        TenantContext.OnTenantChanged -= HandleTenantChanged;
     }
 }

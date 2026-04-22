@@ -25,6 +25,8 @@ FILE_COLUMNS = [
     "source_type",
     "source_confidence",
     "source_url",
+    "indexing_status",
+    "indexing_error",
 ]
 
 PAGE_COLUMNS = [
@@ -36,6 +38,25 @@ PAGE_COLUMNS = [
     "neo4j_page_node_id",
 ]
 
+QUEUE_COLUMNS = [
+    "id",
+    "file_id",
+    "tenant_id",
+    "source_url",
+    "queued_at",
+    "last_attempted_at",
+    "completed_at",
+    "last_error",
+]
+
+ATTEMPT_COLUMNS = [
+    "id",
+    "queue_id",
+    "file_id",
+    "attempted_at",
+    "attempted_on",
+]
+
 COLUMN_DEFAULTS = {
     "file_hash": "",
     "file_size": 0,
@@ -43,6 +64,9 @@ COLUMN_DEFAULTS = {
     "tenant_id": "default",
     "source_type": "upload",
     "source_confidence": 0.7,
+    "indexing_status": "not_requested",
+    "indexing_error": None,
+    "last_error": None,
 }
 
 
@@ -52,6 +76,8 @@ class FakePostgresState:
         self.indexes: set[str] = set()
         self.next_file_id = 1
         self.next_page_id = 1
+        self.next_queue_id = 1
+        self.next_attempt_id = 1
 
     def ensure_table(self, table_name: str, columns: list[str]) -> None:
         if table_name in self.tables:
@@ -74,6 +100,9 @@ class FakePostgresState:
     def page_tuple(self, row: dict[str, Any]) -> tuple:
         return tuple(row.get(column) for column in PAGE_COLUMNS)
 
+    def queue_tuple(self, row: dict[str, Any]) -> tuple:
+        return tuple(row.get(column) for column in QUEUE_COLUMNS)
+
 
 class FakeCursor:
     def __init__(self, state: FakePostgresState):
@@ -91,6 +120,16 @@ class FakeCursor:
 
         if "create table if not exists document_pages" in normalized:
             self.state.ensure_table("document_pages", PAGE_COLUMNS)
+            self._result = []
+            return self
+
+        if "create table if not exists youtube_transcript_queue" in normalized:
+            self.state.ensure_table("youtube_transcript_queue", QUEUE_COLUMNS)
+            self._result = []
+            return self
+
+        if "create table if not exists youtube_transcript_attempts" in normalized:
+            self.state.ensure_table("youtube_transcript_attempts", ATTEMPT_COLUMNS)
             self._result = []
             return self
 
@@ -144,6 +183,8 @@ class FakeCursor:
                 "source_type": params[9],
                 "source_confidence": params[10],
                 "source_url": params[11],
+                "indexing_status": "not_requested",
+                "indexing_error": None,
             }
             self.state.tables["files"]["rows"].append(row)
             self.state.next_file_id += 1
@@ -165,6 +206,10 @@ class FakeCursor:
                 row
                 for row in self.state.tables["files"]["rows"]
                 if row["status"].lower() in {"uploaded", "error"}
+                and not any(
+                    queue_row["file_id"] == row["id"] and queue_row["completed_at"] is None
+                    for queue_row in self.state.tables.get("youtube_transcript_queue", {"rows": []})["rows"]
+                )
             ]
             rows.sort(key=lambda row: row["uploaded_at"])
             self._result = [self.state.file_tuple(row) for row in rows]
@@ -211,6 +256,8 @@ class FakeCursor:
             row["docling_document_path"] = None
             row["total_pages"] = None
             row["neo4j_document_node_id"] = None
+            row["indexing_status"] = "not_requested"
+            row["indexing_error"] = None
             self._result = []
             return self
 
@@ -242,6 +289,16 @@ class FakeCursor:
             row["docling_document_path"] = None
             row["total_pages"] = None
             row["neo4j_document_node_id"] = None
+            row["indexing_status"] = "not_requested"
+            row["indexing_error"] = None
+            self._result = []
+            return self
+
+        if normalized.startswith("update files set indexing_status = %s, indexing_error = %s where id = %s"):
+            file_id = params[2]
+            row = self._get_file(file_id)
+            row["indexing_status"] = params[0]
+            row["indexing_error"] = params[1]
             self._result = []
             return self
 
@@ -280,6 +337,109 @@ class FakeCursor:
                 existing["page_metadata"] = page_metadata
                 existing["neo4j_page_node_id"] = neo4j_page_node_id
             self._result = [(existing["id"],)]
+            return self
+
+        if normalized.startswith("insert into youtube_transcript_queue"):
+            file_id, tenant_id, source_url, queued_at = params
+            existing = next(
+                (
+                    row
+                    for row in self.state.tables["youtube_transcript_queue"]["rows"]
+                    if row["file_id"] == file_id
+                ),
+                None,
+            )
+            if existing is None:
+                existing = {
+                    "id": self.state.next_queue_id,
+                    "file_id": file_id,
+                    "tenant_id": tenant_id,
+                    "source_url": source_url,
+                    "queued_at": queued_at,
+                    "last_attempted_at": None,
+                    "completed_at": None,
+                    "last_error": None,
+                }
+                self.state.tables["youtube_transcript_queue"]["rows"].append(existing)
+                self.state.next_queue_id += 1
+            else:
+                existing["tenant_id"] = tenant_id
+                existing["source_url"] = source_url
+                existing["queued_at"] = queued_at
+                existing["completed_at"] = None
+                existing["last_error"] = None
+            self._result = [(existing["id"],)]
+            return self
+
+        if normalized.startswith("select count(*) from youtube_transcript_attempts where attempted_on = %s"):
+            attempt_date = params[0]
+            rows = self.state.tables.get("youtube_transcript_attempts", {"rows": []})["rows"]
+            self._result = [(sum(1 for row in rows if row["attempted_on"] == attempt_date),)]
+            return self
+
+        if normalized.startswith("select attempted_at from youtube_transcript_attempts order by attempted_at desc limit 1"):
+            rows = list(self.state.tables.get("youtube_transcript_attempts", {"rows": []})["rows"])
+            rows.sort(key=lambda row: row["attempted_at"], reverse=True)
+            self._result = [(rows[0]["attempted_at"],)] if rows else []
+            return self
+
+        if normalized.startswith("select count(*) from youtube_transcript_queue q inner join files f on f.id = q.file_id where q.completed_at is null and lower(f.status) in ('uploaded', 'error')"):
+            queue_rows = self._eligible_queue_rows()
+            self._result = [(len(queue_rows),)]
+            return self
+
+        if normalized.startswith("select q.id, q.file_id, q.source_url, q.tenant_id from youtube_transcript_queue q inner join files f on f.id = q.file_id where q.completed_at is null and lower(f.status) in ('uploaded', 'error')"):
+            queue_rows = self._eligible_queue_rows()
+            queue_rows.sort(key=lambda row: (row["last_attempted_at"] or row["queued_at"], row["id"]))
+            self._result = [
+                (queue_rows[0]["id"], queue_rows[0]["file_id"], queue_rows[0]["source_url"], queue_rows[0]["tenant_id"])
+            ] if queue_rows else []
+            return self
+
+        if normalized.startswith("insert into youtube_transcript_attempts"):
+            queue_id, file_id, attempted_at, attempted_on = params
+            row = {
+                "id": self.state.next_attempt_id,
+                "queue_id": queue_id,
+                "file_id": file_id,
+                "attempted_at": attempted_at,
+                "attempted_on": attempted_on,
+            }
+            self.state.tables["youtube_transcript_attempts"]["rows"].append(row)
+            self.state.next_attempt_id += 1
+            self._result = []
+            return self
+
+        if normalized.startswith("update youtube_transcript_queue set last_attempted_at = %s, last_error = null where id = %s"):
+            queue_id = params[1]
+            row = self._get_queue(queue_id=queue_id)
+            row["last_attempted_at"] = params[0]
+            row["last_error"] = None
+            self._result = []
+            return self
+
+        if normalized.startswith("update youtube_transcript_queue set completed_at = %s, last_error = null where file_id = %s"):
+            file_id = params[1]
+            row = self._get_queue(file_id=file_id)
+            if row is not None:
+                row["completed_at"] = params[0]
+                row["last_error"] = None
+            self._result = []
+            return self
+
+        if normalized.startswith("update youtube_transcript_queue set completed_at = null, last_error = %s where file_id = %s"):
+            file_id = params[1]
+            row = self._get_queue(file_id=file_id)
+            if row is not None:
+                row["completed_at"] = None
+                row["last_error"] = params[0]
+            self._result = []
+            return self
+
+        if normalized.startswith("select id, file_id, tenant_id, source_url, queued_at, last_attempted_at, completed_at, last_error from youtube_transcript_queue where file_id = %s"):
+            file_id = params[0]
+            row = self._get_queue(file_id=file_id)
+            self._result = [self.state.queue_tuple(row)] if row is not None else []
             return self
 
         if normalized.startswith("select id, file_id, page_number, content, page_metadata, neo4j_page_node_id from document_pages where file_id = %s and page_number = %s"):
@@ -337,6 +497,31 @@ class FakeCursor:
         if row is None:
             raise AssertionError(f"Missing fake file row {file_id}")
         return row
+
+    def _get_queue(self, *, queue_id: int | None = None, file_id: int | None = None) -> dict[str, Any] | None:
+        for row in self.state.tables.get("youtube_transcript_queue", {"rows": []})["rows"]:
+            if queue_id is not None and row["id"] == queue_id:
+                return row
+            if file_id is not None and row["file_id"] == file_id:
+                return row
+        return None
+
+    def _eligible_queue_rows(self) -> list[dict[str, Any]]:
+        rows: list[dict[str, Any]] = []
+        queue_rows = self.state.tables.get("youtube_transcript_queue", {"rows": []})["rows"]
+        for queue_row in queue_rows:
+            if queue_row["completed_at"] is not None:
+                continue
+            file_row = next(
+                (row for row in self.state.tables["files"]["rows"] if row["id"] == queue_row["file_id"]),
+                None,
+            )
+            if file_row is None:
+                continue
+            if file_row["status"].lower() not in {"uploaded", "error"}:
+                continue
+            rows.append(queue_row)
+        return rows
 
 
 class FakeConnection:

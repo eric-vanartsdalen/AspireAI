@@ -6,6 +6,7 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging.Abstractions;
+using System.Diagnostics;
 using System.Reflection;
 using AuthenticatedUser = web::AspireApp.Web.Services.AuthenticatedUser;
 using AuthenticationContext = web::AspireApp.Web.Services.AuthenticationContext;
@@ -85,6 +86,73 @@ public sealed class UploadDataTests : IDisposable
         }
     }
 
+    [Fact]
+    public async Task UploadFiles_DoesNotWaitForAutomaticProcessingDispatch()
+    {
+        await using var context = CreateDbContext();
+        var tenantId = "tenant-allowed";
+        var currentUser = SeedTenantMembership(context, tenantId);
+        var dataDirectory = CreateDataDirectory();
+
+        try
+        {
+            var processingCoordinator = new FakeDocumentProcessingCoordinator
+            {
+                QueueDelay = TimeSpan.FromSeconds(5)
+            };
+
+            var cut = await RenderUploadDataAsync(context, currentUser, dataDirectory, processingCoordinator);
+
+            SetSelectedBrowserFile(cut.Instance, new TestBrowserFile("notes.txt", "text/plain", [1, 2, 3, 4]));
+
+            await InvokeUploadAsync(cut);
+
+            var storedFileId = await context.Datasources
+                .Select(file => file.Id)
+                .SingleAsync(XunitTestContext.Current.CancellationToken);
+
+            Assert.DoesNotContain(storedFileId, processingCoordinator.QueuedDocumentIds);
+            await WaitForQueuedDocumentAsync(processingCoordinator, storedFileId, timeoutMs: 8_000);
+        }
+        finally
+        {
+            DeleteDirectoryIfPresent(dataDirectory);
+        }
+    }
+
+    [Fact]
+    public async Task HandleUrlUpload_DoesNotWaitForAutomaticProcessingDispatch()
+    {
+        await using var context = CreateDbContext();
+        var tenantId = "tenant-allowed";
+        var currentUser = SeedTenantMembership(context, tenantId);
+        var dataDirectory = CreateDataDirectory();
+
+        try
+        {
+            var processingCoordinator = new FakeDocumentProcessingCoordinator
+            {
+                QueueDelay = TimeSpan.FromSeconds(5)
+            };
+
+            var cut = await RenderUploadDataAsync(context, currentUser, dataDirectory, processingCoordinator);
+            SetWebsiteUrl(cut.Instance, "https://contoso.example/docs");
+
+            await InvokeUrlUploadAsync(cut);
+
+            var storedFileId = await context.Datasources
+                .Select(file => file.Id)
+                .SingleAsync(XunitTestContext.Current.CancellationToken);
+
+            Assert.DoesNotContain(storedFileId, processingCoordinator.QueuedDocumentIds);
+            await WaitForQueuedDocumentAsync(processingCoordinator, storedFileId, timeoutMs: 8_000);
+        }
+        finally
+        {
+            DeleteDirectoryIfPresent(dataDirectory);
+        }
+    }
+
     [Theory]
     [InlineData("url", "https://contoso.example/docs")]
     [InlineData("youtube_video", "https://youtu.be/dQw4w9WgXcQ")]
@@ -143,10 +211,16 @@ public sealed class UploadDataTests : IDisposable
     }
 
     [Theory]
-    [InlineData("url", "error", false)]
-    [InlineData("youtube_video", "processed", false)]
-    [InlineData("youtube_channel", "processing", true)]
-    public async Task UploadData_SetsRefreshActionState_ForWebBackedStatuses(string sourceType, string status, bool expectedDisabled)
+    [InlineData("url", "error", null, false, "Error")]
+    [InlineData("youtube_video", "processed", "ready", false, "Processed")]
+    [InlineData("youtube_video", "processed", "queued", false, "Index queued")]
+    [InlineData("youtube_channel", "processing", null, true, "Processing")]
+    public async Task UploadData_RendersReadinessState_ForWebBackedSources(
+        string sourceType,
+        string status,
+        string? indexingStatus,
+        bool expectedDisabled,
+        string expectedStatusLabel)
     {
         await using var context = CreateDbContext();
         var tenantId = "tenant-allowed";
@@ -164,6 +238,7 @@ public sealed class UploadDataTests : IDisposable
                 SourceType = sourceType,
                 SourceUrl = "https://contoso.example/docs",
                 Status = status,
+                IndexingStatus = indexingStatus ?? string.Empty,
                 TenantId = tenantId
             });
             await context.SaveChangesAsync(XunitTestContext.Current.CancellationToken);
@@ -173,7 +248,59 @@ public sealed class UploadDataTests : IDisposable
             cut.WaitForAssertion(() =>
             {
                 var refreshButton = cut.Find(".refresh-web-source-button");
+                var statusBadge = cut.Find(".status-badge");
+
                 Assert.Equal(expectedDisabled, refreshButton.HasAttribute("disabled"));
+                Assert.Equal(expectedStatusLabel, statusBadge.TextContent.Trim());
+            });
+        }
+        finally
+        {
+            DeleteDirectoryIfPresent(dataDirectory);
+        }
+    }
+
+    [Theory]
+    [InlineData(null, "Processed", "status-processed")]
+    [InlineData("", "Processed", "status-processed")]
+    [InlineData("not_requested", "Processed", "status-processed")]
+    [InlineData("ready", "Processed", "status-processed")]
+    [InlineData("queued", "Index queued", "status-processing")]
+    [InlineData("indexing", "Indexing", "status-processing")]
+    [InlineData("failed", "Index failed", "status-error")]
+    [InlineData("timed_out", "Index timed out", "status-error")]
+    public async Task UploadData_RendersReadinessAwareStatus_ForProcessedSources(
+        string? indexingStatus,
+        string expectedText,
+        string expectedClass)
+    {
+        await using var context = CreateDbContext();
+        var tenantId = "tenant-allowed";
+        var currentUser = SeedTenantMembership(context, tenantId);
+        var dataDirectory = CreateDataDirectory();
+
+        try
+        {
+            context.Datasources.Add(new web::AspireApp.Web.Data.FileMetadata
+            {
+                FileName = "processed-source",
+                OriginalFileName = "processed-source",
+                FilePath = string.Empty,
+                FileHash = "HASH-READY",
+                SourceType = "upload",
+                Status = "processed",
+                IndexingStatus = indexingStatus ?? string.Empty,
+                TenantId = tenantId
+            });
+            await context.SaveChangesAsync(XunitTestContext.Current.CancellationToken);
+
+            var cut = await RenderUploadDataAsync(context, currentUser, dataDirectory);
+
+            cut.WaitForAssertion(() =>
+            {
+                var badge = cut.Find(".status-badge");
+                Assert.Equal(expectedText, badge.TextContent.Trim());
+                Assert.Contains(expectedClass, badge.ClassName);
             });
         }
         finally
@@ -252,6 +379,7 @@ public sealed class UploadDataTests : IDisposable
                 SourceType = "youtube_video",
                 SourceUrl = "https://youtu.be/dQw4w9WgXcQ",
                 Status = "processed",
+                IndexingStatus = "failed",
                 UploadedAt = DateTime.UtcNow,
                 ProcessingStartedAt = DateTime.UtcNow.AddMinutes(-5),
                 ProcessingCompletedAt = DateTime.UtcNow.AddMinutes(-1),
@@ -294,6 +422,7 @@ public sealed class UploadDataTests : IDisposable
             Assert.Null(refreshed.ProcessingError);
             Assert.Null(refreshed.DoclingDocumentPath);
             Assert.Null(refreshed.TotalPages);
+            Assert.Equal("not_requested", refreshed.IndexingStatus);
             Assert.Null(refreshed.Neo4jDocumentNodeId);
             Assert.Empty(await context.DatasourcePages.ToListAsync(XunitTestContext.Current.CancellationToken));
         }
@@ -312,6 +441,15 @@ public sealed class UploadDataTests : IDisposable
     {
         var method = typeof(UploadData).GetMethod("UploadFiles", BindingFlags.Instance | BindingFlags.NonPublic)
             ?? throw new InvalidOperationException("Could not locate UploadData.UploadFiles for regression coverage.");
+
+        await cut.InvokeAsync(() => (Task)method.Invoke(cut.Instance, [])!);
+        cut.Render();
+    }
+
+    private static async Task InvokeUrlUploadAsync(IRenderedComponent<UploadData> cut)
+    {
+        var method = typeof(UploadData).GetMethod("HandleUrlUpload", BindingFlags.Instance | BindingFlags.NonPublic)
+            ?? throw new InvalidOperationException("Could not locate UploadData.HandleUrlUpload for regression coverage.");
 
         await cut.InvokeAsync(() => (Task)method.Invoke(cut.Instance, [])!);
         cut.Render();
@@ -362,6 +500,14 @@ public sealed class UploadDataTests : IDisposable
             ?? throw new InvalidOperationException("Could not locate UploadData._selectedBrowserFile for regression coverage.");
 
         field.SetValue(component, browserFile);
+    }
+
+    private static void SetWebsiteUrl(UploadData component, string websiteUrl)
+    {
+        var field = typeof(UploadData).GetField("_websiteUrl", BindingFlags.Instance | BindingFlags.NonPublic)
+            ?? throw new InvalidOperationException("Could not locate UploadData._websiteUrl for regression coverage.");
+
+        field.SetValue(component, websiteUrl);
     }
 
     private static AuthenticatedUser SeedTenantMembership(UploadDbContext context, string tenantId)
@@ -418,6 +564,25 @@ public sealed class UploadDataTests : IDisposable
         }
     }
 
+    private static async Task WaitForQueuedDocumentAsync(
+        FakeDocumentProcessingCoordinator processingCoordinator,
+        int documentId,
+        int timeoutMs = 2_000)
+    {
+        var stopwatch = Stopwatch.StartNew();
+        while (stopwatch.ElapsedMilliseconds < timeoutMs)
+        {
+            if (processingCoordinator.QueuedDocumentIds.Contains(documentId))
+            {
+                return;
+            }
+
+            await Task.Delay(25, XunitTestContext.Current.CancellationToken);
+        }
+
+        Assert.Fail($"Timed out waiting for automatic processing to queue document {documentId}.");
+    }
+
     private sealed class TestBrowserFile(string name, string contentType, byte[] content) : IBrowserFile
     {
         private readonly byte[] _content = content;
@@ -449,10 +614,17 @@ public sealed class UploadDataTests : IDisposable
 
         public List<int> CleanedDocumentIds { get; } = [];
 
-        public Task<AutomaticProcessingDispatchResult> TryStartProcessingAsync(int documentId, CancellationToken cancellationToken = default)
+        public TimeSpan QueueDelay { get; init; }
+
+        public async Task<AutomaticProcessingDispatchResult> TryStartProcessingAsync(int documentId, CancellationToken cancellationToken = default)
         {
+            if (QueueDelay > TimeSpan.Zero)
+            {
+                await Task.Delay(QueueDelay, cancellationToken);
+            }
+
             QueuedDocumentIds.Add(documentId);
-            return Task.FromResult(new AutomaticProcessingDispatchResult(true, true, "queued"));
+            return new AutomaticProcessingDispatchResult(true, true, "queued");
         }
 
         public Task CleanupDocumentAsync(int documentId, CancellationToken cancellationToken = default)

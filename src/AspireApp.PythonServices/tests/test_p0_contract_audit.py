@@ -4,6 +4,7 @@ import re
 import sys
 import tempfile
 import unittest
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from unittest.mock import patch
 
@@ -57,10 +58,15 @@ class DatabaseContractAuditTests(unittest.TestCase):
         schema = service.get_schema_snapshot()
         state = FakeConnectionPool.states[service.connection_string]
 
-        self.assertEqual({"files", "document_pages"}, set(schema["tables"]))
+        self.assertEqual(
+            {"files", "document_pages", "youtube_transcript_queue", "youtube_transcript_attempts"},
+            set(schema["tables"]),
+        )
         self.assertIn("file_hash", schema["columns"]["files"])
         self.assertIn("source_confidence", schema["columns"]["files"])
         self.assertIn("page_metadata", schema["columns"]["document_pages"])
+        self.assertIn("last_attempted_at", schema["columns"]["youtube_transcript_queue"])
+        self.assertIn("attempted_on", schema["columns"]["youtube_transcript_attempts"])
         self.assertTrue(
             {
                 "idx_files_status",
@@ -68,6 +74,10 @@ class DatabaseContractAuditTests(unittest.TestCase):
                 "idx_files_uploaded",
                 "idx_pages_file_id",
                 "idx_pages_document_page",
+                "idx_youtube_transcript_queue_file",
+                "idx_youtube_transcript_queue_pending",
+                "idx_youtube_transcript_attempts_date",
+                "idx_youtube_transcript_attempts_queue",
             }.issubset(state.indexes)
         )
 
@@ -166,6 +176,54 @@ class DatabaseContractAuditTests(unittest.TestCase):
         self.assertIsNone(record["docling_document_path"])
         self.assertIsNone(record["total_pages"])
         self.assertEqual([], pages)
+
+    def test_youtube_transcript_queue_persists_attempt_limits_and_retry_state(self):
+        service = DatabaseService("host=test port=5432 dbname=appdb user=postgres password=pw")
+        file_id = service.add_url_datasource(
+            source_name="queued-video",
+            source_url="https://www.youtube.com/watch?v=aaaaaaaaaaa",
+            source_type="youtube_video",
+            tenant_id="tenant-a",
+        )
+        service.enqueue_youtube_transcript(
+            file_id=file_id,
+            source_url="https://www.youtube.com/watch?v=aaaaaaaaaaa",
+            tenant_id="tenant-a",
+        )
+
+        retryable_ids = {document.id for document in service.list_unprocessed_documents()}
+        self.assertNotIn(file_id, retryable_ids)
+
+        base_time = datetime(2026, 4, 22, 12, 0, tzinfo=UTC)
+        claimed = service.claim_next_youtube_transcript(now=base_time)
+        self.assertIsNotNone(claimed)
+        self.assertEqual(file_id, claimed["file_id"])
+        self.assertGreaterEqual(service.get_youtube_transcript_queue_wait_seconds(now=base_time), 59.0)
+
+        service.mark_youtube_transcript_failed(file_id, "rate limited")
+        queue_entry = service.get_youtube_transcript_queue_entry(file_id)
+        self.assertEqual("rate limited", queue_entry["last_error"])
+        self.assertIsNone(queue_entry["completed_at"])
+
+        current_time = base_time
+        for attempt_index in range(1, service.YOUTUBE_TRANSCRIPT_DAILY_LIMIT):
+            current_time += timedelta(minutes=1, seconds=1)
+            claimed = service.claim_next_youtube_transcript(now=current_time)
+            self.assertIsNotNone(claimed, f"Expected queued transcript on attempt {attempt_index + 1}")
+            service.mark_youtube_transcript_failed(file_id, f"attempt {attempt_index + 1}")
+
+        blocked_time = current_time + timedelta(minutes=1, seconds=1)
+        self.assertIsNone(service.claim_next_youtube_transcript(now=blocked_time))
+        self.assertGreater(service.get_youtube_transcript_queue_wait_seconds(now=blocked_time), 0.0)
+
+        next_day_time = datetime(2026, 4, 23, 0, 1, tzinfo=UTC)
+        claimed_next_day = service.claim_next_youtube_transcript(now=next_day_time)
+        self.assertIsNotNone(claimed_next_day)
+        self.assertEqual(file_id, claimed_next_day["file_id"])
+
+        service.mark_youtube_transcript_completed(file_id)
+        queue_entry = service.get_youtube_transcript_queue_entry(file_id)
+        self.assertIsNotNone(queue_entry["completed_at"])
 
     def test_resolve_upload_path_maps_shared_data_roots(self):
         service = DatabaseService("host=test port=5432 dbname=appdb user=postgres password=pw")

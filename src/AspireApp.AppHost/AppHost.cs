@@ -72,6 +72,7 @@ public partial class Program
         // Configure Neo4j build options
         var useLightweightBuild = builder.Configuration["USE_LIGHTWEIGHT_PYTHON"] ?? "false";
         var useLightweightNeo4j = builder.Configuration["USE_LIGHTWEIGHT_NEO4J"] ?? "false";
+        var enableIngestionVectorPopulation = builder.Configuration["ENABLE_INGESTION_VECTOR_POPULATION"] ?? "false";
         var neo4jDockerfile = useLightweightNeo4j.ToLower() == "true" ? "Dockerfile.lightweight" : "Dockerfile";
 
         // PROJECTS SETUP
@@ -148,6 +149,7 @@ public partial class Program
             .WithEnvironment("CHAT_MODEL", aiModel.Resource)                         // Chat model name for LLM completions
             .WithEnvironment("EMBEDDING_MODEL", aiEmbeddings.Resource)             // Embedding model name for vector operations
             .WithEnvironment("EMBEDDING_DIM", "1024")                              // Embedding dimension for bge-m3
+            .WithEnvironment("ENABLE_INGESTION_VECTOR_POPULATION", enableIngestionVectorPopulation)
             .WithEnvironment("PIP_CACHE_DIR", "/root/.cache/pip")                  // Use persistent pip cache
             .WithEnvironment("DOCKER_BUILDKIT", "1")                               // Enable BuildKit for better caching
             .WithHttpHealthCheck("/health")
@@ -174,6 +176,10 @@ public partial class Program
         var lightrag = builder.AddContainer("lightrag", "ghcr.io/hkuds/lightrag")
             .WithReference(ollama)
             .WithBindMount(sharedDataPath, "/app/data")
+            .WithEnvironment("KV_STORAGE", "JsonKVStorage")
+            .WithEnvironment("DOC_STATUS_STORAGE", "JsonDocStatusStorage")
+            .WithEnvironment("GRAPH_STORAGE", "Neo4JStorage")
+            .WithEnvironment("VECTOR_STORAGE", "NanoVectorDBStorage")
             .WithEnvironment("LIGHTRAG_KV_STORAGE", "JsonKVStorage")
             .WithEnvironment("LIGHTRAG_DOC_STATUS_STORAGE", "JsonDocStatusStorage")
             .WithEnvironment("LIGHTRAG_GRAPH_STORAGE", "Neo4JStorage")
@@ -192,9 +198,10 @@ public partial class Program
             .WithEnvironment("LLM_BINDING", "ollama")
             .WithEnvironment("LLM_BINDING_HOST", ollama.GetEndpoint("http"))
             .WithEnvironment("LLM_MODEL", aiModel.Resource)
-            .WithEnvironment("MAX_PARALLEL_INSERT", "2")
+            .WithEnvironment("MAX_PARALLEL_INSERT", "1")
             .WithEnvironment("EMBEDDING_FUNC_MAX_ASYNC", "1")
             .WithEnvironment("EMBEDDING_BATCH_NUM", "1")
+            .WithEnvironment("EMBEDDING_BINDING", "ollama")
             .WithEnvironment("EMBEDDING_TIMEOUT", "420")
             .WithEnvironment("EMBEDDING_BINDING_HOST", ollama.GetEndpoint("http"))
             .WithEnvironment("EMBEDDING_MODEL", aiEmbeddings.Resource)

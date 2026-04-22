@@ -174,6 +174,103 @@ public class BasicAspireAppHostTests : IClassFixture<TestFixture>
     }
 
     [Fact, Priority(2)]
+    public async Task DesktopSidebarClosesAfterNavigationSelection()
+    {
+        await WithPageAsync(async page =>
+        {
+            await page.GotoAsync(_data.WebfrontendUri, _data.Options);
+            await WaitForPageLoadCompletion(page);
+            await SignInAsDemoUserAsync(page);
+
+            var desktopToggle = page.Locator(".sidebar-toggle").First;
+            await WaitForLocator(desktopToggle, 30_000);
+
+            await desktopToggle.ClickAsync(new LocatorClickOptions { Delay = 100, Force = true });
+            await page.WaitForFunctionAsync(
+                "() => document.querySelector('.page')?.classList.contains('sidebar-open') === true",
+                new PageWaitForFunctionOptions { Timeout = 5_000 });
+
+            var chatLink = page.GetByRole(AriaRole.Link, new() { Name = "Chat" }).First;
+            await WaitForLocator(chatLink, 30_000);
+            await WaitForNavigationTargetWithinViewportAsync(chatLink);
+            await chatLink.ClickAsync(new LocatorClickOptions { Delay = 100, Force = true });
+
+            await page.WaitForURLAsync(
+                url => url.Contains("/chat", StringComparison.OrdinalIgnoreCase),
+                new PageWaitForURLOptions { Timeout = 30_000 });
+            await WaitForPageLoadCompletion(page);
+            await page.WaitForFunctionAsync(
+                "() => document.querySelector('.page')?.classList.contains('sidebar-open') === false",
+                new PageWaitForFunctionOptions { Timeout = 5_000 });
+
+            Assert.False(await IsDesktopSidebarOpenAsync(page));
+            Assert.False(await page.Locator(".sidebar-backdrop").First.IsVisibleAsync());
+        });
+    }
+
+    [Fact, Priority(2)]
+    public async Task DesktopSidebarClosesAfterTenantSelection()
+    {
+        var tenantId = $"sidebar-tenant-{Guid.NewGuid():N}";
+        var tenantName = $"Sidebar Tenant {tenantId[^8..]}";
+
+        await EnsureTenantMembershipAsync(tenantId, tenantName);
+
+        try
+        {
+            await WithPageAsync(async page =>
+            {
+                await page.GotoAsync(_data.WebfrontendUri, _data.Options);
+                await WaitForPageLoadCompletion(page);
+                await SignInAsDemoUserAsync(page);
+
+                await page.WaitForFunctionAsync(
+                    """
+                    tenantId => {
+                        const select = document.querySelector('#tenant-select');
+                        return select && Array.from(select.options).some(option => option.value === tenantId);
+                    }
+                    """,
+                    tenantId,
+                    new PageWaitForFunctionOptions { Timeout = 30_000 });
+
+                var desktopToggle = page.Locator(".sidebar-toggle").First;
+                await WaitForLocator(desktopToggle, 30_000);
+                await desktopToggle.ClickAsync(new LocatorClickOptions { Delay = 100, Force = true });
+                await page.WaitForFunctionAsync(
+                    "() => document.querySelector('.page')?.classList.contains('sidebar-open') === true",
+                    new PageWaitForFunctionOptions { Timeout = 5_000 });
+
+                var tenantSelector = page.Locator("#tenant-select").First;
+                await WaitForNavigationTargetWithinViewportAsync(tenantSelector);
+                await tenantSelector.SelectOptionAsync(new SelectOptionValue { Value = tenantId });
+
+                await page.WaitForFunctionAsync(
+                    """
+                    tenantId => {
+                        const page = document.querySelector('.page');
+                        const tenantMarker = document.querySelector('[data-auth-tenant]');
+                        return page?.classList.contains('sidebar-open') === false &&
+                            tenantMarker?.getAttribute('data-auth-tenant') === tenantId;
+                    }
+                    """,
+                    tenantId,
+                    new PageWaitForFunctionOptions { Timeout = 5_000 });
+
+                Assert.False(await IsDesktopSidebarOpenAsync(page));
+                Assert.False(await page.Locator(".sidebar-backdrop").First.IsVisibleAsync());
+                Assert.Equal(
+                    tenantId,
+                    await page.Locator("[data-auth-tenant]").First.GetAttributeAsync("data-auth-tenant"));
+            });
+        }
+        finally
+        {
+            await DeleteTenantAsync(tenantId);
+        }
+    }
+
+    [Fact, Priority(2)]
     public async Task OllamaLoads()
     {
         Console.WriteLine($"Navigating to Ollama Frontend at: {_data.OllamaUri}");
@@ -271,6 +368,8 @@ public class BasicAspireAppHostTests : IClassFixture<TestFixture>
             using var pythonClient = CreatePythonServiceHttpClient();
             var finalStatus = await PollForProcessingCompletionAsync(pythonClient, documentId);
             Assert.Equal("processed", finalStatus.Status);
+            Assert.True(finalStatus.Ready,
+                $"Python processing status reported 'processed' for document {documentId} before the source was retrieval-ready. Payload: {finalStatus.RawJson}");
             Assert.NotNull(finalStatus.StartedAt);
             Assert.NotNull(finalStatus.CompletedAt);
             Assert.True(finalStatus.TotalPages > 0,
@@ -278,17 +377,21 @@ public class BasicAspireAppHostTests : IClassFixture<TestFixture>
             Assert.True(finalStatus.ProcessedPages > 0,
                 $"Python processing status for document {documentId} did not report processed pages. Payload: {finalStatus.RawJson}");
 
+            var artifacts = await WaitForProcessedArtifactsAsync(documentId);
+            using var lightRagClient = CreateLightRagHttpClient();
+            await WaitForLightRagIngestionAsync(lightRagClient, artifacts, timeoutMs: LightRagIngestionTimeoutMs);
+            var finalUploadState = await WaitForUploadedFileStatusAsync(webClient, documentId, "processed");
+            Assert.Equal("processed", finalUploadState.Status);
+            Assert.True(
+                IsProcessedUploadReady(finalUploadState),
+                $"Web upload state marked document {documentId} as processed before it was retrieval-ready. Status: {finalUploadState.Status}, indexing status: {finalUploadState.IndexingStatus ?? "<null>"}");
             var finalDocument = await WaitForPythonDocumentVisibleAsync(pythonClient, documentId);
             Assert.Equal(uploadedFile.FileName, finalDocument.FileName);
             Assert.Equal(uploadedFile.OriginalFileName, finalDocument.OriginalFilename);
             Assert.Equal("processed", finalDocument.ProcessingStatus);
-
-            var finalUploadState = await WaitForUploadedFileStatusAsync(webClient, documentId, "processed");
-            Assert.Equal("processed", finalUploadState.Status);
-
-            var artifacts = await WaitForProcessedArtifactsAsync(documentId);
-            using var lightRagClient = CreateLightRagHttpClient();
-            await WaitForLightRagIngestionAsync(lightRagClient, artifacts, timeoutMs: LightRagIngestionTimeoutMs);
+            Assert.True(
+                IsProcessedPythonDocumentReady(finalDocument),
+                $"Python document endpoint marked document {documentId} as processed before it was retrieval-ready. Processing status: {finalDocument.ProcessingStatus}, indexing status: {finalDocument.IndexingStatus ?? "<null>"}");
             Assert.True(File.Exists(artifacts.DocumentJsonPath),
                 $"Expected Docling document artifact at '{artifacts.DocumentJsonPath}', but it was not created.");
             Assert.True(File.Exists(artifacts.FirstPagePath),
@@ -317,10 +420,16 @@ public class BasicAspireAppHostTests : IClassFixture<TestFixture>
         using var pythonClient = CreatePythonServiceHttpClient();
         var finalStatus = await PollForProcessingCompletionAsync(pythonClient, uploadedFile.Id);
         Assert.Equal("processed", finalStatus.Status);
+        Assert.True(finalStatus.Ready,
+            $"Python processing status reported 'processed' for document {uploadedFile.Id} before the source was retrieval-ready. Payload: {finalStatus.RawJson}");
 
         var artifacts = await WaitForProcessedArtifactsAsync(uploadedFile.Id);
         using var lightRagClient = CreateLightRagHttpClient();
         await WaitForLightRagIngestionAsync(lightRagClient, artifacts, timeoutMs: LightRagIngestionTimeoutMs);
+        var finalUploadState = await WaitForUploadedFileStatusAsync(webClient, uploadedFile.Id, "processed");
+        Assert.True(
+            IsProcessedUploadReady(finalUploadState),
+            $"Web upload state marked document {uploadedFile.Id} as processed before it was retrieval-ready. Status: {finalUploadState.Status}, indexing status: {finalUploadState.IndexingStatus ?? "<null>"}");
 
         var knowledgeQuery = SmokeRoundTripQuery;
 
@@ -389,10 +498,16 @@ public class BasicAspireAppHostTests : IClassFixture<TestFixture>
         using var pythonClient = CreatePythonServiceHttpClient();
         var finalStatus = await PollForProcessingCompletionAsync(pythonClient, uploadedFile.Id);
         Assert.Equal("processed", finalStatus.Status);
+        Assert.True(finalStatus.Ready,
+            $"Python processing status reported 'processed' for document {uploadedFile.Id} before the source was retrieval-ready. Payload: {finalStatus.RawJson}");
 
         var artifacts = await WaitForProcessedArtifactsAsync(uploadedFile.Id);
         using var lightRagClient = CreateLightRagHttpClient();
         await WaitForLightRagIngestionAsync(lightRagClient, artifacts, timeoutMs: LightRagIngestionTimeoutMs);
+        var finalUploadState = await WaitForUploadedFileStatusAsync(webClient, uploadedFile.Id, "processed");
+        Assert.True(
+            IsProcessedUploadReady(finalUploadState),
+            $"Web upload state marked document {uploadedFile.Id} as processed before it was retrieval-ready. Status: {finalUploadState.Status}, indexing status: {finalUploadState.IndexingStatus ?? "<null>"}");
 
         using var brainGatewayClient = CreateBrainGatewayHttpClient();
         var gatewayResult = await WaitForKnowledgeQueryResultAsync(
@@ -433,9 +548,15 @@ public class BasicAspireAppHostTests : IClassFixture<TestFixture>
         using var pythonClient = CreatePythonServiceHttpClient();
         var finalStatus = await PollForProcessingCompletionAsync(pythonClient, uploadedFile.Id);
         Assert.Equal("processed", finalStatus.Status);
+        Assert.True(finalStatus.Ready,
+            $"Python processing status reported 'processed' for document {uploadedFile.Id} before the source was retrieval-ready. Payload: {finalStatus.RawJson}");
         var artifacts = await WaitForProcessedArtifactsAsync(uploadedFile.Id);
         using var lightRagClient = CreateLightRagHttpClient();
         await WaitForLightRagIngestionAsync(lightRagClient, artifacts, timeoutMs: LightRagIngestionTimeoutMs);
+        var finalUploadState = await WaitForUploadedFileStatusAsync(webClient, uploadedFile.Id, "processed");
+        Assert.True(
+            IsProcessedUploadReady(finalUploadState),
+            $"Web upload state marked document {uploadedFile.Id} as processed before it was retrieval-ready. Status: {finalUploadState.Status}, indexing status: {finalUploadState.IndexingStatus ?? "<null>"}");
 
         await WithPageAsync(async page =>
         {
@@ -599,6 +720,54 @@ public class BasicAspireAppHostTests : IClassFixture<TestFixture>
         }
 
         return tenantId;
+    }
+
+    private async Task EnsureTenantMembershipAsync(string tenantId, string tenantName)
+    {
+        await using var connection = new NpgsqlConnection(_data.UploadStoreConnectionString);
+        await connection.OpenAsync(TestContext.Current.CancellationToken);
+        await using var transaction = await connection.BeginTransactionAsync(TestContext.Current.CancellationToken);
+
+        await using (var tenantCommand = new NpgsqlCommand(
+                         """
+                         INSERT INTO tenants (id, name, owner_user_id, is_protected, created_at, updated_at)
+                         VALUES (@id, @name, @ownerUserId, FALSE, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+                         ON CONFLICT (id) DO NOTHING
+                         """,
+                         connection,
+                         transaction))
+        {
+            tenantCommand.Parameters.AddWithValue("id", tenantId);
+            tenantCommand.Parameters.AddWithValue("name", tenantName);
+            tenantCommand.Parameters.AddWithValue("ownerUserId", DemoUserId);
+            await tenantCommand.ExecuteNonQueryAsync(TestContext.Current.CancellationToken);
+        }
+
+        await using (var membershipCommand = new NpgsqlCommand(
+                         """
+                         INSERT INTO tenant_memberships (tenant_id, user_id, is_default, created_at)
+                         VALUES (@tenantId, @userId, FALSE, CURRENT_TIMESTAMP)
+                         ON CONFLICT (tenant_id, user_id) DO NOTHING
+                         """,
+                         connection,
+                         transaction))
+        {
+            membershipCommand.Parameters.AddWithValue("tenantId", tenantId);
+            membershipCommand.Parameters.AddWithValue("userId", DemoUserId);
+            await membershipCommand.ExecuteNonQueryAsync(TestContext.Current.CancellationToken);
+        }
+
+        await transaction.CommitAsync(TestContext.Current.CancellationToken);
+    }
+
+    private async Task DeleteTenantAsync(string tenantId)
+    {
+        await using var connection = new NpgsqlConnection(_data.UploadStoreConnectionString);
+        await connection.OpenAsync(TestContext.Current.CancellationToken);
+
+        await using var command = new NpgsqlCommand("DELETE FROM tenants WHERE id = @tenantId", connection);
+        command.Parameters.AddWithValue("tenantId", tenantId);
+        await command.ExecuteNonQueryAsync(TestContext.Current.CancellationToken);
     }
 
     private async Task DeleteExistingTestUploadsAsync(HttpClient webClient, string? targetFilePath = null)
@@ -884,7 +1053,7 @@ public class BasicAspireAppHostTests : IClassFixture<TestFixture>
 
             observedStatuses.Add(document.ProcessingStatus!);
 
-            if (document.ProcessingStatus.Equals("processed", StringComparison.OrdinalIgnoreCase))
+            if (IsProcessedPythonDocumentReady(document))
             {
                 return document;
             }
@@ -906,7 +1075,7 @@ public class BasicAspireAppHostTests : IClassFixture<TestFixture>
         }
 
         Assert.Fail(
-            $"Timed out after {ProcessingPollTimeout.TotalSeconds:N0}s waiting for document {documentId} to reach 'processed' in the Python document list. Observed statuses: {string.Join(" -> ", observedStatuses)}. Last payload: {lastPayload}");
+            $"Timed out after {ProcessingPollTimeout.TotalSeconds:N0}s waiting for document {documentId} to become retrieval-ready in the Python document list. Observed statuses: {string.Join(" -> ", observedStatuses)}. Last payload: {lastPayload}");
 
         return default!;
     }
@@ -929,7 +1098,9 @@ public class BasicAspireAppHostTests : IClassFixture<TestFixture>
 
             var uploadedFile = listResult.Files.FirstOrDefault(file => file.Id == documentId);
             if (uploadedFile is not null &&
-                string.Equals(uploadedFile.Status, expectedStatus, StringComparison.OrdinalIgnoreCase))
+                string.Equals(uploadedFile.Status, expectedStatus, StringComparison.OrdinalIgnoreCase) &&
+                (!string.Equals(expectedStatus, "processed", StringComparison.OrdinalIgnoreCase) ||
+                 IsProcessedUploadReady(uploadedFile)))
             {
                 return uploadedFile;
             }
@@ -940,6 +1111,32 @@ public class BasicAspireAppHostTests : IClassFixture<TestFixture>
         Assert.Fail(
             $"Timed out after {timeoutMs}ms waiting for document {documentId} to reach '{expectedStatus}' in the Web upload state API. Last payload: {lastPayload}");
         return default!;
+    }
+
+    private static bool IsProcessedUploadReady(UploadedFileApiModel uploadedFile)
+    {
+        return string.Equals(uploadedFile.Status, "processed", StringComparison.OrdinalIgnoreCase) &&
+               (string.IsNullOrWhiteSpace(uploadedFile.IndexingStatus) ||
+                string.Equals(uploadedFile.IndexingStatus, "not_requested", StringComparison.OrdinalIgnoreCase) ||
+                string.Equals(uploadedFile.IndexingStatus, "ready", StringComparison.OrdinalIgnoreCase));
+    }
+
+    private static bool IsProcessedPythonDocumentReady(PythonDocumentApiResponse document)
+    {
+        return string.Equals(document.ProcessingStatus, "processed", StringComparison.OrdinalIgnoreCase) &&
+               (document.Ready ||
+                string.IsNullOrWhiteSpace(document.IndexingStatus) ||
+                string.Equals(document.IndexingStatus, "not_requested", StringComparison.OrdinalIgnoreCase) ||
+                string.Equals(document.IndexingStatus, "ready", StringComparison.OrdinalIgnoreCase));
+    }
+
+    private static bool IsProcessedPythonStatusReady(ProcessingStatusApiResponse status)
+    {
+        return string.Equals(status.Status, "processed", StringComparison.OrdinalIgnoreCase) &&
+               (status.Ready ||
+                string.IsNullOrWhiteSpace(status.IndexingStatus) ||
+                string.Equals(status.IndexingStatus, "not_requested", StringComparison.OrdinalIgnoreCase) ||
+                string.Equals(status.IndexingStatus, "ready", StringComparison.OrdinalIgnoreCase));
     }
 
     private async Task<ProcessedArtifactsInfo> WaitForProcessedArtifactsAsync(int documentId)
@@ -1435,7 +1632,7 @@ public class BasicAspireAppHostTests : IClassFixture<TestFixture>
 
                 observedStatuses.Add(status.Status);
 
-                if (status.Status.Equals("processed", StringComparison.OrdinalIgnoreCase))
+                if (IsProcessedPythonStatusReady(status))
                 {
                     return status;
                 }
@@ -1462,7 +1659,7 @@ public class BasicAspireAppHostTests : IClassFixture<TestFixture>
         }
 
         Assert.Fail(
-            $"Timed out after {ProcessingPollTimeout.TotalSeconds:N0}s waiting for document {documentId} to reach 'processed'. Observed statuses: {string.Join(" -> ", observedStatuses)}. Last payload: {lastPayload}");
+            $"Timed out after {ProcessingPollTimeout.TotalSeconds:N0}s waiting for document {documentId} to become retrieval-ready. Observed statuses: {string.Join(" -> ", observedStatuses)}. Last payload: {lastPayload}");
 
         return default!;
     }
@@ -1884,6 +2081,7 @@ public class BasicAspireAppHostTests : IClassFixture<TestFixture>
         public string? OriginalFileName { get; set; }
         public string? SourceType { get; set; }
         public string? Status { get; set; }
+        public string? IndexingStatus { get; set; }
     }
 
     private sealed record AuthenticatedClient(HttpClient Client, string TenantId);
@@ -1912,6 +2110,12 @@ public class BasicAspireAppHostTests : IClassFixture<TestFixture>
 
         [JsonPropertyName("processing_status")]
         public string? ProcessingStatus { get; set; }
+
+        [JsonPropertyName("indexing_status")]
+        public string? IndexingStatus { get; set; }
+
+        [JsonPropertyName("ready")]
+        public bool Ready { get; set; }
     }
 
     private sealed class ProcessingStatusApiResponse
@@ -1936,6 +2140,15 @@ public class BasicAspireAppHostTests : IClassFixture<TestFixture>
 
         [JsonPropertyName("completed_at")]
         public DateTime? CompletedAt { get; set; }
+
+        [JsonPropertyName("indexing_status")]
+        public string? IndexingStatus { get; set; }
+
+        [JsonPropertyName("indexing_error")]
+        public string? IndexingError { get; set; }
+
+        [JsonPropertyName("ready")]
+        public bool Ready { get; set; }
 
         [JsonIgnore]
         public string RawJson { get; set; } = string.Empty;

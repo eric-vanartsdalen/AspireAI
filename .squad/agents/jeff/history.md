@@ -34,6 +34,242 @@
 
 ## Learnings
 
+### 2026-04-24 — Layout-owned sidebar dismissal should follow tenant-context changes too, not just route changes
+
+**Context:**
+- Eric reported that the desktop slide-out menu now closed after normal nav clicks, but stayed open when the user switched tenants from the sidebar dropdown.
+- The existing ownership pattern already lived in `MainLayout`: it owned `_sidebarOpen`, the backdrop, and the route-change dismissal behavior.
+
+**What I Changed:**
+- Kept dismissal logic in `MainLayout.razor` and subscribed the layout to `TenantContextService.OnTenantChanged`.
+- Routed both `NavigationManager.LocationChanged` and tenant-change events through the same close helper instead of pushing callbacks into `TenantSelector`.
+- Added focused regression coverage in bUnit and the live Aspire browser suite.
+
+**Key Learning:**
+- **Layout ownership applies to non-navigation shell events too.** If the layout owns the drawer state, tenant-context changes should close it from the layout just like route changes do.
+- **Keep child components dumb.** `TenantSelector` should only change tenant context; the shell decides whether that interaction dismisses the sidebar.
+
+**Validation:**
+- `dotnet build .\AspireApp.sln` ✅
+- `dotnet test .\src\AspireApp.WebTest\AspireApp.WebTest.csproj --no-build --filter "FullyQualifiedName~MainLayoutTests|FullyQualifiedName~BasicAspireAppHostTests.DesktopSidebarClosesAfter"` ✅
+
+### 2026-04-21 — AppHost Must Serialize LightRAG File Indexing via `MAX_PARALLEL_INSERT` to Match Ollama Constraint
+
+**Context:**
+- Eric asked whether LightRAG exposes a setting that makes documents index automatically "on upload" to address timeout issues.
+- AspireAI wires a LightRAG container in AppHost, but the product does not call LightRAG's `/documents/upload` API.
+- The Python pipeline stages markdown into the shared `INPUT_DIR` and explicitly calls `POST /documents/scan`.
+
+**What I Confirmed:**
+- LightRAG's `/documents/upload` endpoint already indexes in background by design.
+- There is no separate boolean "index on upload" flag for the `INPUT_DIR` + `/documents/scan` flow.
+- The documented AppHost-relevant concurrency knob is `MAX_PARALLEL_INSERT`, which controls how many files LightRAG indexes in parallel during scan operations.
+
+**Practical Decision:**
+- Do **not** add a fictional "index on upload" AppHost flag.
+- Treat upload-time indexing as LightRAG endpoint behavior, not as a tunable setting.
+- For our scan-based handoff, use the documented `MAX_PARALLEL_INSERT=1` setting.
+- This matches the existing `MAX_ASYNC=1` constraint against Ollama and reduces avoidable contention.
+
+**Result:**
+- AppHost configuration now sets `.WithEnvironment("MAX_PARALLEL_INSERT", "1")` on the LightRAG container service.
+- File-level indexing runs one document at a time, reducing timeout pressure from unnecessary concurrent LightRAG embedding calls against a constrained Ollama backend.
+- Scan-based handoff semantics are unchanged.
+
+**Key Pattern:**
+- **AppHost Configuration Honesty:** Don't invent fictional environment variables. Understand the actual documented tuning knobs and apply them consistently when multiple services compete for the same backend resource.
+- **Cross-Service Constraint Matching:** When Ollama is constrained to `MAX_ASYNC=1`, mirror that in dependent stages (LightRAG `MAX_PARALLEL_INSERT=1`) to prevent unnecessary contention.
+
+**Key File Paths:**
+- `src\AspireApp.AppHost\AppHost.cs` — LightRAG service registration with `MAX_PARALLEL_INSERT=1`
+- `.squad/decisions/inbox/jeff-lightrag-setting.md` — Decision artifact (merged to decisions.md)
+- `.squad/orchestration-log/20260421T171255Z-jeff.md` — Orchestration log
+- `.squad/log/20260421T171255Z-lightrag-setting.md` — Session log (shared with Jarvis)
+
+**Validation:**
+- `dotnet restore` ✅
+- `dotnet build .\AspireApp.sln --no-restore` ✅
+
+### 2026-04-24 — Desktop Menu-Close Regression Was Fixed at the Right Ownership Boundary; Playwright Viewport Timing Is a Test Responsibility
+
+**Context:**
+- Desktop Web UI kept the slide-out menu open after clicking a nav item and navigating to a new route.
+- Jeff fixed by subscribing `MainLayout` to `NavigationManager.LocationChanged` and closing sidebar on route change.
+- Buster added live browser regression test to validate fix.
+
+**The Fix — Why This Ownership Works:**
+- The layout already owns `_sidebarOpen`, the backdrop element, and the hamburger toggle button.
+- Route-change-driven dismissal covers all internal navigation uniformly without scattering per-link handlers through `NavMenu.razor`.
+- Implementation is simple: subscribe in `OnInitializedAsync()`, set `_sidebarOpen = false` on every location change, unsubscribe via `IDisposable`.
+- BUnit test `MainLayoutTests.ClosesSidebar_WhenLocationChanges` validates the logic quickly.
+
+**Playwright Timing Discovery:**
+- First browser test run (`BasicAspireAppHostTests.DesktopSidebarClosesAfterNavigationSelection`) failed with "Element is outside viewport" when trying to click the `Chat` link.
+- Root cause: Playwright clicked before the drawer animation completed settling inside viewport.
+- **This was NOT a product code bug.** Browser animations are real timing.
+- Buster's fix: Add explicit `WaitForNavigationTargetWithinViewportAsync()` before clicking nav targets in drawer-dependent tests.
+
+**Key Learning:**
+- Animation timing failures are a **test responsibility**, not a product issue.
+- Explicit waits preserve real-user interaction semantics without brittle workarounds.
+- This becomes a reusable pattern for all future drawer/slide-out navigation tests.
+
+**Result:**
+- Product code clean ✅
+- Unit test passing ✅
+- Live browser regression stable and meaningful ✅
+- Future drawer tests have a clear pattern to follow ✅
+- `BasicAspireAppHostTests.AspireDashboardLoads` ✅
+
+### 2026-04-21 — LightRAG Has No Auto-Index Toggle for Our Scan-Based Handoff
+
+**Context:**
+- Eric asked whether LightRAG exposes a setting that makes documents index automatically "on upload" so AppHost could flip it on for the timeout issue.
+
+**What I Confirmed:**
+- LightRAG's documented `POST /documents/upload` endpoint already indexes asynchronously by design; there is no separate boolean environment flag that turns upload indexing on.
+- AspireAI does **not** use that endpoint for ingestion. Our Python pipeline stages markdown into LightRAG's shared `INPUT_DIR` and explicitly triggers `POST /documents/scan`.
+- For that scan-based flow, the documented AppHost-relevant tuning knob is `MAX_PARALLEL_INSERT`, which controls how many files LightRAG indexes in parallel.
+
+**Practical Decision:**
+- Keep the existing scan-based handoff.
+- When AspireAI also constrains `MAX_ASYNC=1` against the same Ollama backend, set `MAX_PARALLEL_INSERT=1` so LightRAG serializes file ingestion and avoids extra contention.
+
+**Key file paths:**
+- `src\AspireApp.AppHost\AppHost.cs`
+- `src\AspireApp.PythonServices\app\services\lightrag_handoff_service.py`
+- `.squad\skills\lightrag-handoff\SKILL.md`
+
+### 2026-04-21 — Upload Dispatch Must Not Block the Blazor Circuit
+
+**Context:** Eric reported upload-page timeouts after the row flipped to "Processing", plus chat calls timing out while LightRAG-backed responses were still in flight.
+
+**What I Confirmed:**
+- Python `POST /processing/process-document/{id}` already queues background work and returns quickly; the long-running work is not supposed to be awaited by the upload surface.
+- The Web **interactive** upload path in `UploadData.razor.cs` still awaited `TryStartAutomaticProcessingAsync()` directly, and the URL controller path did the same.
+- Chat timeouts were still brittle because transport timeouts could race or outlive the user-facing timeout without being translated into a clear gateway problem.
+
+**What I Changed:**
+- Upload/file + URL flows now persist first, return immediately with a queued-processing message, and dispatch automatic processing in background.
+- Background dispatch failures now surface as warnings instead of stalling the upload interaction.
+- Chat/gateway clients now translate downstream timeouts into explicit 504-style problems, and timeout layers were widened so the UI token is the primary boundary.
+
+**Validation:**
+- Focused .NET tests passed: `BrainGatewayPhase2Tests`, `UploadDataTests`, `ChatCritiqueModeTests`, `FileUploadControllerTests` (63/63).
+- `dotnet build .\\AspireApp.sln --no-restore` succeeded.
+
+### 2026-12-20 — Chat Reload Diagnosis: Fresh Knowledge Not Appearing
+
+**Context:** User uploaded website, it processed successfully, reloaded chat page, but new knowledge didn't appear in chat responses. Requested audit of .NET side for stale request state or reload behavior issues.
+
+**Investigation Scope:**
+- Upload completion path (FileUploadController)
+- Chat page reload behavior (OnInitializedAsync, LoadConversationSummariesAsync)
+- Conversation persistence (SelectConversationAsync, ApplyConversationDetail)
+- Request shaping to BrainChatClient (CallBackgroundAI parameters)
+- Conversation history building (BuildConversationHistoryForGateway)
+
+**Key Findings — .NET Side EXONERATED:**
+1. **Upload Processing:** URL uploads trigger `TryStartAutomaticProcessingAsync()` synchronously (line 278-279 FileUploadController.cs) — no background delays that would create race conditions
+2. **Page Reload:** `OnInitializedAsync()` always calls fresh `LoadConversationSummariesAsync()` → DB query with no client-side caching
+3. **Conversation Loading:** `SelectConversationAsync()` rebuilds `_chatHistory` from DB each time (lines 218-230) — no stale in-memory state
+4. **Request Parameters:** `CallBackgroundAI()` passes fresh context to BRAIN gateway (lines 990-996):
+   - `tenantId`: Current tenant from TenantContext (no caching detected)
+   - `conversationId`: Current active conversation ID
+   - `conversationHistory`: Last 12 messages from fresh `_chatHistory`
+   - No filters or exclusions that would prevent fresh knowledge retrieval
+5. **History Building:** `BuildConversationHistoryForGateway()` is simple last-N logic (max 12 messages) with no date/content filtering
+
+**Root Cause Determination:**
+- .NET correctly passes tenant ID and all context to BRAIN gateway
+- No stale state, no caching, no reload issues in Blazor chat component
+- **Issue MUST be in BRAIN gateway or Python processing pipeline:**
+  - Knowledge graph may not be committed/visible despite "processed" status
+  - BRAIN `/brain/chat` endpoint may query stale state or use cached results
+  - Processing completion race: status updated before Neo4j ingestion finishes
+
+**Artifact Created:**
+- `chat-reload-diagnosis.md` in repo root with full evidence trail and failure point analysis
+- Recommended next steps for Python/BRAIN team (Jarvis) to verify Neo4j knowledge graph state and gateway retrieval logic
+
+**Key File References:**
+- `FileUploadController.cs` (line 278-279): Upload → processing trigger
+- `Chat.razor.cs` (lines 103-140, 164-189, 204-230, 337-349, 990-996, 1082-1103): Reload + request shaping
+- `BrainChatClient.cs` (lines 66-74): Request envelope construction
+
+### 2026-12-19 — Performance Bottleneck Analysis: Chat Timeouts
+
+**Context:** Eric reported chat response latency (80–120s for regular search, 180s for Critique Mode with timeouts). Requested investigation of .NET timeout/resilience limits and whether architecture adds avoidable latency.
+
+**Trace Path:**
+- Blazor Chat component → BrainChatClient (Web) → API Service → PythonBrainBackendClient → Python FastAPI backend
+- 3-minute (180s) cancellation token set in Chat.razor.cs CallBackgroundAI() (line 980)
+- Timeout stacking across three layers:
+  - Web HttpClient.Timeout: 120s
+  - Web Polly TotalRequestTimeout: 180s
+  - API HttpClient.Timeout: 180s
+  - API Polly TotalRequestTimeout: 240s
+
+**Critical Finding:**
+- Backend latency is the bottleneck: Neo4j search 40–60s + Ollama LLM 40–60s = 80–120s
+- .NET layers have **no defects** (no duplicate calls, serial waits are correct, payload size is lean)
+- BUT: Web HttpClient.Timeout (120s) fires **before** Blazor's 180s intent because it's too tight
+- Critique Mode timeout (reported 180s) is correct behavior: if multiple passes + reasoning occur, hitting the Blazor token boundary is expected
+
+**Key Issues Identified:**
+1. **Timeout collision:** Web layer's 120s HttpClient.Timeout is hidden boundary; users see failure before Blazor's 180s token expires
+2. **No progress feedback:** User stares at "Waiting..." for 2 minutes; no "Searching graph" or "Generating response" indicator
+3. **Timeout alignment not documented:** Future maintainers won't understand why timeouts are stacked the way they are
+
+**Recommendations (High Impact):**
+1. Increase Web HttpClient.Timeout to 240s (was 120s) — removes hidden boundary
+2. Increase Web Polly TotalRequestTimeout to 240s (was 180s) — aligns with updated client timeout
+3. Add documentation explaining timeout stacking rationale
+4. Implement Server-Sent Events (SSE) for real-time progress feedback — reduces perceived wait time
+5. Add diagnostic logging for timeout patterns (helps identify whether issues are Neo4j, Ollama, or .NET)
+
+**Decision:** These are maintainability + UX improvements, not performance defects. Recommend implementing #1–3 as low-effort high-value fixes, #4–5 as medium-term UX enhancements.
+
+**Artifact:** Full analysis in `/PERFORMANCE_ANALYSIS.md` with 10 prioritized recommendations and code locations.
+
+### 2026-04-23 — Chat Timeout Boundaries Misaligned; Immediate Fixes Approved
+
+**Context:** Search latency review surfaced hidden timeout collision: Web HttpClient.Timeout (120s) fires before Blazor's 180s cancellation token. .NET layers are correct; issue is design clarity + UX.
+
+**Investigation Result:**
+- Backend latency is expected (40-60s retrieval + 40-60s LLM = 80-120s regular, longer for critique)
+- Critique Mode timeout is not a bug; multi-pass design is structurally expensive (150-270s without parallelization)
+- .NET is not adding latency; architecture is sound
+
+**Immediate Fixes (Approved for Next Sprint):**
+1. Raise Web HttpClient.Timeout from 120s to 240s (allow Blazor 180s token to be terminal)
+2. Raise Web Polly TotalRequestTimeout to 240s (remove collision)
+3. Document timeout hierarchy in code comments explaining layered design
+
+**Deferred Enhancements:**
+- SSE progress events (medium effort; helps perceived latency)
+- Timeout negotiation header (optional; low priority)
+
+**Decision:** Jarvis will parallelize critique retrieval (highest impact). Jeff implements timeout fixes (low effort) + documents stacking. Together with parallelization, critique mode should fit within 180s window for most queries.
+
+**Related Decisions:**
+- "Retrieval Parallelization: Critique Mode Sub-Queries" (Jarvis implementation details)
+- "Neo4j Indexing Is Not the Latency Fix" (architecture confirmation)
+
+### 2026-04-22 — BRAIN Retrieval Handoff Gap Investigation
+
+**Context:** Eric reported YouTube content retrieval appearing to search only the first document. Investigated Web → ApiService → Python handoff.
+
+**Finding:**
+- No document-scope signal in shared BRAIN chat/query contracts (design limitation, not .NET code bug)
+- Python retrieval uses history-augmented queries, which can anchor follow-ups to earlier context
+- Python retrievers have optional `document_ids` seam, but not exposed in shared contracts yet
+- Root cause is downstream Python retrieval behavior, not dropped .NET payload
+
+**Decision:** Do not add speculative .NET workaround. Recommended Jarvis/Bob add explicit document-scoping to shared contracts if product needs single-document focus.
+
+**Related:** Jarvis fixed downstream LightRAG supplementation; YouTube flow now resilient to eventual consistency.
+
 ### 2026-04-16 — Team Sync: Chat Gateway History + Metadata Persistence
 
 **Context:** Jarvis added `conversation_history` to BRAIN contract. Buster validated regression coverage. 54 Python + 44 .NET tests passing.
@@ -173,6 +409,30 @@ Build verified successfully. Tests were running but took longer than expected du
 
 <!-- Append new learnings below. Each entry is something lasting about the project. -->
 
+### 2026-04-22 — BRAIN chat/query handoff has no document-scoping, and Python retrieval uses history instead
+
+**Status:** Investigated; no local .NET product fix applied.
+
+**Key insight:**
+- `src\AspireApp.Web\Components\Pages\Chat.razor.cs` sends chat requests with tenant, conversation ID, mode, top-k, and conversation history, but no selected document IDs or focus/filter payload.
+- `src\AspireApp.Web\Services\BrainChatClient.cs` and `src\AspireApp.ApiService\Contracts\BrainContractModels.cs` mirror that same contract shape: chat carries `query`, `mode`, `conversation_id`, `conversation_history`, `top_k`; query carries only `query` and `top_k`.
+- Python accepts `conversation_id`, but `src\AspireApp.PythonServices\app\routers\brain.py` and `src\AspireApp.PythonServices\app\routers\rag.py` do not use it for retrieval. Instead, `conversation_history` is blended directly into the retrieval query, which can bias follow-up retrieval toward earlier document context.
+- Python retrievers already have an optional `document_ids` filter path in `src\AspireApp.PythonServices\app\brain\knowledge\retrievers.py`, but the shared BRAIN chat/query contracts do not expose that field today, so .NET cannot scope retrieval even if the UI wanted to.
+
+**Validation:**
+- `dotnet test src\AspireApp.WebTest\AspireApp.WebTest.csproj --filter "FullyQualifiedName~BrainGatewayPhase2Tests|FullyQualifiedName~ChatFocusTests|FullyQualifiedName~BrainContractRoundTripTests" --logger "console;verbosity=minimal" /m:1`
+
+**Key paths:**
+- `src\AspireApp.Web\Components\Pages\Chat.razor.cs`
+- `src\AspireApp.Web\Services\BrainChatClient.cs`
+- `src\AspireApp.ApiService\Contracts\BrainContractModels.cs`
+- `src\AspireApp.ApiService\Program.cs`
+- `src\AspireApp.ApiService\Services\BrainBackendClient.cs`
+- `src\AspireApp.PythonServices\app\contracts\models.py`
+- `src\AspireApp.PythonServices\app\routers\brain.py`
+- `src\AspireApp.PythonServices\app\routers\rag.py`
+- `src\AspireApp.PythonServices\app\brain\knowledge\retrievers.py`
+
 ### 2026-04-16 — Upload UI tests should sign in directly to the protected upload route instead of reopening the sidebar nav
 
 **Status:** Implemented and validated for the upload/delete UI regression slice.
@@ -207,6 +467,7 @@ Build verified successfully. Tests were running but took longer than expected du
 - `dotnet build AspireApp.sln --no-restore`
 
 **Key paths:**
+
 - `src\AspireApp.Web\Components\Pages\Chat.razor.cs`
 - `src\AspireApp.Web\Services\BrainChatClient.cs`
 - `src\AspireApp.Web\Services\ChatConversationService.cs`
@@ -921,6 +1182,25 @@ The failing UI test checks `Assert.Equal("uploaded", uploadedFile.Status)` at li
 - Prepares for Phase 3 Gateway: Chat will inject TenantContext and pass tenant_id to POST /brain/chat
 - Defers authentication to Phase 6: hardcoded tenant list acceptable for dev (default, tenant-a, tenant-b, demo)
 
+### 2026-04-24 — Blazor layout-owned sidebar state should close on route changes
+
+**Status:** Implemented and validated for the Web shell navigation regression.
+
+**Key insight:**
+- `src\AspireApp.Web\Components\Layout\MainLayout.razor` owns the desktop slide-out sidebar state, so the layout should also listen to `NavigationManager.LocationChanged` and clear `_sidebarOpen` when the route changes.
+- Keeping the close behavior in the layout avoids per-link JavaScript or duplicated nav-item callbacks in `NavMenu.razor`.
+- Fast regression coverage belongs in `src\AspireApp.WebTest\Tests\MainLayoutTests.cs`, where a bUnit layout render can prove the sidebar closes on `NavigationManager.NavigateTo`.
+- Browser coverage also belongs in `src\AspireApp.WebTest\Tests\BasicAspireAppHostTests.cs`, because the regression depends on real navigation plus the rendered desktop shell.
+
+**Validation:**
+- `dotnet build --nologo`
+- `dotnet test src\AspireApp.WebTest\AspireApp.WebTest.csproj --no-build --filter "FullyQualifiedName=AspireApp.WebTest.Tests.MainLayoutTests.ClosesSidebar_WhenLocationChanges" --logger "console;verbosity=minimal"`
+
+**Key paths:**
+- `src\AspireApp.Web\Components\Layout\MainLayout.razor`
+- `src\AspireApp.WebTest\Tests\MainLayoutTests.cs`
+- `src\AspireApp.WebTest\Tests\BasicAspireAppHostTests.cs`
+
 **First Tenant Context Slice Decision:**
 - Scoped service pattern isolates context per Blazor SignalR circuit (session-based, no auth yet)
 - X-Tenant-Id header pattern chosen for API calls (backward compatible: defaults to "default" if absent)
@@ -1322,6 +1602,36 @@ The failing UI test checks `Assert.Equal("uploaded", uploadedFile.Status)` at li
 
 **What changed:**
 - `src/AspireApp.WebTest/Tests/BasicAspireAppHostTests.cs` now clears stale copies of the sample document through the Web API, uploads through the UI, resolves the new file row from API-backed state, and then calls the Python trigger/status endpoints directly.
+
+### 2026-04-21 — Web UI Readiness Status Display + Schema Tolerance
+
+**Status:** COMPLETE — Upload table now displays per-document readiness state; backward-compatible with pre-polling schemas.
+
+**What was built:**
+- Extended `UploadData` record with optional `IndexingStatus` property (nullable); safe deserialization for pre-polling docs
+- Web UI Upload table rows now display readiness labels: queued (spinner), indexing (progress), ready (checkmark), error (alert)
+- `UploadDataService` interprets `indexing_status` state → human-readable labels
+- No breaking changes to ApiService contract or gateway routing
+
+**Why it matters:**
+- Users see honest progress: documents appear in Upload list before they're queryable (not silent waiting)
+- Schema tolerance prevents version mismatch errors when rolling out `indexing_status` polling
+- UI gracefully degrades if `indexing_status` absent (treats as legacy "processed" semantics)
+
+**Key files:**
+- `src/AspireApp.Web/Components/UploadDataService.cs` — label interpretation
+- `src/AspireApp.Web/Data/UploadData.cs` — contract extension (nullable field)
+- `src/AspireApp.WebTest/Tests/UploadDataTests.cs` — optional-field compat tests (28/28 passing)
+
+**Test coverage:**
+- UploadDataTests: optional field deserialization, all readiness states (28/28 passing)
+- BasicAspireAppHostTests: end-to-end compat checks (passing)
+- No ApiService changes required
+
+**Handoff to next phase:**
+- Jarvis: Polling loop feeding `indexing_status` updates via API responses
+- Buster: E2E browser test validates UI label updates as documents transition states
+
 - The test now fails with readable diagnostics for trigger failures, status contract problems, processing errors, or polling timeouts.
 - `BasicAspireAppHostTests.PythonServiceOpenAPILoads` still passes, so this work separates "Swagger loads" from "processing actually works."
 
@@ -1791,4 +2101,20 @@ The failing UI test checks `Assert.Equal("uploaded", uploadedFile.Status)` at li
 - URL-backed rows in `src\\AspireApp.Web\\Components\\Pages\\UploadData.razor(.cs)` now expose a `Refresh` action, but uploaded file rows keep their existing delete-only behavior.
 - The refresh path lives in `src\\AspireApp.Web\\Shared\\FileStorageService.cs`: for URL-backed rows it reuses `cleanup-document`, resets persisted processing artifacts/state back to `uploaded`, and then reuses the existing `processing/process-document/{id}` trigger instead of adding a second backend API.
 - Regression coverage in `src\\AspireApp.WebTest\\Tests\\UploadDataTests.cs` now protects both the URL-only button rendering seam and the cleanup/reset/requeue behavior for processed web sources.
+
+### 2026-04-24 - Upload readiness must separate processing-complete from retrieval-ready
+- `src\\AspireApp.Web\\Data\\DocumentEntities.cs` maps shared `files.indexing_status` so Web can distinguish LightRAG readiness from the primary `status` lifecycle.
+- `src\\AspireApp.Web\\Components\\Pages\\UploadData.razor(.cs)` should keep legacy/non-LightRAG rows on the existing processed semantics (`null` / `not_requested` / `ready` still render as processed) but override the badge for `queued`, `indexing`, `failed`, and `timed_out`.
+- `src\\AspireApp.Web\\Shared\\FileStorageService.cs` is the right .NET seam for tolerant shared-table bootstrap work: ensure missing columns exist before EF reads the `files` table, and reset retrieval readiness back to `not_requested` when a source is re-queued.
+
+
+
+### 2026-04-21 — Timeout Stabilization Session: Non-Blocking Upload Dispatch + Explicit Timeout Translation
+
+**Session Work:** .NET side timeout traced to synchronous upload dispatch and opaque cancellation handling.
+
+**Jeff Learning:** Upload surfaces must not block on background processing dispatch; return queued immediately. Gateway must translate OperationCanceledException into clear TimeoutException. Both fixes implemented in UI layer, gateway clients, and dependency wiring.
+
+**Session Log:** See .squad/log/20260421-timeout-stabilization.md
+**Decision File:** .squad/decisions.md (merged: Non-Blocking Upload Dispatch + Explicit Gateway Timeouts)
 

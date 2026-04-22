@@ -9,6 +9,169 @@
 
 <!-- Append new learnings below. Each entry is something lasting about the project. -->
 
+### 2026-04-21 — LightRAG File Indexing Concurrency Must Match Backend Constraint via `MAX_PARALLEL_INSERT`
+
+**Problem:**
+- Eric asked whether LightRAG exposes a setting that makes documents index automatically "on upload" to address timeout issues.
+- AspireAI stages markdown into LightRAG's shared `INPUT_DIR` and explicitly triggers `POST /documents/scan`, not the upload endpoint.
+- Recent uploads were reaching `Index timeout failure` during LightRAG processing, which could be mitigated by reducing contention.
+
+**What We Found:**
+- LightRAG's `/documents/upload` endpoint already indexes in background by design.
+- No separate boolean "index on upload" flag exists for the `INPUT_DIR` + `/documents/scan` flow.
+- The documented file-level concurrency control is `MAX_PARALLEL_INSERT`, described as the number of parallel files processed in one batch during indexing.
+
+**What We Did:**
+- Updated `src\AspireApp.AppHost\AppHost.cs` to set `.WithEnvironment("MAX_PARALLEL_INSERT", "1")` for the LightRAG container service.
+- This matches the existing `MAX_ASYNC=1` constraint against Ollama and keeps file indexing serialized in this deployment profile.
+
+**Result:**
+- Scan-based handoff semantics unchanged.
+- File-level LightRAG indexing now runs one document at a time, reducing timeout pressure from avoidable contention against the constrained Ollama backend.
+- Configuration stays honest to LightRAG's documented behavior (no invented flags).
+
+**Key Patterns:**
+- **Configuration honesty:** Don't invent fictional settings; understand the actual documented tuning knobs.
+- **Constraint matching:** When one backend (Ollama) limits concurrency, match that constraint in dependent stages (LightRAG file indexing).
+- **AppHost coordination:** Container-level environment variables are the surface for this kind of tuning.
+
+**Key Files:**
+- `src\AspireApp.AppHost\AppHost.cs` — LightRAG service registration with `MAX_PARALLEL_INSERT=1`
+- `.squad/decisions/inbox/jarvis-lightrag-setting.md` — Decision artifact (merged to decisions.md)
+- `.squad/orchestration-log/20260421T171255Z-jarvis.md` — Orchestration log
+- `.squad/log/20260421T171255Z-lightrag-setting.md` — Session log (shared with Jeff)
+
+**Validation:**
+- `python -m pytest src\AspireApp.PythonServices\tests\test_processing_pipeline_regression.py -q` — 18/18 passed ✅
+
+### 2026-04-26 — LightRAG Readiness Timeouts Need Deferred Reconciliation, Not Frozen Failure
+
+**Problem:**
+- The new readiness polling correctly exposed that LightRAG can stay `pending` well past the first 300-second poll window for some documents.
+- Real data showed a bad follow-up state: document `62` recorded `indexing_status = timed_out` in Python metadata even though `data\rag_storage\kv_store_doc_status.json` later advanced the same staged file (`000062-docs-github.md`) to `processed`.
+- That left the upload row looking permanently broken even when LightRAG eventually caught up.
+
+**Fix:**
+- `LightRagHandoffService` now reads the shared `kv_store_doc_status.json` store as a second source of truth and prefers the more advanced per-document status when the HTTP `/documents` view is stale.
+- When the first bounded readiness wait expires but the document is still non-terminal (`queued` / `indexing`), Python now keeps the document in an honest in-flight indexing state and starts a deferred reconciliation pass instead of freezing the row at `timed_out`.
+- The reconciliation pass updates both the operational DB status and the persisted processing metadata once LightRAG finally reaches `ready` or `failed`.
+
+**Result:**
+- The recent readiness polling change was **exposing** real LightRAG latency; it was not the underlying cause.
+- Upload rows no longer get stuck in a false permanent timeout when LightRAG finishes shortly after the first polling window.
+- Retrieval readiness stays honest without masking eventual success.
+
+**Key file paths:**
+- `src\AspireApp.PythonServices\app\services\lightrag_handoff_service.py`
+- `src\AspireApp.PythonServices\app\routers\processing.py`
+- `src\AspireApp.PythonServices\tests\test_processing_pipeline_regression.py`
+
+### 2026-04-24 — Keep `files.status` and LightRAG Readiness Separate, but Hold Final `processed` Until Polling Ends
+
+**Problem:**
+- The Python worker could finish Docling + Neo4j work, fire a LightRAG scan, and immediately mark the source row `processed` even though retrieval indexing was still queued or actively running.
+- That created a stale window where the source looked done even though LightRAG had not yet reached a terminal per-document outcome.
+
+**Fix:**
+- Added `indexing_status` / `indexing_error` to the shared `files` store and migrated them through the compatibility path in `DatabaseService`.
+- Processing now resets indexing state at the start of a run, sets `queued`/`indexing` while polling `GET /documents` for the staged filename, and records terminal `ready` / `failed` / `timed_out`.
+- The main `files.status` stays `processing` until that readiness poll reaches a terminal outcome, so callers no longer see `processed` during the LightRAG gap window.
+
+**Result:**
+- Callers can distinguish "Docling/Neo4j succeeded" from "retrieval is ready" without overloading one status field.
+- Sources that skip LightRAG remain healthy by ending with `indexing_status = not_requested`, while LightRAG problems stay explicit instead of silently looking ready.
+
+**Key file paths:**
+- `src\AspireApp.PythonServices\app\routers\processing.py`
+- `src\AspireApp.PythonServices\app\services\lightrag_handoff_service.py`
+- `src\AspireApp.PythonServices\app\services\database_service.py`
+- `src\AspireApp.PythonServices\tests\test_processing_pipeline_regression.py`
+
+### 2026-04-24 — LightRAG Readiness Must Use Per-Document Status, Not Just Scan Acknowledgement
+
+**Problem:**
+- The Python processing worker currently calls `_attempt_lightrag_handoff()` and then immediately marks the `files` row `processed`, so `GET /processing/status/{id}` can report success before LightRAG has indexed the staged markdown.
+- `LightRagHandoffService.trigger_scan()` only waits for service readiness and returns the scan acknowledgement (`status: "scanning_started"` + `track_id`); it does not wait for terminal ingestion status.
+- `wait_for_pipeline_idle()` only reports whether the global LightRAG pipeline is busy, which is not a safe proof that a specific document is queryable.
+
+**What to use instead:**
+- Use the deterministic staged LightRAG filename (`{document_id:06d}-{sanitized-name}.md`) as the correlation key.
+- Poll LightRAG's per-document registry until that staged `file_path` reaches a terminal state:
+  - primary seam: `GET /documents` (already used by `find_document_ids_by_file_path()`)
+  - underlying evidence/debug seam: `data\rag_storage\kv_store_doc_status.json`
+- Treat `status: processed` as retrieval-ready and `status: failed` as terminal failure; `track_id` is diagnostic only.
+
+**Safest pipeline seam:**
+- Start any readiness poll from `_process_document_task_sync()` immediately after `_attempt_lightrag_handoff()` because that seam already owns the document row, staged filename, and metadata persistence.
+- Keep the existing document-processing success semantics separate from LightRAG readiness; add a second indexing/readiness state instead of overloading the current `files.status`.
+
+**Recommended state split:**
+- Keep `files.status` for the synchronous pipeline (`uploaded` → `processing` → `processed` / `error`).
+- Add a second field such as `indexing_status` with values like `not_requested`, `queued`, `indexing`, `ready`, `failed`, `timed_out`.
+- Only surface a source as fully "Processed and ready" when `status == processed` and `indexing_status == ready`.
+
+**Timeout / failure guardrail:**
+- Bound the poll (for example ~5 minutes with short intervals) and persist `failed` or `timed_out` rather than leaving the row in `processing` forever.
+- Capture LightRAG failure detail from the document status entry (`error_msg` when present) so the system can show "processed but not indexed" instead of a false-ready state.
+
+**Key file paths:**
+- `src\AspireApp.PythonServices\app\routers\processing.py`
+- `src\AspireApp.PythonServices\app\services\lightrag_handoff_service.py`
+- `src\AspireApp.PythonServices\app\services\database_service.py`
+- `data\rag_storage\kv_store_doc_status.json`
+
+### 2026-04-22 — LightRAG Single-Document Results Should Be Supplemented With Semantic Retrieval
+
+**Problem:**
+- URL/YouTube processing can succeed through Docling fallback + Neo4j/page persistence while the downstream LightRAG scan still fails separately.
+- In the current local data shape, `data\rag_storage\kv_store_doc_status.json` showed the YouTube transcript staged as `000003-youtube.md` with LightRAG status `failed`, while Python had already marked document 3 as processed and saved canonical content under `data\processed\documents\3\`.
+- `BrainKnowledgeRetriever` previously returned the first non-empty LightRAG result set as-is, so a sparse or single-document LightRAG hit could suppress semantic fallback and hide newer YouTube-only content that was already queryable in Neo4j.
+
+**Fix:**
+- Updated `app\brain\knowledge\retrievers.py` so `BrainKnowledgeRetriever` supplements LightRAG hits with semantic retrieval when the LightRAG result set is sparse or resolves to only one source document.
+- Merge results by preserving LightRAG ordering first, then appending deduped semantic hits up to the request limit.
+- Added regression coverage proving a single-document LightRAG result can now be widened with a semantic YouTube transcript hit.
+
+**Result:**
+- Queries no longer depend on LightRAG being perfectly up to date before Neo4j-backed transcript content can show up in the answer context.
+- A LightRAG scan miss/failure for a newly processed YouTube document is less likely to get masked by older LightRAG hits from another document.
+
+**Key Pattern:**
+- **Primary retriever supplementation:** When a preferred retrieval layer can lag ingestion, do not stop at the first non-empty answer if it collapses to one source; supplement with the secondary retriever and merge/dedupe.
+- **Split ingestion status awareness:** Main document processing success does not guarantee downstream LightRAG indexing success; inspect `data\rag_storage\kv_store_doc_status.json` alongside `data\processed\documents\{id}\metadata.json` when retrieval feels stale.
+
+**Key file paths:**
+- `src\AspireApp.PythonServices\app\brain\knowledge\retrievers.py`
+- `src\AspireApp.PythonServices\tests\test_knowledge_retriever.py`
+- `data\rag_storage\kv_store_doc_status.json`
+- `data\processed\documents\3\metadata.json`
+
+### 2026-04-22 — YouTube Child Transcript Ingestion Uses a Persistent Attempt-Tracked Queue
+
+**Problem:**
+- Expanding a YouTube channel into many child video URLs caused transcript fetches to fire immediately, which can trip YouTube rate limits.
+- The throttle has to survive service restarts, so in-memory timers alone are not enough.
+
+**Fix:**
+- Added PostgreSQL-backed queue tables in `DatabaseService`: `youtube_transcript_queue` stores pending child video work, and `youtube_transcript_attempts` stores each attempt timestamp plus its UTC calendar date.
+- Updated `app/routers/processing.py` so channel expansion enqueues child `youtube_video` rows instead of recursively processing them, while a lightweight startup drainer claims at most one queued transcript per minute and blocks after 50 UTC-day attempts.
+- Retryable child rows still reuse the existing `files` record/status path; queue completion is tracked separately from the main document lifecycle.
+
+**Result:**
+- Channel ingestion stays responsive while transcript pulls are spread over time.
+- Daily and per-minute throttles survive restarts because attempt history lives in the operational PostgreSQL store.
+- `process-all` no longer bypasses the throttle for queued YouTube transcript rows.
+
+**Key Pattern:**
+- **Persist the throttle, not just the work item:** When an external source imposes rate limits, store each attempt timestamp and UTC attempt date in the database so quota logic survives restarts and multiple dispatch passes.
+- **Queue only the expensive child edge:** Keep the existing document pipeline for actual processing, but interpose a small persistent queue only around the external fetch step that needs throttling.
+
+**Key file paths:**
+- `src/AspireApp.PythonServices/app/services/database_service.py`
+- `src/AspireApp.PythonServices/app/routers/processing.py`
+- `src/AspireApp.PythonServices/tests/test_p0_contract_audit.py`
+- `src/AspireApp.PythonServices/tests/test_processing_pipeline_regression.py`
+
 ### 2026-04-22 — Child URL Expansion Must Reuse the Main Processing Pipeline
 
 **Problem:**
@@ -30,6 +193,73 @@
 **Key file paths:**
 - `src/AspireApp.PythonServices/app/routers/processing.py`
 - `src/AspireApp.PythonServices/tests/test_processing_pipeline_regression.py`
+
+### 2026-04-22 — LightRAG Ingestion Pipeline is Asynchronous and Non-Blocking
+
+**Problem:**
+- User uploads a URL, processing completes quickly, and chat reload shows processing success—but the new content is still missing from chat.
+- Investigating why a freshly processed website doesn't immediately appear in chat retrieval.
+
+**Root Cause Analysis:**
+
+1. **Processing Success != Retrieval Readiness**
+   - `_process_document_task_sync` in `processing.py` marks document status as "processed" (line 429) *before* LightRAG has finished indexing.
+   - The handoff sequence (lines 398-402): Neo4j/embedding population completes → `_attempt_lightrag_handoff` called → document marked "processed".
+   - LightRAG handoff (line 465) only stages the markdown and triggers `/documents/scan` API—it does NOT wait for ingestion completion.
+   - `trigger_scan()` in `lightrag_handoff_service.py` (line 54-56) returns immediately after receiving scan acknowledgment.
+
+2. **Two Storage Layers with Different Latency**
+   - **Neo4j (synchronous)**: Pages, claims, embeddings written during processing (lines 300-393)—immediately available for `SemanticKnowledgeRetriever`.
+   - **LightRAG (asynchronous)**: Markdown staged in `data/inputs/`, scan triggered, but actual entity extraction + graph building happens in background.
+   - Evidence: `data/inputs/__enqueued__/000061-docs-github.md` shows file still queued in LightRAG pipeline.
+
+3. **Chat Retrieval Uses LightRAG-First Strategy**
+   - `BrainKnowledgeRetriever` (retrievers.py:652-666) tries `_light_rag_retriever.retrieve()` first.
+   - If LightRAG returns results (even if incomplete), chat uses them and may not supplement with Neo4j semantic fallback unless result set is sparse.
+   - Recent fix (history line 20) supplements single-doc results, but doesn't help if LightRAG returns *zero* results for brand-new content.
+
+4. **Gap Window Timing**
+   - Document processing completes in ~10-30 seconds (docling + Neo4j + handoff).
+   - LightRAG scan queue processing can take 30-120+ seconds depending on doc size, Ollama load, entity extraction.
+   - User reloads chat during this gap → Neo4j has data, LightRAG doesn't yet → retrieval misses fresh content.
+
+**Evidence from Codebase:**
+- `lightrag_handoff_service.py:30-38`: `handoff_document` stages file + triggers scan, but doesn't poll for completion.
+- `processing.py:465`: Handoff can fail silently (logged as warning), document still marked "processed".
+- `kv_store_doc_status.json`: Shows LightRAG documents tracked separately from main processing status.
+
+**Why This Happens with URLs Specifically:**
+- URL sources fetch content to `data/url_content/url_{id}.md` (processing.py:234).
+- Markdown export path exists immediately, triggering LightRAG handoff.
+- File uploads may have delayed markdown export, reducing visible gap.
+
+**Failure Points:**
+1. LightRAG service unavailable → handoff fails, Neo4j data orphaned.
+2. LightRAG pipeline busy → document queued in `__enqueued__/`, delay extends.
+3. Entity extraction fails → document marked "failed" in LightRAG, never indexed.
+4. Chat reload timing → user queries before background scan completes.
+
+**Mitigation Options (Not Implemented):**
+- Wait for LightRAG scan completion before marking document "processed".
+- Fallback to Neo4j semantic search when LightRAG returns empty results.
+- Add processing pipeline status field: "processed_neo4j", "processed_lightrag".
+- Return "processing" status until both layers ready.
+
+**Result:**
+- Processing success accurately reflects Neo4j state, but chat retrieval depends on LightRAG completion.
+- Gap is architectural: two-phase ingestion (synchronous Neo4j, async LightRAG) with single completion flag.
+- Chat should explicitly handle "partially available" content or polling should wait for both layers.
+
+**Key Pattern:**
+- **Dual-layer ingestion timing:** When processing writes to multiple stores with different latency characteristics, completion status must reflect the slowest layer or retrieval must gracefully degrade to available layers.
+- **Asynchronous handoff does not equal ingestion completion:** Triggering an external API scan != content being queryable in that system.
+
+**Key file paths:**
+- `src/AspireApp.PythonServices/app/routers/processing.py` (lines 398-429: handoff + status update)
+- `src/AspireApp.PythonServices/app/services/lightrag_handoff_service.py` (line 30-56: async handoff)
+- `src/AspireApp.PythonServices/app/brain/knowledge/retrievers.py` (lines 623-691: LightRAG-first retrieval)
+- `data/inputs/__enqueued__/` (LightRAG scan queue)
+- `data/rag_storage/kv_store_doc_status.json` (LightRAG indexing status)
 
 ### 2026-04-22 — YouTube Channel Ingestion Needs Consent-Resilient Resolution + Feed-First Expansion
 
@@ -849,6 +1079,134 @@
 
 ---
 
+### 2026-04-23 — Retrieval Latency Investigation: 40-60s Graph Queries + 40-60s Ollama Generate Time
+
+**Problem Statement:**
+- Regular search mode: ~40-60s for Neo4j/LightRAG graph query + ~40-60s for Ollama generation = ~80-120s total end-to-end.
+- Critique mode: Often timeouts at 180s, suggesting serial query fan-out and/or duplicate Neo4j traversals.
+- User is asking if Neo4j indexing would help and looking for speed improvements.
+
+**Investigation Findings:**
+
+**1. Retrieval Path (Regular Mode):**
+- Flow: `brain_chat()` → `retriever.retrieve()` (lines 209-218 in brain.py)
+- `BrainKnowledgeRetriever.retrieve()` first calls `LightRagRetriever` → `LightRagQueryService.query_data()` (HTTP POST to LightRAG container at line 25 in lightrag_query_service.py)
+- If LightRAG succeeds, checks if results are sparse (< limit or only 1 document) → calls `SemanticKnowledgeRetriever.retrieve()` to supplement (lines 667-680 in retrievers.py)
+- Each semantic retrieval path runs `_vector_search()` or `_text_search()` sequentially:
+  - `search_claims()` first (lines 395-417 in neo4j_service.py, uses CONTAINS substring match, **no index**)
+  - If no claim results, falls back to `search_similar_content()` (lines 252-273, also CONTAINS, **no index**)
+- **Latency source #1:** LightRAG HTTP call to external container is the primary blocker (40-60s observed). Neo4j queries inside semantic retrieval are typically milliseconds.
+
+**2. Retrieval Path (Critique Mode):**
+- Flow: `brain_chat()` → `critique_pipeline.execute()` (lines 170-188 in brain.py)
+- Planner phase: 1x LLM call (synchronous via Ollama)
+- Retriever phase: Calls `knowledge_retriever.retrieve()` **3 times sequentially** (lines 103-138 in critique_pipeline.py) — once per extracted sub-query from the planner
+- Each sub-query runs the full `BrainKnowledgeRetriever` pipeline (LightRAG + optional semantic fallback)
+- **Latency source #2:** 3 sequential LightRAG calls if planner produces 3 sub-queries. Since each call blocks 40-60s, that's 120-180s just for retrieval in critique mode.
+- Synthesizer phase: 1x LLM call (lines 147-155)
+- Critic phase: 1x LLM call (lines 167-183)
+- Total: Minimum 3x Ollama + 3x LightRAG in serial = 180-300s.
+
+**3. Neo4j Query Performance:**
+- Current semantic search queries in `search_claims()` and `search_similar_content()` use **`WHERE p.content CONTAINS $query`** — full-table scan, no index.
+- Neo4j vector indexes exist (`page_content_vector`, `claim_text_vector`) but are **P2-C gated (embeddings not yet populated)** per team decisions (lines 419-462, 464-506 in neo4j_service.py).
+- Current text-based fallback has no indexes on `Claim.text` or `Page.content` properties.
+
+**4. Serial vs. Parallel Opportunity in Critique Mode:**
+- Planner decomposes the user query into sub-queries (lines 68-96 in critique_pipeline.py).
+- Sub-query retrieval loop currently fires **3x `await retriever.retrieve()`** in serial (line 110, awaited inside loop at 103-138).
+- Could be parallelized via `asyncio.gather()` to fetch all 3 in parallel, reducing 3 × 40-60s to 1 × 40-60s.
+
+**5. Duplicate Retrievals in Supplementation Logic:**
+- When LightRAG returns sparse results, `BrainKnowledgeRetriever._supplement_with_semantic_results()` calls semantic retriever a second time (lines 707-715 in retrievers.py).
+- Semantic retriever runs BOTH `search_claims()` AND `search_similar_content()` sequentially unless claims returns a full result set (lines 561-575 in retrievers.py).
+- Merges results (lines 717, 759-769).
+- This is intentional fallback design (primary → secondary → merge), but adds latency on the hot path.
+
+**Indexing Assessment:**
+
+**What would indexing help?**
+- If embeddings were populated (P2-C gate lifted), vector indexes would replace CONTAINS with cosine-similarity lookups: ~10-100ms vs. full scan.
+- A text index on `Claim.text` could speed up `search_claims()` for substring matching, but CONTAINS queries in Neo4j 5.x don't benefit from property indexes the way SQL LIKE does; would need full-text search index or token analyzer.
+
+**What would NOT help?**
+- Neo4j indexes on the hot path contribute only milliseconds; the LightRAG HTTP call (40-60s) dominates the latency budget by 99%.
+- Indexing Neo4j won't address the 80% of time spent waiting for an external service.
+
+**Recommendations (Priority Order, Impact vs Effort):**
+
+**1. [HIGH IMPACT, MEDIUM EFFORT] Parallelize Sub-Query Retrieval in Critique Mode**
+   - Use `asyncio.gather(*[retriever.retrieve(sq) for sq in sub_queries])` instead of serial loop.
+   - Expected impact: Reduce critique mode retrieval from 120-180s to 40-60s (parallel LightRAG calls).
+   - Why: Critique mode latency is pure serial query fan-out; parallelization is a 3x speedup for free.
+   - Effort: ~10 lines of code change in `critique_pipeline.py` lines 103-138.
+
+**2. [HIGH IMPACT, LOW EFFORT] Timeout Configuration & Retry Strategy**
+   - Increase `LightRagQueryService.query_timeout_seconds` from 60s to 120s (or configurable).
+   - Add exponential backoff retry in critique pipeline for transient LightRAG failures.
+   - Why: 180s critique mode timeout suggests LightRAG sometimes takes >60s; silent timeout hides this.
+   - Effort: 2-3 parameter changes + basic retry loop in critque_pipeline.py.
+
+**3. [MEDIUM IMPACT, HIGH EFFORT] Cache Recent Retrieval Results**
+   - Memoize `BrainKnowledgeRetriever.retrieve()` for duplicate queries within the same conversation turn.
+   - Example: User query "What is X?" → Critique mode extracts sub-query "What is X?" → retriever.retrieve(X) called twice, both hit LightRAG.
+   - Why: Critique pipeline may extract sub-queries that overlap with the original query; deduping would avoid redundant LightRAG calls.
+   - Effort: Requires query-text hashing, cache store, and invalidation logic (~50 lines).
+
+**4. [LOW IMPACT, HIGH EFFORT] Upgrade to Vector Search (P2-C Gate Lift)**
+
+### 2026-04-21 — LightRAG Readiness Polling Implementation
+
+**Status:** COMPLETE — Per-document polling deployed; separates Neo4j completion from LightRAG indexing.
+
+**What was built:**
+- `indexing_status` field added to Document schema; states: `not_requested`, `queued`, `indexing`, `ready`, `failed`, `timed_out`
+- Polling loop in `_attempt_lightrag_handoff()` continuation; awaits per-document LightRAG completion before releasing doc as retrieval-ready
+- Schema backward-compat: existing databases default to `not_requested`; .NET deserialization safe if column absent
+- Timeout boundary: ~5min configurable; graceful failure states prevent stalled UI
+
+**Why it matters:**
+- Addresses 2026-04-21 freshness investigation finding: documents show ✅ in UI but return empty ❌ in chat due to LightRAG eventual consistency
+- Separates concerns: `processed` = "Neo4j indexed" (immediate), `ready` = "LightRAG indexed" (polled, eventual)
+- Cross-service transparency: Web UI can surface honest readiness status (queued, indexing, ready, error)
+
+**Key files:**
+- `src/AspireApp.PythonServices/app/services/lightrag_handoff_service.py` — polling loop
+- `src/AspireApp.PythonServices/app/services/database_service.py` — schema migration
+- `tests/test_processing_pipeline_regression.py` — readiness regression suite (23+ tests)
+
+**Test coverage:**
+- Python readiness polling tests: state transitions, timeout, failure paths (23+ passing)
+- Full Python service suite: all 27+ tests passing
+- .NET contract compat: optional field deserialization verified
+
+**Handoff to next phase:**
+- Jeff: Display readiness labels in Upload UI (queued, indexing, ready, error states)
+- Buster: End-to-end freshness proof (Playwright/Aspire upload → process → reload → query cycle)
+
+   - Populate `Claim.text_embedding` and `Page.content_embedding` during document ingestion.
+   - Replace CONTAINS fallback with vector index queries once embeddings are ready.
+   - Why: Reduces Neo4j semantic fallback from full-table scan to index lookup (10-100ms gain), but does NOT address LightRAG 40-60s bottleneck.
+   - Effort: Coordinate with embedding pipeline, update ingestion, validate index population.
+
+**5. [VERY LOW IMPACT] Add Neo4j Text/Full-Text Indexes**
+   - Create full-text index on `Claim.text` and `Page.content` to speed substring matching.
+   - Why: Neo4j full-text indexes can help if LightRAG fails and semantic retrieval is called; otherwise negligible.
+   - Effort: Minimal, but won't fix the core latency issue (LightRAG dominates).
+
+**Key Pattern Learned:**
+- **Retrieval latency is I/O-bounded, not compute-bounded.** The 40-60s bottleneck is an external HTTP call to LightRAG, not Neo4j query execution. Indexing Neo4j won't materially improve retrieval time unless the LightRAG call is eliminated or replaced with a faster service.
+- **Serial query fan-out in critique mode adds 3x multiplier.** Parallelizing sub-query retrieval is the single biggest win for critique mode without architectural changes.
+
+**Key File Paths:**
+- `src/AspireApp.PythonServices/app/routers/brain.py` — brain_chat() entry point
+- `src/AspireApp.PythonServices/app/brain/reasoning/critique_pipeline.py` — critique pipeline orchestrator (line 103-138 serial retrieval loop)
+- `src/AspireApp.PythonServices/app/brain/knowledge/retrievers.py` — BrainKnowledgeRetriever and semantic fallback logic
+- `src/AspireApp.PythonServices/app/services/lightrag_query_service.py` — LightRAG HTTP client (40-60s bottleneck)
+- `src/AspireApp.PythonServices/app/services/neo4j_service.py` — Neo4j queries (search_claims, search_similar_content; vector indexes P2-C gated)
+
+---
+
 ### 2026-04-05 — Postgres Cutover Coordination & BRAIN Pivot Context
 
 **Status:** Postgres cutover complete. Joined BRAIN pivot decision consolidation session.
@@ -1119,3 +1477,50 @@ eo4j_service to LightRagRetriever for enrichment when LightRAG lacks scores
 **User Preferences:**
 - Keep the fix surgical.
 - Prove the dependency-install path works again with minimal, concrete validation.
+
+### 2026-04-21 — LightRAG insert concurrency tuning
+
+**Context:** Uploads were reaching LightRAG `Index timeout failure` while AspireAI stages markdown into `INPUT_DIR` and triggers `POST /documents/scan`.
+
+**Finding:**
+- LightRAG does not expose a boolean "index on upload" flag for the shared `INPUT_DIR` flow.
+- The documented knob for file-level indexing parallelism is `MAX_PARALLEL_INSERT`.
+- LightRAG's own API docs say upload/text endpoints index asynchronously by default, while files dropped into `INPUT_DIR` still require an explicit scan trigger.
+
+**Project decision:**
+- Because AspireAI already constrains LightRAG LLM concurrency with `MAX_ASYNC=1`, set `MAX_PARALLEL_INSERT=1` as well.
+- This keeps LightRAG file ingestion serialized and better aligned with our one-document-at-a-time handoff pattern.
+
+**Key file path:**
+- Runtime config: `src/AspireApp.AppHost/AppHost.cs`
+
+---
+
+## Session: YouTube Transcript Queue Implementation (2026-04-20T07:07:50Z)
+
+**Participants:** Bob (approval), Jarvis (implementation), Buster (QA)
+**Status:** COMPLETE — Schema deployed, worker integrated, 27+ tests passing
+**Output:** youtube_transcript_queue + youtube_transcript_attempts schema; async drainer loop; throttle enforcement methods
+
+**Implementation Summary:**
+- Schema: Two tables + indices (query optimization for status/attempt_date)
+- Throttle methods: 
+  - claim_next_youtube_transcript(): 1-per-minute dispatch eligibility
+  - get_youtube_transcript_queue_wait_seconds(): backoff calculation
+  - Quota tracking via daily COUNT WHERE attempt_date = TODAY
+- Enqueue gate: _process_child_documents() redirects youtube_video children to queue
+- Retry path: Child rows with uploaded/error status resume instead of skip
+- Async drainer: 60-second polling loop, FastAPI lifecycle wiring
+
+**Validation:**
+- Schema deployment: PASS
+- Throttle enforcement: PASS (1-per-minute + 50-per-day proven)
+- Retry mechanics: PASS (existing child rows handled)
+- Restart safety: PASS (attempt history persisted)
+
+**Cross-Agent Dependencies:** None new; existing DatabaseService patterns extended. No conflicts with Python/FastAPI boundaries.
+
+**Decision Record:** Merged 1 decision to decisions.md; orchestration log created
+
+**Known Limits:** UI signal for queued-but-not-yet-processed status deferred to Phase 3 (non-blocking)
+

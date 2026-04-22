@@ -2,6 +2,9 @@
 
 > Shared decision log. All agents read this before starting work.
 > Scribe merges new decisions from `.squad/decisions/inbox/` after each session.
+> **Note (2026-04-21T13:58:59Z):** Merged 3 inbox decisions from timeout stabilization session (Jarvis, Jeff, Buster). Key outcomes: (1) Python deferred reconciliation — first-pass LightRAG timeout no longer permanent; document remains `queued/indexing` and reconciles forward when LightRAG completes. Secondary truth source (`kv_store_doc_status.json`) used when HTTP view stale. (2) .NET non-blocking dispatch + timeout translation — Upload surfaces persist first, dispatch processing in background; gateway translates `OperationCanceledException` into clear `TimeoutException`. (3) Aspire runtime wiring — LightRAG container gets explicit `EMBEDDING_BINDING=ollama` + both storage alias styles; Python vector population optional (defaults off); semantic fallback prevents empty retriever. All fixes validated: Jarvis 49 tests, Jeff 63 tests + build, Buster live Aspire E2E + 68 Python regression + 16 LightRAG tests ✅. No exact duplicates found. Inbox cleared.
+> **Note (2026-04-21T10:52:38Z):** Merged 0 new inbox decisions from readiness implementation session (Jarvis, Jeff, Buster, Coordinator).Key outcomes: (1) Python-side `indexing_status` polling implemented; separates "processing complete" (Neo4j) from "retrieval-ready" (LightRAG indexed). (2) Web UI displays readiness labels (queued, indexing, ready, error) in Upload table. (3) Schema tolerance ensures backward-compat with pre-polling databases. (4) Regression coverage updated: no longer assume `processed` flag implies retrieval-ready. (5) Dual status model: `processed` = immediate Neo4j indexing; `indexing_status` = polled LightRAG readiness. (6) All platforms passing: Python readiness tests (23+), Web UploadDataTests (28/28), E2E YouTube queue tests, full .NET build. (7) Ownership: Jarvis (polling + schema), Jeff (UI indicators), Buster (end-to-end freshness proof). No exact duplicates found; inbox empty. Decisions recorded in orchestration logs and session log. Ready for Phase 3b polish.
+> **Note (2026-04-16T16-58-29Z):** Merged 8 inbox decisionsfrom URL Refresh + Extensible Ingestion Implementation session (Jeff, Buster, Jarvis, Bob). Key outcomes: (1) URL Refresh Action for UploadData rows (visible for URL/YouTube, hidden for file rows, disabled during processing). (2) Extensible upload surfaces and source type taxonomy (file types expanded to .json; YouTube URLs classified for future processing). (3) Extensible URL ingestion architecture (handler-based framework for pluggable content sources). (4) Multi-format ingestion regression test plan (phased approach minimizing external dependencies). (5) Child URL auto-processing contract (URLs created from parent expansion immediately processed, not left in uploaded). (6) Child URL reuses main processing pipeline (single document-processing path for all ingestion types). Key decision: Keep source taxonomy explicit in storage while treating web-backed sources uniformly in UI (WEB semantics). All focused tests passing. No exact duplicates found; consolidated related decisions. Inbox cleared.
 > **Note (2026-04-16T16-58-29Z):** Merged 8 inbox decisions from URL Refresh + Extensible Ingestion Implementation session (Jeff, Buster, Jarvis, Bob). Key outcomes: (1) URL Refresh Action for UploadData rows (visible for URL/YouTube, hidden for file rows, disabled during processing). (2) Extensible upload surfaces and source type taxonomy (file types expanded to .json; YouTube URLs classified for future processing). (3) Extensible URL ingestion architecture (handler-based framework for pluggable content sources). (4) Multi-format ingestion regression test plan (phased approach minimizing external dependencies). (5) Child URL auto-processing contract (URLs created from parent expansion immediately processed, not left in uploaded). (6) Child URL reuses main processing pipeline (single document-processing path for all ingestion types). Key decision: Keep source taxonomy explicit in storage while treating web-backed sources uniformly in UI (WEB semantics). All focused tests passing. No exact duplicates found; consolidated related decisions. Inbox cleared.
 > **Note (2026-04-16T10-11-47Z):** Merged 1 inbox decision from upload navigation test hardening session (Buster, Jeff). Key outcome: Diagnosed `DeleteUploadedTestFile` failure as Playwright/sidebar-animation brittleness, not product regression. Hardened test seam to use direct protected-route entry via mock sign-in with `returnUrl=%2Fupload` and upload-surface markers instead of sidebar nav dependency. Result: Upload tests now stable and properly scoped (upload behavior ≠ navigation infrastructure). Inbox cleared.
 > **Note (2026-04-21T21:00:00Z):** Merged 1 inbox decision from MVP documentation & post-MVP fix ordering session (Bob, Verbal). Key outcome: Established MVP Declaration Pattern with clear milestone markers (functional gateway-routed chat end-to-end works), documented working features + known limitations side-by-side, captured and ordered two post-MVP fixes by user impact (conversation context + evidence persistence). Phase 3 status updated from "in progress" to "MVP Achieved"; post-MVP work explicitly scoped with technical ownership (Jeff + Jarvis for context; Buster + Jeff for evidence). Documentation now reflects honest product state. Inbox cleared.
@@ -26,6 +29,12 @@
 > **Note (2026-04-15T21:17:30Z):** Merged 3 inbox decisions from critique-mode configuration failure fix session (Jarvis, Jeff, Buster). Key outcome: Fixed deterministic critique-mode config failure across three seams: (1) Python PydanticAI provider now uses explicit Ollama path instead of late env mutation. (2) .NET gateway/Web clients preserve downstream HTTP errors and disable unsafe POST retries. (3) Regression coverage consolidates all three seams with evidence paths. No exact duplicates found. Inbox cleared. See session log `2026-04-15T21-17-30Z-critique-mode-fix.md` and orchestration logs for details.
 > **Note (2026-04-21T21:00:00Z):** Merged 1 inbox decision from MVP documentation & post-MVP fix ordering session (Bob, Verbal). Key outcome: Established MVP Declaration Pattern with clear milestone markers (functional gateway-routed chat end-to-end works), documented working features + known limitations side-by-side, captured and ordered two post-MVP fixes by user impact (conversation context + evidence persistence). Phase 3 status updated from "in progress" to "MVP Achieved"; post-MVP work explicitly scoped with technical ownership (Jeff + Jarvis for context; Buster + Jeff for evidence). Documentation now reflects honest product state. Inbox cleared.
 > **Note (2026-04-16T15:34:22Z):** Merged 2 inbox decisions from YouTube followup fixes session (Jeff, Jarvis). Key outcomes: (1) Web source labeling refined — UploadData table now treats `url`, `youtube_video`, `youtube_channel` uniformly in UI (WEB semantics) while preserving explicit taxonomic storage. UrlSourceTypeClassifier provides shared taxonomy helper. (2) YouTube channel ingestion made consent-resilient — Channel URLs now survive consent redirects via stable headers, explicit interstitial detection, canonical ID resolution from page metadata, and RSS feed as primary discovery source with HTML supplement. Both focused test suites passing (bUnit + Python regression + live smoke). Inbox cleared.
+> **Note (2026-04-20T07:07:50Z):** Merged 3 inbox decisions from YouTube transcript rate-limiting queue implementation session (Bob, Jarvis, Buster). Key outcomes: (1) Architecture approved: persistent PostgreSQL queue (no external scheduler dependency like APScheduler/Celery). (2) Jarvis implemented schema (`youtube_transcript_queue` + `youtube_transcript_attempts`), async drainer (1 attempt/min, 50/day cap), throttle enforcement methods. (3) Buster added two-seam regression coverage: router seam (enqueue mechanics), database seam (throttle policy). (4) Restart safety via persisted attempt history. (5) 27+ tests passing. (6) Enqueue gate in `_process_child_documents()` redirects YouTube children to queue; retry path (uploaded/error) validated. No exact duplicates found. Inbox cleared.
+> **Note (2026-04-22T21:17:21Z):** Merged 2 inbox decisions from retrieval flow investigation for YouTube-ingested content session (Jeff, Jarvis). Key outcomes: (1) Jeff investigated Web → ApiService → Python handoff; confirmed no dropped .NET document-scope signal in shared contracts (design limitation, not code bug). (2) Jarvis fixed downstream LightRAG retriever — now supplements sparse single-document LightRAG results with semantic hits before returning to caller. (3) YouTube transcript processing resilient to LightRAG eventual consistency. (4) Regression coverage validates single-document LightRAG result widening. (5) 48 Python tests passing. No exact duplicates found. Inbox cleared.
+> **Note (2026-04-23T06:07:48Z):** Merged 3 inbox decisions from search latency review session (Bob, Jarvis, Jeff). Key outcomes: (1) Neo4j indexing is not the latency fix — LightRAG HTTP (40-60s) is primary bottleneck, not Neo4j queries (<1s fallback). (2) Critique mode latency is structural (4 LLM calls + 3 serial LightRAG retrievals = 150-270s minimum); parallelization of retrieval calls is highest-impact fix. (3) Web HttpClient timeout (120s) fires before intended Blazor token (180s) — design clarity issue, not performance defect. (4) Recommendations: [1] Parallelize critique retrieval via `asyncio.gather` (Jarvis, ~20 lines, 3x speedup), [2] Raise Web HttpClient timeout to 240s (Jeff, 1-2 lines), [3] Convert service instantiation to singletons (Jarvis, ~15 lines), [4] SSE streaming + progress events (medium effort), [5] Invert retrieval priority (post-P2-C, high effort). No exact duplicates found. Inbox cleared.
+> **Note (2026-04-24T10:06:52Z):** Merged 1 inbox decision from LightRAG readiness polling feasibility investigation (Jarvis). Key outcome: LightRAG completion **can** be polled per-document before surfacing source as ready. Repo already exposes per-document LightRAG status keyed by staged file path. Decision: introduce `indexing_status` field (states: `not_requested`, `queued`, `indexing`, `ready`, `failed`, `timed_out`); poll per-document after `_attempt_lightrag_handoff()`; keep `processed` flag for Docling/Neo4j completion; bound polling with timeout; surface honest failures. Ownership: Jarvis (polling + schema), Jeff (UI indicators), Buster (end-to-end test). No exact duplicates found. Inbox cleared.
+> **Note (2026-04-24T10-26-00Z):** Merged 2 inbox decisions from desktop menu-close fix + regression coverage session (Jeff, Buster). Key outcomes: (1) Desktop slide-out menu now closes on route change via `NavigationManager.LocationChanged` subscription in `MainLayout.razor`; ownership centralized instead of scattered per-link handlers. (2) Regression coverage: bUnit test `MainLayoutTests.ClosesSidebar_WhenLocationChanges` validates layout logic; live browser test `BasicAspireAppHostTests.DesktopSidebarClosesAfterNavigationSelection` validates full Aspire shell with explicit viewport-settle wait to prevent animation-timing false negatives. (3) QA review: Buster did not reject implementation; design ownership boundary is sound. (4) Key learning: Browser animation timing is a test responsibility, not a product bug — use explicit waits instead of workarounds in code. (5) All validation passing: `dotnet build`, unit test, focused browser regression. No exact duplicates found. Inbox cleared. See session log `2026-04-24-menu-close-fix.md` and orchestration logs for details.
+> **Note (2026-04-21T08:24:27Z):** Merged 2 inbox decisions from freshness investigation session (Bob, Jarvis, Jeff, Buster). Key outcomes: (1) Two-phase status problem identified—docs marked "processed" before LightRAG indexing completes (30–300s window), causing UI shows ✅ but chat returns empty ❌. (2) Root cause: `_attempt_lightrag_handoff()` fire-and-forget; no polling for actual index completion. (3) Architecture recommendation: separate "processing complete" (Neo4j) from "retrieval-ready" (LightRAG indexed) via `indexing_status` field + polling loop. (4) Test coverage gap: no end-to-end cycle test validates upload→process→reload→query freshness. (5) .NET side clean (no caching issues); issue localized to Python processing/indexing layer. (6) Ownership assigned: Jarvis (polling + schema), Jeff (UI indicators), Buster (test implementation). No exact duplicates found. Inbox cleared. See session log `2026-04-21T08-24-27Z-freshness-investigation.md` and orchestration logs for full details.
 
 <!-- Decisions are appended below. Each entry starts with ## -->
 
@@ -2461,6 +2470,255 @@ The current `AspireApp.WebTest` failures cluster around the full distributed-app
 Pass `neo4j_service` through the retriever initialization chain:
 - `BrainKnowledgeRetriever` receives `neo4j_service` from FastAPI DI
 - Passes it to `LightRagRetriever` when creating the default instance
+
+---
+
+## Neo4j Indexing Is Not the Latency Fix — Bob, Jarvis, Jeff — 2026-04-23
+
+**Authors:** Bob (Lead / Architect), Jarvis (Python / Data Dev), Jeff (.NET Dev)  
+**Date:** 2026-04-23  
+**Status:** APPROVED  
+**Scope:** Search latency analysis; LightRAG vs. Neo4j performance; P2-C vector indexing rationale.
+
+### Context
+
+User reported 40-60s retrieval latency in regular chat mode and frequent 180s timeouts in critique mode. Question: "Is Neo4j indexing the answer?"
+
+Three independent investigations (Bob architecture, Jarvis retrieval paths, Jeff timeout stacks) converged on consistent findings.
+
+### Decision
+
+**Neo4j indexing is secondary/distraction for the reported latency. LightRAG HTTP call (40-60s) dominates the hot path.**
+
+#### Evidence
+
+1. **LightRAG HTTP call:** 40-60s per call (primary bottleneck)
+2. **Neo4j semantic fallback:** <500ms full-table scans on small datasets
+3. **Even optimal Neo4j indexes:** Would save <1s on fallback path; 99% of latency is LightRAG
+4. **Vector indexes (P2-C gated):** Help fallback quality but don't address the 40-60s LightRAG wall
+
+#### Why Indexing Won't Help Regular Mode
+
+- `search_claims()` and `search_similar_content()` are fallback paths (triggered only when LightRAG sparse)
+- On hotpath: LightRAG blocks for 40-60s, Neo4j fallback is never invoked
+- Indexing saves <1s if fallback needed; leaves 40-60s LightRAG unchanged
+
+#### Why Indexing Won't Fix Critique Mode
+
+- Critique mode runs 3 LightRAG calls in serial: 3 × 40-60s = 120-180s retrieval time alone
+- Adding Neo4j vector indexes doesn't parallelize the LightRAG calls (different system)
+- Even with perfect Neo4j, critique retrieval remains 120-180s
+- **Criticism resolution:** Parallelize retrieval calls via `asyncio.gather`, not indexing
+
+#### Vector Indexing Remains Valuable (Different Rationale)
+
+P2-C embedding population is still approved, but for **semantic fallback quality**, not latency:
+- When LightRAG fails/sparse, vector index makes fallback faster (100ms → 10ms)
+- Provides alternative semantic path when LightRAG graph traversal inefficient
+- Supports future inversion of retrieval priority (Neo4j vector first, LightRAG supplement)
+
+### Recommendation
+
+1. **Parallelize critique retrieval** (Jarvis, ~20 lines): Replace serial `for` loop in `critique_pipeline.py` with `asyncio.gather()`. Expected: 3x speedup on retrieval phase.
+
+2. **Raise Web HttpClient timeout** (Jeff, 1-2 lines): Increase to 240s so Blazor's 180s token is terminal signal.
+
+3. **Convert service instantiation to singletons** (Jarvis, ~15 lines): Eliminate per-request Neo4j/embedding service construction overhead.
+
+4. **Enable streaming + SSE** (Jeff + Jarvis, medium effort): User sees progress events instead of silent wait.
+
+5. **Post-P2-C: Invert retrieval priority** (Jarvis, future): Neo4j vector first (1-5s), LightRAG supplement (40-60s). Drops hot path from 40-60s to 1-5s for populated embeddings.
+
+### Decisions Recorded
+
+- Neo4j indexing is not the latency fix.
+- LightRAG HTTP is primary bottleneck; retrieval parallelization is highest-impact change.
+- Vector indexing remains valuable for fallback quality and future priority inversion.
+- Critique mode timeout requires parallelization + SSE streaming, not indexing.
+
+---
+
+## Retrieval Parallelization: Critique Mode Sub-Queries — Jarvis — 2026-04-23
+
+**Author:** Jarvis (Python / Data Dev)  
+**Date:** 2026-04-23  
+**Status:** APPROVED FOR IMPLEMENTATION  
+**Scope:** Critique pipeline retrieval phase; reducing 120-180s serial latency to 40-60s parallel.
+
+### Context
+
+Critique mode traces 3 independent sub-query retrievals in serial (lines 103-138 in `critique_pipeline.py`). Each blocks 40-60s on LightRAG HTTP call. Total: 120-180s just for retrieval phase.
+
+### Decision
+
+**Replace serial `for` loop with `asyncio.gather()` to parallelize independent retrieval calls.**
+
+#### Current (Serial)
+
+```python
+for i, sub_query in enumerate(sub_queries[:3], 1):
+    retrieval_query = self._build_retrieval_query(...)
+    knowledge_result = await self.knowledge_retriever.retrieve(
+        retrieval_query,
+        tenant_id=tenant_id,
+        correlation_id=correlation_id,
+        limit=top_k,
+        top_k=top_k,
+        chunk_top_k=top_k,
+        include_references=True,
+        include_chunk_content=True,
+    )
+    all_knowledge.extend(knowledge_result.results)
+```
+
+**Wall time: 3 × 40-60s = 120-180s**
+
+#### Proposed (Parallel)
+
+```python
+sub_queries_limited = sub_queries[:3]
+retrieval_tasks = [
+    self.knowledge_retriever.retrieve(
+        self._build_retrieval_query(sq, conversation_context, query),
+        tenant_id=tenant_id,
+        correlation_id=correlation_id,
+        limit=top_k,
+        top_k=top_k,
+        chunk_top_k=top_k,
+        include_references=True,
+        include_chunk_content=True,
+    )
+    for sq in sub_queries_limited
+]
+results = await asyncio.gather(*retrieval_tasks, return_exceptions=True)
+
+all_knowledge = []
+for i, result in enumerate(results, 1):
+    if isinstance(result, Exception):
+        reasoning_steps.append(
+            f"Sub-query retrieval {i} failed: {result}"
+        )
+    else:
+        all_knowledge.extend(result.results)
+```
+
+**Wall time: 1 × 40-60s (parallel) + error handling overhead**
+
+### Expected Impact
+
+- **Critique retrieval phase:** 120-180s → 40-60s (3x speedup)
+- **Total critique latency:** 150-270s → 90-140s (more often within 180s timeout)
+- **Regular mode:** No change (single retrieval already optimal)
+
+### Effort
+
+- ~20 lines of code change
+- No interface changes, backward compatible
+- Existing exception handling pattern applies
+- Correlation/tracing IDs preserved across parallel calls
+
+### Risk
+
+**Low.** Retrieval calls are:
+- Independent (no data dependencies)
+- Idempotent (safe to retry)
+- Already exception-wrapped
+
+Only risk: If one call fails, exception is caught and logged; query continues with partial results.
+
+### Implementation Notes
+
+- Use `asyncio.gather(*tasks, return_exceptions=True)` to prevent one failure from crashing others
+- Preserve reasoning_steps logging for each sub-query (success or failure)
+- Add unit test validating parallel execution timing (mock LightRAG with sleep to confirm concurrency)
+
+### Files
+
+- `src/AspireApp.PythonServices/app/brain/reasoning/critique_pipeline.py` lines 103-138
+- Test: `tests/unit/test_critique_pipeline.py` (add parallelization coverage)
+
+---
+
+## Chat Timeout Boundary Alignment & Progress Feedback — Jeff — 2026-04-23
+
+**Author:** Jeff (.NET Dev)  
+**Date:** 2026-04-23  
+**Status:** IMMEDIATE FIXES APPROVED; STREAMING DEFERRED  
+**Scope:** Web/API timeout stacking; progress feedback UX; Critique Mode timeout handling.
+
+### Context
+
+User reports 180s timeouts in Critique Mode. Investigation found:
+
+1. **Hidden timeout boundary:** Web layer's `HttpClient.Timeout` (120s) fires *before* Blazor component's cancellation token (180s).
+2. **No progress feedback:** User sees "Waiting..." with zero visibility into operation stages.
+3. **Critique Mode latency is structural:** 4 LLM calls + 3 retrieval calls naturally expensive; 150-270s is not a bug.
+
+### Decision
+
+Align timeout boundaries and add progress visibility.
+
+#### Immediate Fixes (High Priority)
+
+**[1] Raise Web HttpClient.Timeout from 120s to 240s**
+- **File:** `src/AspireApp.Web/Program.cs` line 38
+- **Change:** `client.Timeout = TimeSpan.FromMinutes(2)` → `TimeSpan.FromMinutes(4)`
+- **Rationale:** Allow Web layer to exceed Blazor's 180s intent. If backend takes 150s, Web relays that result instead of timing out at 120s.
+
+**[2] Raise Web Polly TotalRequestTimeout from 180s to 240s**
+- **File:** `src/AspireApp.Web/Program.cs` line 43
+- **Change:** Increase margin so Polly doesn't fire before HttpClient.Timeout
+- **Rationale:** Remove timeout collision; Blazor token should be terminal signal.
+
+**[3] Document timeout hierarchy**
+- Add code comments in both `Program.cs` files explaining why timeouts layer:
+  ```csharp
+  // Timeout stacking (innermost → outermost):
+  // 1. API HttpClient: 180s (backend seam timeout)
+  // 2. API Polly Total: 240s (buffer for retry)
+  // 3. Web HttpClient: 240s (must exceed API's 180s + Polly margin)
+  // 4. Web Polly Total: 240s (aligns with HttpClient)
+  // 5. Blazor cancellation token: 180s (user-visible timeout)
+  // If backend takes >180s, Blazor times out first (expected).
+  ```
+
+#### Medium-Term Enhancements (Deferred)
+
+**[4] Server-Sent Events (SSE) for progress feedback**
+- Python: Add `/brain/chat-stream` endpoint emitting events (search_start, search_complete, reasoning_start, reasoning_step, response_ready)
+- C# client: Wire SSE consumption to Blazor component for real-time UI updates
+- Benefit: User sees "Searching..." → "Reasoning..." → "Done" instead of silent wait
+- Effort: Medium; requires contract changes
+
+**[5] Timeout negotiation header**
+- C#: Send `X-Timeout-Remaining` header to Python backend
+- Python: Return early or prioritize fast operations if time is low
+- Benefit: Prevents Python from starting expensive operations with insufficient time
+- Effort: Low; optional optimization
+
+### What This Is NOT
+
+- **Not a performance defect:** .NET is not adding latency; backend is the constraint.
+- **Not a retry issue:** POST requests correctly disable retries.
+- **Not a payload bloat issue:** Conversation history capped at 12 messages; serialization standard.
+
+### What This IS
+
+- **A design clarity issue:** Timeout stacking is correct but undocumented.
+- **A UX issue:** Users don't see progress during long operations.
+- **Expected behavior:** Critique Mode is structurally expensive; with parallelization + progress feedback, feels fast enough.
+
+### Team Coordination
+
+- **Jarvis:** Parallelize critique retrieval (separate decision). No Python changes needed for immediate timeout fix.
+- **Buster:** Update chat test timeout thresholds; accept longer wait in Critique Mode tests to avoid flakiness.
+- **Bob:** No architecture changes needed; timeout stacking is sound.
+
+### Approval Status
+
+- Immediate fixes (1-3): Approved for next sprint
+- Streaming (4): Optional enhancement; revisit if UX feedback indicates value
+- Timeout negotiation (5): Optional; low priority
 - `LightRagRetriever` uses it to call `get_confidence_by_provenance()` when LightRAG doesn't provide scores
 
 ## Implementation
@@ -3421,3 +3679,913 @@ Reuse `_process_document_task_sync` for child URL records created during parent 
 - ✅ Child URLs processed through standard pipeline
 - ✅ Retryable rows (uploaded/error) resumed correctly
 - ✅ Duplicate skipping preserves processing/processed rows
+
+# YouTube Transcript Rate-Limit Queue — Bob — 2026-06-30
+
+**Author:** Bob (Lead / Architect)
+**Status:** PROPOSED
+**Scope:** YouTube transcript fetching rate-limiting, persistent queue, processing pipeline integration.
+
+## Context
+
+YouTube blocked the service due to rapid-fire transcript requests when processing a channel's child video URLs. The current `_process_child_documents()` in `processing.py` calls `_process_document_task_sync()` for each child video immediately and synchronously — up to 50 transcripts back-to-back with no delay. Eric requested: max 1 transcript per minute, max 50 per UTC day, queue survives restarts.
+
+## Decision
+
+**Add a `youtube_transcript_queue` table in Postgres and a lightweight background poller in the FastAPI service. Do NOT add external scheduler dependencies (APScheduler, Celery, etc.).**
+
+### Why a Separate Table (Not Columns on `files`)
+
+The `files` table manages document lifecycle (`uploaded → processing → processed/error`). Rate-limiting is an operational concern on a different axis. Mixing queue state into `files.status` creates ambiguous states and pollutes the existing status machine. Daily cap tracking (`COUNT WHERE attempt_date = today`) is a clean query on a dedicated table.
+
+### Schema
+
+```sql
+CREATE TABLE IF NOT EXISTS youtube_transcript_queue (
+    id INTEGER GENERATED BY DEFAULT AS IDENTITY PRIMARY KEY,
+    file_id INTEGER NOT NULL,
+    source_url TEXT NOT NULL,
+    tenant_id TEXT NOT NULL DEFAULT 'default',
+    status TEXT NOT NULL DEFAULT 'pending',
+    attempt_date DATE,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    attempted_at TIMESTAMPTZ,
+    error_message TEXT,
+    CONSTRAINT fk_ytq_file
+        FOREIGN KEY (file_id) REFERENCES files(id) ON DELETE CASCADE
+);
+CREATE INDEX IF NOT EXISTS idx_ytq_status ON youtube_transcript_queue(status);
+CREATE INDEX IF NOT EXISTS idx_ytq_attempt_date ON youtube_transcript_queue(attempt_date);
+```
+
+Created in `_ensure_database_schema()` following the existing idempotent pattern.
+
+### Processing Pipeline Changes
+
+1. **`_process_child_documents()`** — Gate: if child document's `source_type == 'youtube_video'`, enqueue to `youtube_transcript_queue` instead of calling `_process_document_task_sync()`. All other source types continue processing inline.
+
+2. **New `YouTubeTranscriptWorker`** class (in `app/services/`):
+   - Loop runs every 60 seconds via `asyncio.create_task()`.
+   - Each tick: check daily cap (`COUNT(*) WHERE attempt_date = CURRENT_DATE AND status != 'pending'`). If >= 50, skip.
+   - Pick next pending row: `SELECT ... WHERE status = 'pending' ORDER BY created_at LIMIT 1 FOR UPDATE SKIP LOCKED`.
+   - Set `status='processing'`, `attempt_date=CURRENT_DATE`, `attempted_at=NOW()`.
+   - Call existing `_process_document_task_sync()` for the `file_id`.
+   - Update to `completed` or `failed` with error message.
+
+3. **FastAPI lifecycle** — Start worker in `startup_event()`, cancel in `shutdown_event()`.
+
+### What Does NOT Change
+
+- `YouTubeVideoHandler` and `YouTubeChannelHandler` — fetch logic is correct.
+- `_collect_child_document_ids()` — file records still created in `files` with `status='uploaded'`.
+- `files` table schema — no new columns.
+- No new FastAPI endpoints (queue management not needed yet).
+
+### Restart Safety
+
+State is entirely in Postgres. On restart, the worker resumes from the next `pending` row. Rows stuck in `processing` after a crash can be reclaimed with a staleness check (optional enhancement — start simple).
+
+### Test Impact
+
+- Regression test `test_process_document_task_processes_child_urls` currently expects children to be processed inline. It needs updating to verify enqueue behavior for `youtube_video` children.
+- Worker gets its own unit tests (mock DB, verify polling logic and cap enforcement).
+- Existing `test_process_document_task_reuses_retryable_child_url_records` needs review for enqueue path.
+
+### Ownership
+
+- **Jarvis** implements the table, DatabaseService methods, worker, and processing gate.
+- **Buster** updates regression tests and adds worker unit tests.
+- **Jeff** addresses any UI feedback for queued-but-not-yet-processed videos (optional, non-blocking).
+
+### Risk
+
+- **Low**: Additive change. Only modification to existing code is a conditional gate in `_process_child_documents()`.
+- **UX note**: YouTube video documents will sit in `uploaded` status longer. UI could show "queued for transcript" but that's a polish concern, not blocking.
+
+## Alternatives Considered
+
+1. **Columns on `files` table** — Rejected. Pollutes document lifecycle with queue concerns.
+2. **APScheduler / Celery** — Rejected. Introduces broker dependency (Redis/RabbitMQ) for a single-item-per-minute loop. Over-engineering.
+3. **Sleep loop in `_process_child_documents()`** — Rejected. Blocks the processing thread for up to 50 minutes. Doesn't survive restarts. Doesn't enforce daily cap.
+4. **`time.sleep(60)` between children** — Same problems as #3, plus ties up the background task for the entire duration.
+
+
+# Persistent YouTube Transcript Queue
+
+- **Date:** 2026-04-22
+- **Author:** Jarvis
+- **Scope:** Python ingestion pipeline, PostgreSQL operational store
+
+## Decision
+
+Use a lightweight persistent queue for YouTube child video transcript pulls instead of recursively processing channel children immediately.
+
+## Why
+
+- YouTube transcript pulls can be rate-limited when a channel expansion creates many child video URLs at once.
+- The throttle must survive Python service restarts, so attempt timing must live in PostgreSQL rather than process memory.
+- The existing `files` lifecycle already handles retryable `uploaded` / `error` document rows well; only the transcript-dispatch edge needs special handling.
+
+## Implementation
+
+- Add `youtube_transcript_queue` for pending child video work and `youtube_transcript_attempts` for durable attempt timestamps + UTC attempt dates.
+- Enqueue `youtube_video` child URLs during channel expansion; reuse existing duplicate child rows when their `files.status` is still retryable.
+- Dispatch queued transcript pulls with a lightweight background drainer that honors:
+  - maximum **1 attempt per minute**
+  - maximum **50 attempts per UTC day**
+- Exclude queued transcript rows from normal `process-all` dispatch so the throttle cannot be bypassed.
+
+## Consequences
+
+- Channel ingestion remains fast because parent rows finish without waiting for all child transcripts.
+- Daily quota and per-minute spacing survive restarts because attempt history is persisted.
+- Buster’s parallel-owned `tests/test_youtube_transcript_queue.py` now represents implemented behavior and should have its `expectedFailure` markers revisited in the owning branch.
+
+
+
+# YouTube Transcript Queue Regression Seams — Buster — 2026-04-22
+
+**Author:** Buster (QA / Tester)  
+**Status:** IMPLEMENTED  
+**Scope:** Python regression coverage for queued YouTube transcript behavior.
+
+## Context
+
+The YouTube channel flow no longer auto-processes child video URLs inline. It now enqueues transcript work and relies on queue-specific throttle logic in Python to avoid rate-limit bursts.
+
+## Decision
+
+**QA should verify queued YouTube transcript behavior at two seams, not one.**
+
+1. **Router seam (`processing.py`)** — Channel expansion must:
+   - create child datasource rows,
+   - enqueue `youtube_video` rows via `enqueue_youtube_transcript(...)`,
+   - start the queue drainer,
+   - leave child rows unprocessed until the queue worker claims them.
+
+2. **Database seam (`DatabaseService`)** — Throttle policy must be proven through:
+   - `claim_next_youtube_transcript(...)` for dispatch eligibility,
+   - `get_youtube_transcript_queue_wait_seconds(...)` for backoff timing,
+   - `youtube_transcript_attempts.attempted_at` / `attempted_on` as the source of truth for minute spacing and UTC-day quota.
+
+## Why
+
+Testing only the enqueue endpoint misses the real risk: the throttle rules live below the endpoint. Splitting the regression coverage by seam keeps the tests focused, deterministic, and honest about where the policy is enforced.
+
+## Evidence
+
+- Added: `src\AspireApp.PythonServices\tests\test_youtube_transcript_queue.py`
+- Verified:
+  - child URLs are queued, not recursively processed
+  - queue claims only one transcript per minute
+  - queue blocks after 50 attempts in the same UTC day
+  - prior-day attempts do not consume today’s final slot
+- Validation command:
+  - `python -m pytest tests\test_youtube_transcript_queue.py tests\test_processing_pipeline_regression.py tests\test_phase2_ingestion.py -q`
+
+
+## BRAIN Retrieval Handoff Gap — Jeff — 2026-04-22
+
+**Author:** Jeff (.NET Dev)  
+**Status:** Investigated  
+**Date:** 2026-04-22  
+
+### Context
+
+Eric reported that after a new YouTube URL/page is processed, follow-up chat questions appear to keep retrieving from the earlier document instead of the newly processed source.
+
+### Decision
+
+Do **not** add a speculative .NET-only workaround.
+
+- The current Web → ApiService → Python BRAIN handoff does **not** carry any selected document IDs, focus document, or document filter.
+- The shared chat/query contracts currently expose only tenant, correlation, query, mode, conversation ID, top-k, and conversation history.
+- Python currently accepts conversation_id but does not use it to scope retrieval.
+- Python **does** blend conversation_history into the retrieval query, so older conversation context can anchor retrieval toward the earlier document.
+- Python retrievers already have an optional document_ids filtering seam, but that field is not present in the shared BRAIN chat/query contracts yet.
+
+### Implication
+
+The most likely root cause is downstream retrieval behavior, not a dropped .NET selection payload:
+
+1. There is no document-scope signal for .NET to send today, and
+2. Python retrieval currently uses history-augmented queries that can keep follow-ups tied to older context.
+
+### Follow-up
+
+1. Jarvis/Bob should decide whether to add document-scoping (document_ids or equivalent focus metadata) across the shared BRAIN contracts.
+2. If not, Jarvis should revisit Python retrieval-query construction so history helps follow-ups without overpowering a newly uploaded document.
+3. Keep the .NET caller unchanged until the product has a clear source of truth for document scope in the UI.
+
+### Evidence
+
+- Examined shared BRAIN chat/query contracts between C# and Python
+- Confirmed no document ID filter, focus document, or document scope signal currently present
+- Verified Python retrieval uses history-augmented queries (which can anchor to older context)
+- Found Python retrievers have optional document_ids filtering seam, but not exposed in shared contracts
+
+### Related Work
+
+- Jarvis's LightRAG semantic supplementation (2026-04-22) addresses downstream retrieval behavior
+
+---
+
+## LightRAG Single-Document Results Should Be Supplemented With Semantic Retrieval — Jarvis — 2026-04-22
+
+**Author:** Jarvis (Python / Data Dev)  
+**Status:** Implemented  
+**Date:** 2026-04-22  
+
+### Context
+
+- A processed YouTube URL can finish the Python pipeline and persist pages/claims while its LightRAG scan still fails or lags.
+- The current retrieval stack is LightRAG-first, semantic-second. Before this change, any non-empty LightRAG result short-circuited the semantic retriever.
+- In practice that meant a single stale LightRAG hit from an older document could hide newer YouTube transcript content that already existed in Neo4j.
+
+### Decision
+
+When BrainKnowledgeRetriever gets LightRAG results that are sparse or collapse to one source document, it should also run semantic retrieval and merge deduped results up to the caller's limit.
+
+### Why
+
+- This keeps LightRAG as the primary retriever while avoiding false confidence in stale or narrow result sets.
+- It improves resilience when downstream LightRAG indexing is eventually consistent or partially failed.
+
+### Implementation Notes
+
+- pp\brain\knowledge\retrievers.py now detects single-document LightRAG results from document:{id} source refs and supplements them with semantic hits.
+- 	ests\test_knowledge_retriever.py adds regression coverage for merging a single-document LightRAG result with a semantic YouTube transcript hit.
+
+### Merge Strategy
+
+- Preserve LightRAG ordering first
+- Append deduped semantic hits up to request limit
+- Prevents reversion to early-exit behavior on sparse results
+
+### Test Results
+
+- ✅ 48 targeted Python tests passing
+- ✅ YouTube transcript retrieval regression coverage validates supplementation
+- ✅ Sparse LightRAG single-document hits now widened with semantic results
+
+### Impact
+
+- Queries no longer depend on LightRAG being perfectly up to date before Neo4j-backed transcript content can show up in answer context
+- A LightRAG scan miss/failure for a newly processed YouTube document is less likely to get masked by older LightRAG hits from another document
+- Retrieval flow resilient to LightRAG eventual consistency
+
+### Related Decision
+
+- Jeff's BRAIN Retrieval Handoff Gap (2026-04-22) — established that root cause is downstream Python retrieval, not dropped .NET signal
+
+---
+
+## Processing vs Indexing Status Gap — Bob (Lead/Architect) — 2026-04-21
+
+**Author:** Bob (Lead/Architect)  
+**Status:** PROPOSED — Awaiting Phase 3 Roadmap Prioritization  
+**Scope:** Architectural fix for data availability freshness window between processing completion and retrieval readiness
+
+### Context
+
+Investigated user scenario where newly uploaded documents appear "processed" in UI but chat queries return empty results (30–300 second window). Parallel audit revealed:
+
+- **Bob:** Identified two-phase status problem (processed ≠ indexed)
+- **Jarvis:** Traced fire-and-forget LightRAG handoff in Python pipeline
+- **Jeff:** Confirmed no .NET-side caching or staleness issues
+- **Buster:** Flagged test coverage gap (no end-to-end cycle test)
+
+### Problem Statement
+
+**Status Boundary Mismatch:**
+- `db.update_file_status("processed")` executes immediately after `trigger_scan()` handoff
+- LightRAG indexing may take 30–300 seconds in background
+- During window: UI shows ✅ "processed", but Chat queries return empty ❌
+- Users reload chat during indexing window, retrieval fails or returns stale results
+
+**Root Cause:**
+- `_attempt_lightrag_handoff()` (processing.py:398-402) calls `trigger_scan()` which returns immediately without waiting for background pipeline completion
+- No polling mechanism to verify LightRAG ingestion before marking status
+- Async visibility gap prevents UI from signaling "indexing in progress" to user
+
+### Decision
+
+**Separate "processing complete" (Neo4j populated) from "retrieval-ready" (LightRAG indexed) via two-phase status update with polling.**
+
+#### Schema Change
+
+Add `indexing_status` field to `files` table:
+- **Values:** `pending` → `indexing` → `indexed` (or `error`)
+- **Default:** `pending` for newly uploaded documents
+- **Update Logic:** Two-phase workflow in processing router
+
+#### Processing Workflow (Proposed)
+
+```python
+# Phase 1: Process document (Neo4j)
+await _extract_with_docling(file_id, file_path)
+await _store_document_with_neo4j(doc)
+db.update_file_status(file_id, "processed")
+
+# Phase 2: Index for retrieval (LightRAG)
+db.update_indexing_status(file_id, "indexing")
+await _attempt_lightrag_handoff(file_id)
+
+# Phase 2a: Poll for completion (NEW)
+success = await poll_lightrag_status(file_id, timeout=300)  # 5 min timeout
+if success:
+    db.update_indexing_status(file_id, "indexed")
+else:
+    db.update_indexing_status(file_id, "error")
+```
+
+#### Polling Implementation
+
+Add to `lightrag_handoff_service.py`:
+- Poll `GET /kv_store_doc_status.json` from LightRAG endpoint (5–10s intervals)
+- Wait for document ID to appear in status response
+- Timeout after 300 seconds with error state
+- Return completion signal only after confirmed in index
+
+#### Retrieval Fallback Strengthening
+
+Enhance `app/brain/knowledge/retrievers.py`:
+- Use `source_confidence` from canonical Neo4j document when LightRAG metadata missing
+- Fallback to Neo4j-only path during `indexing_status="indexing"` window
+- Prevents empty results and confidence degradation during indexing
+
+#### UI Feedback (Optional Phase 2)
+
+Show "Indexing..." badge in `UploadData.razor`:
+- Display until `indexed_status="indexed"`
+- Optionally disable chat queries on unindexed documents
+- Signal to user that results may be stale
+
+### Files Affected
+
+**Python Changes:**
+- `app/routers/processing.py` — Two-phase status logic
+- `app/services/lightrag_handoff_service.py` — Polling loop
+- `app/services/database_service.py` — Schema + methods for `indexing_status`
+- `app/brain/knowledge/retrievers.py` — Fallback strengthening
+- Database migration script — Add column
+
+**C# Changes:**
+- `Components/Pages/UploadData.razor.cs` — UI indicators (Phase 2)
+
+### Ownership & Timeline
+
+| Owner | Task | Effort | Timeline |
+|-------|------|--------|----------|
+| **Jarvis** | Polling logic + schema + DB service | ~4 hours | 1–2 days |
+| **Jarvis** | Fallback strengthening + tests | ~2 hours | 1–2 days |
+| **Jeff** | UI indicators (optional) | ~2 hours | 1 day |
+| **Buster** | Integration tests (cycle + freshness) | ~6 hours | 2–3 days |
+| **Bob** | Architecture review | ~1 hour | On PR |
+
+### Impact If Fixed
+
+- ✅ Eliminates 30–300s freshness regression window
+- ✅ Chat queries see data as soon as Neo4j population complete
+- ✅ LightRAG indexing asynchronous; doesn't block processing
+- ✅ Stronger retrieval fallback for eventual consistency issues
+
+### Impact If Not Fixed
+
+- ❌ Future uploads silently fail to appear in chat during indexing window
+- ❌ Silent data availability bug similar to observed regression
+- ❌ Users lose trust in document ingestion feature
+- ❌ No test framework prevents recurrence
+
+### Alternatives Considered
+
+| Alternative | Assessment |
+|---|---|
+| Ignore gap, rely on fallback | ❌ Rejected—confidence enrichment fragile, UX suffers |
+| Make LightRAG synchronous | ❌ Rejected—blocks processing 30–300s, serial bottleneck |
+| Remove LightRAG dependency | ❌ Rejected—LightRAG provides entity extraction + graph reasoning not in Neo4j yet |
+| Polling with exponential backoff | ✅ Recommended—handles variable indexing speed |
+
+### Test Coverage Standard (Proposed)
+
+**Future data retrieval features must include:**
+- End-to-end cycle test (upload → process → query → assert fresh data)
+- Freshness validation (no caching between requests)
+- Timing boundary assertion (async boundaries clear)
+
+### Decision Deadline
+
+Awaiting Phase 3 roadmap prioritization. Recommend **HIGH PRIORITY** due to:
+- User-visible regression
+- Architectural clarity needed for Phase 3
+- Prevents test coverage gaps in future features
+
+### Related Decisions
+
+- **Buster's Post-Upload Retrieval Gap** (2026-04-21) — Test coverage gap assessment
+- **Jeff's Search Latency Review** (2026-04-23) — LightRAG HTTP confirmed as primary bottleneck
+
+---
+
+## Post-Upload Retrieval Data Freshness Test Gap — Buster (QA/Tester) — 2026-04-21
+
+**Author:** Buster (QA/Tester)  
+**Status:** IDENTIFIED — Requires Implementation (Phase 3 Planning)  
+**Severity:** HIGH (Data Availability Bug)  
+**Scope:** Test coverage gap for end-to-end upload/process/reload/query cycle
+
+### Problem Statement
+
+**User Scenario (Failing):**
+1. Upload website via Upload Documents page
+2. Page shows status "processed"
+3. Reload Chat page
+4. Query for new information → **results are empty** (regression)
+
+**Critical Finding:** Current test suite all pass, but **would NOT catch this regression** because no test validates the complete end-to-end cycle.
+
+### Test Coverage Gap Analysis
+
+| Layer | What's Tested | What's Missing |
+|-------|---|---|
+| Upload → Queue | ✅ File persisted, status queued | ❌ Processing completion confirmation |
+| Processing → Graph DB | ✅ Individual steps in isolation | ❌ Timing: when data becomes queryable |
+| Retrieval | ✅ Query shapes, contract mapping | ❌ Freshness: does retriever see new data? |
+| Chat Component | ✅ Focus state, conversation list | ❌ Refresh behavior on reload |
+| **End-to-End Cycle** | ❌ **NOT TESTED** | Upload → process → reload → query → assert fresh |
+
+### Tests That Would NOT Catch This Bug
+
+- `UploadDataTests.UploadFiles_PersistsSelectedFile_ForCurrentTenant()` — checks "queued" status, not completion
+- `test_lightrag_retriever.py` — fakes LightRAG responses, never hits real Neo4j
+- `BrainGatewayPhase2Tests.QueryKnowledgeAsync_MapsContractShapedKnowledgeResult()` — fakes backend responses
+- `BasicAspireAppHostTests.FlowEndToEnd()` — has processing wait/visibility, but **no assertion that results change**
+
+### Required Test Coverage (Priority Order)
+
+#### 1. End-to-End Cycle Test (HIGH PRIORITY)
+
+**Validates:** Upload document → process → reload chat → query → fresh results returned
+
+```
+1. Upload document via API / UI
+2. Poll until status = "processed" (within 30s timeout)
+3. Reload chat page / create new chat session
+4. Query retriever with content from newly uploaded document
+5. Assert: results include new document (not empty)
+6. Assert: document not in results before upload (baseline)
+```
+
+**Files:**
+- `src/AspireApp.WebTest/Tests/BrainGatewayPhase2Tests.cs` — .NET integration test
+- `src/AspireApp.PythonServices/tests/test_ingestion_retrieval_cycle.py` — Python integration test
+
+#### 2. Data Freshness Test (HIGH PRIORITY)
+
+**Validates:** No caching between requests; retriever sees updated data immediately
+
+```
+1. Query 1: retriever returns old results (baseline)
+2. Externally insert new document into Neo4j
+3. Query 2: same retriever instance, immediate re-query
+4. Assert: results now include new document (not cached)
+5. Assert: no persistent in-memory cache prevents visibility
+```
+
+**File:** `src/AspireApp.PythonServices/tests/test_ingestion_retrieval_cycle.py`
+
+#### 3. Timing Boundary Test (MEDIUM PRIORITY)
+
+**Validates:** LightRAG indexing complete before status marked "processed"
+
+```
+1. Process document through full pipeline
+2. Assert: LightRAG indexing complete before status update
+3. Assert: subsequent retriever query sees data immediately
+4. Assert: no race condition between status update and index visibility
+```
+
+**File:** `src/AspireApp.PythonServices/tests/test_processing_pipeline_regression.py`
+
+#### 4. Chat Component Refresh Test (MEDIUM PRIORITY)
+
+**Validates:** Page reload doesn't use stale retriever instances
+
+```
+1. Initialize Chat component, query retriever (old results)
+2. Externally add new document to Neo4j
+3. Trigger page reload / component reinit
+4. Query retriever (new instance)
+5. Assert: new data is visible (not cached from previous init)
+```
+
+**File:** `src/AspireApp.WebTest/Tests/ChatDataFreshnessTests.cs`
+
+### Test Implementation Details
+
+#### End-to-End Cycle Test Pseudocode
+
+```csharp
+[Fact]
+public async Task UploadDocument_ProcessCompletes_ChatRetrievalReturnsFreshData()
+{
+    // 1. Upload document
+    var uploadResponse = await _httpClient.PostAsync(
+        "/api/ingest/upload",
+        new MultipartFormDataContent { /* file */ });
+    var documentId = /* extract from response */;
+
+    // 2. Poll for processed status
+    var startTime = DateTime.UtcNow;
+    while (DateTime.UtcNow - startTime < TimeSpan.FromSeconds(30))
+    {
+        var status = await _httpClient.GetFromJsonAsync<UploadStatusResponse>(
+            $"/api/ingest/status/{documentId}");
+        if (status.ProcessingStatus == "processed") break;
+        await Task.Delay(500);
+    }
+
+    // 3. Query chat with content from new document
+    var chatRequest = new BrainChatRequest
+    {
+        Query = "What is [specific fact from uploaded doc]?",
+        Mode = "regular"
+    };
+    var chatResponse = await _httpClient.PostAsJsonAsync(
+        "/api/brain/chat", chatRequest);
+
+    // 4. Assert fresh data returned
+    var answer = await chatResponse.Content.ReadAsAsync<BrainChatResponse>();
+    Assert.NotNull(answer.Evidence);
+    Assert.NotEmpty(answer.Evidence); // Fresh results, not empty
+    Assert.Contains(documentId, /* extract from evidence sources */);
+}
+```
+
+### Root Cause Hypothesis (Requires Investigation)
+
+Four potential failure points:
+
+1. **Async Boundary (Status → Indexing):** Document marked "processed" before LightRAG indexing complete
+2. **Chat Component Cache:** Retriever service cached on first init, page reload uses stale instance
+3. **LightRAG Queue Lag:** Processing returns before background indexing starts
+4. **Neo4j Transaction Isolation:** Processing commits don't see retriever queries
+
+*See Bob's "Processing vs Indexing Status Gap" decision (2026-04-21) for primary suspect: async boundary.*
+
+### Implementation Ownership
+
+| Owner | Task | Priority |
+|---|---|---|
+| **Buster** | End-to-End Cycle test (C# + Python) | 1 |
+| **Buster** | Data Freshness test (Python) | 1 |
+| **Buster** | Timing Boundary test (Python) | 2 |
+| **Jarvis** | Root cause investigation (if tests fail) | 2 |
+| **Buster** | Chat Component Refresh test (C#) | 2 |
+| **Team** | Establish as standard for future features | 3 |
+
+### Team Standard Decision (Proposed)
+
+**Adopt as requirement for future data retrieval features:**
+
+> Any feature involving data upload, processing, and retrieval must include:
+> 1. End-to-end cycle test (upload → process → query → assert fresh)
+> 2. Freshness validation (no caching between requests)
+> 3. Timing boundary assertion (async boundaries clear)
+
+This prevents silent data availability regressions and documents expected behavior.
+
+### Impact Summary
+
+**If Tests Implemented & Pass:**
+- ✅ Regression caught early if processing status boundary changes
+- ✅ Freshness guardrails prevent silent failures
+- ✅ Async timing documented and validated
+- ✅ Future features inherit standard
+
+**If Tests Not Implemented:**
+- ❌ Similar data availability bugs may recur undetected
+- ❌ No baseline proof of end-to-end correctness
+- ❌ Test suite false confidence in concurrent features
+
+### Decision Deadline
+
+Awaiting Phase 3 roadmap prioritization. Recommend **HIGH PRIORITY** as blocker for data retrieval confidence.
+
+### Related Decisions
+
+- **Bob's Processing vs Indexing Status Gap** (2026-04-21) — Architectural fix for root cause
+- **Jeff's .NET Audit** (2026-04-21) — Confirmed issue localized to Python layer
+- **Jarvis's Python Trace** (2026-04-21) — Identified fire-and-forget LightRAG handoff
+
+
+## LightRAG Readiness Should Be Tracked Separately From Processing Completion — Jarvis — 2026-04-24
+
+**Author:** Jarvis (Python/Data Dev)  
+**Date:** 2026-04-24  
+**Status:** APPROVED  
+**Scope:** LightRAG document indexing readiness polling, separate status lifecycle, polling timeout bounds.
+
+### Context
+
+- `processing.py` currently marks a source `processed` immediately after `_attempt_lightrag_handoff()`.
+- `LightRagHandoffService` only stages markdown and triggers `POST /documents/scan`; the returned scan acknowledgement is not proof that the source is queryable in LightRAG.
+- The repo already has a per-document LightRAG status seam keyed by staged `file_path`, visible through `GET /documents` and persisted in `data\rag_storage\kv_store_doc_status.json`.
+- Two-phase status problem identified: UI shows ✅ (processed) but chat returns empty ❌ (not yet indexed), causing false freshness perception.
+
+### Decision
+
+Treat document processing completion and LightRAG retrieval readiness as **two separate, independent states**.
+
+#### Keep Existing `files.status` Lifecycle
+
+Synchronous pipeline remains: `uploaded` / `processing` / `processed` / `error`
+
+Tracks Docling extraction and Neo4j enrichment completion, not LightRAG readiness.
+
+#### Add `indexing_status` Field
+
+LightRAG-specific readiness lifecycle: `not_requested`, `queued`, `indexing`, `ready`, `failed`, `timed_out`
+
+- Poll per-document status by matching deterministic staged filename after `_attempt_lightrag_handoff()`
+- Do NOT use global pipeline busy/idle as readiness signal for specific source
+- Do NOT assume acknowledgement = indexed
+
+#### Polling Requirements
+
+- Keyed by staged filename (deterministic derivation from upload data)
+- Bounded timeout (recommend 300s max per document)
+- Transitions to `failed` or `timed_out` on error/timeout to prevent stuck documents
+- Surface honest terminal failures (LightRAG down, indexing failure) without regressing Docling/Neo4j completion
+
+### Consequences
+
+- UI and API callers can distinguish "processed but still indexing" from "processed and ready"
+- Terminal LightRAG failures surfaced honestly without regressing already-completed Docling/Neo4j work
+- Chat retriever can differentiate "no results" (failure state) from "still indexing" (transient state)
+- Polling prevents LightRAG outage from leaving documents stuck in processing forever
+- Enables honest freshness signaling in chat results (empty results vs. still indexing vs. indexed-and-ready)
+
+### Implementation Ownership
+
+| Role | Task | Estimate |
+|------|------|----------|
+| **Jarvis** | Implement polling loop + `indexing_status` schema + timeout enforcement | High |
+| **Jeff** | UI indicators for "processing" vs "indexing" vs "ready" states in UploadData display | Medium |
+| **Buster** | End-to-end upload→process→query freshness test + Playwright validation | Medium |
+
+### Acceptance Criteria
+
+- [ ] `indexing_status` field persisted and queryable via `GET /documents/{id}`
+- [ ] Polling starts after `_attempt_lightrag_handoff()` completion
+- [ ] Timeout enforced per document (300s recommended)
+- [ ] Terminal states (`failed`, `timed_out`, `ready`) prevent infinite polling
+- [ ] Chat retriever gracefully handles "still indexing" state
+- [ ] End-to-end cycle test validates upload→process→query freshness
+
+### Related Decisions
+
+- **Bob's Search Latency Review** (2026-04-23) — LightRAG HTTP as primary bottleneck
+- **Jarvis's Freshness Investigation** (2026-04-21) — Identified two-phase status gap as root cause
+- **Buster's Test Coverage Gap** (2026-04-21) — No end-to-end freshness test in baseline
+
+## LightRAG Readiness Timeout — Deferred Reconciliation Strategy — Jarvis — 2026-04-21
+
+**Author:** Jarvis (Python / Data Dev)  
+**Status:** IMPLEMENTED  
+**Scope:** Python `lightrag_handoff_service`, `processing` router, timeout reconciliation
+
+### Context
+
+The LightRAG readiness polling (implemented in Phase 2) exposed a deeper timeout problem: the first bounded 300-second wait was being treated as final. Local evidence showed a document marked `timed_out` in Python metadata while the shared LightRAG store later advanced the same file to `processed`. The polling implementation was correct but honest—it was surfacing the real problem, then masking eventual success with a permanent timeout state.
+
+### Decision
+
+**Treat a first readiness timeout as deferred indexing, not permanent failure.**
+
+1. **Non-terminal LightRAG states stay queued:** When LightRAG HTTP `/documents/{doc_id}` returns `pending`, `processing`, or `queued`, keep the document row in `indexing_status = queued|indexing` instead of freezing to `timed_out`.
+2. **Schedule deferred reconciliation:** Instead of marking timeout permanent, register a follow-up reconciliation pass to poll again after a grace period or on next service opportunity.
+3. **Use secondary truth source:** Consult the shared `data\rag_storage\kv_store_doc_status.json` store as a secondary truth source when the HTTP `/documents` view is stale or slow.
+4. **Terminal states remain terminal:** A `failed` status stops reconciliation; a later reconciliation timeout after retry windows exhausted can still persist `timed_out` as final.
+
+### Why
+
+- LightRAG can legitimately take 300+ seconds for large document graphs; the first bounded poll window is not authoritative.
+- A permanent timeout is dishonest when the downstream system is still progressing and later reaches `processed`.
+- Deferred reconciliation keeps UI/API state honest while avoiding false terminal failures.
+- Secondary truth source ensures eventual consistency even if HTTP polling falls behind.
+
+### Impact
+
+- Upload rows can move from `indexing` → `ready` after the original polling window without manual reprocessing.
+- Python metadata and database status stay aligned with eventual LightRAG outcome.
+- Prevents users from seeing "❌ timeout" when the document was actually succeeding in the background.
+- This does not hide real failures; `failed` still remains terminal and is not reconciled.
+
+### Implementation
+
+- **Files Changed:**
+  - `src\AspireApp.PythonServices\app\services\lightrag_handoff_service.py` — Non-terminal state check + secondary source fallback
+  - `src\AspireApp.PythonServices\app\routers\processing.py` — Reconciliation endpoint + integration
+  - `src\AspireApp.PythonServices\tests\test_processing_pipeline_regression.py` — Regression coverage
+
+- **Validation:** 17 regression tests passing ✅
+
+### Related
+
+- **Buster's Aspire Runtime Fix** (2026-04-21) — LightRAG embedding wiring; semantic fallback
+- **Jeff's Non-Blocking Dispatch** (2026-04-21) — Upload dispatch no longer blocks on Python handoff
+- **Session Log:** `.squad/log/20260421-timeout-stabilization.md`
+
+---
+
+## Non-Blocking Upload Dispatch + Explicit Gateway Timeouts — Jeff — 2026-04-21
+
+**Author:** Jeff (.NET Dev)  
+**Status:** IMPLEMENTED  
+**Scope:** `AspireApp.Web`, `AspireApp.ApiService`, `.NET` timeout handling
+
+### Context
+
+The Upload page could time out even after a row flipped to `Processing` because the interactive Blazor path still awaited the Python processing-dispatch call. At the same time, long-running chat requests could surface as opaque `OperationCanceledException` or transport timeouts instead of a clear user-facing timeout boundary.
+
+### Decision
+
+**1. Upload surfaces must persist first and dispatch processing in background.**
+- Blazor circuit and URL upload controller response must not block on `TryStartAutomaticProcessingAsync()`.
+- Persist the row to the database, return honest "queued / will start shortly" messaging, then refresh UI state after background dispatch completes asynchronously.
+- Python already treats `/processing/process-document/{id}` as queueing work, not completing work.
+
+**2. Gateway timeout handling must translate and be explicit.**
+- Translate downstream `OperationCanceledException` and transport timeouts into clear `TimeoutException` with user-friendly message.
+- Keep transport/resilience timeouts above the user-facing chat timeout so the page-level cancellation boundary stays authoritative.
+- Friendly timeout translation makes it obvious that the request exceeded a boundary, not that the app returned bad data.
+
+### Why
+
+- Blocking the upload interaction on background dispatch adds false user-visible failures without improving correctness.
+- Opaque cancellations confuse users; explicit timeouts are honest about infrastructure boundaries.
+- Non-blocking dispatch aligns with Python's queueing semantics and improves responsiveness.
+
+### Implementation
+
+- **Files Changed:**
+  - `src\AspireApp.Web\Controllers\FileUploadController.cs` — Non-blocking dispatch
+  - `src\AspireApp.Web\Components\Pages\Chat.razor.cs` — Explicit timeout rendering
+  - `src\AspireApp.Web\Services\BrainChatClient.cs` — Timeout translation
+  - `src\AspireApp.Web\Services\BrainChatClientServiceCollectionExtensions.cs` — Client config
+  - `src\AspireApp.ApiService\Services\BrainBackendClient.cs` — Gateway translation
+  - `src\AspireApp.ApiService\Services\BrainBackendClientServiceCollectionExtensions.cs` — Service config
+  - `src\AspireApp.Web\Services\DocumentProcessingCoordinator.cs` — Dispatch integration
+  - `src\AspireApp.Web\Program.cs` — Dependency wiring
+
+- **Validation:** 63 focused .NET tests passing; `dotnet build .\AspireApp.sln --no-restore` success ✅
+
+### Related
+
+- **Jarvis's Deferred Reconciliation** (2026-04-21) — Python side doesn't now rely on upload blocking
+- **Buster's Aspire Runtime Fix** (2026-04-21) — LightRAG embedding wiring; semantic fallback
+- **Session Log:** `.squad/log/20260421-timeout-stabilization.md`
+
+---
+
+## LightRAG Aspire Runtime Wiring — Ollama Embeddings + Optional Vector Population — Buster — 2026-04-21
+
+**Author:** Buster (QA / Tester)  
+**Status:** IMPLEMENTED  
+**Scope:** `AppHost.cs`, `retrievers.py`, Aspire container configuration, semantic fallback
+
+### Context
+
+Live Aspire validation (`BasicAspireAppHostTests.LiveLightRagNeo4jQueryRoundTrip`) reproduced a deeper LightRAG failure: the document made it through upload and LightRAG scan acknowledgement, but the Neo4j graph never grew, leaving the retrieval surface behind chat effectively empty. At the same time, the Python ingestion path was doing optional page/claim embedding work against the same Ollama instance used by LightRAG and chat, causing contention.
+
+### Decision
+
+**1. LightRAG container wiring must set Ollama embeddings explicitly.**
+- Set environment variable `EMBEDDING_BINDING=ollama` in AppHost LightRAG service wiring.
+- Provide both storage alias styles (`KV_STORAGE` / `DOC_STATUS_STORAGE` / `GRAPH_STORAGE` / `VECTOR_STORAGE` and `LIGHTRAG_*`) so LightRAG version differences do not silently drop Neo4j-backed graph projection.
+
+**2. Python-side Neo4j vector population stays optional and defaults off.**
+- Keep upload/chat reliability on the primary path.
+- Allow explicit re-enable through `ENABLE_INGESTION_VECTOR_POPULATION=true` only once live validation proves it no longer starves Ollama.
+
+**3. Semantic fallback must drop to text search when vector search has no hits.**
+- Disabling optional vector population cannot be allowed to create an empty fallback retriever.
+- `SemanticKnowledgeRetriever` supplements sparse LightRAG results with text-search fallback before returning to caller.
+
+### Why
+
+- A LightRAG scan that never grows the Neo4j graph is a **correctness failure**, not just a slow path.
+- Missing embedding-binding configuration is easy to overlook because the container can still start and expose `/documents` endpoints.
+- Optional ingestion-time vector work should not be allowed to steal capacity from the user-visible upload/chat experience until the live end-to-end path is proven stable.
+- Semantic fallback ensures chat always returns *something*, even if vector indexes are incomplete.
+
+### Implementation
+
+- **Files Changed:**
+  - `src\AspireApp.AppHost\AppHost.cs` — `EMBEDDING_BINDING=ollama` + both storage alias styles
+  - `src\AspireApp.PythonServices\app\brain\knowledge\retrievers.py` — Semantic fallback to text when vector sparse
+  - `src\AspireApp.PythonServices\tests\test_knowledge_retriever.py` — Fallback regression coverage
+
+- **Validation:**
+  - `dotnet build` ✅
+  - 68 Python regression tests ✅
+  - 16 LightRAG retriever tests ✅
+  - 34 focused Web tests ✅
+  - 30 gateway/chat tests ✅
+  - Live Aspire E2E: `FlowEndToEnd` ✅ + `LiveLightRagNeo4jQueryRoundTrip` ✅
+
+### Related
+
+- **Jarvis's Deferred Reconciliation** (2026-04-21) — Keeps document `queued/indexing` while LightRAG progresses
+- **Jeff's Non-Blocking Dispatch** (2026-04-21) — Upload no longer blocks waiting for Python
+- **Session Log:** `.squad/log/20260421-timeout-stabilization.md`
+
+> **Note (2026-04-21T17:12:55Z):** Merged 2 inbox decisions from LightRAG file indexing concurrency configuration session (Jarvis, Jeff). Key outcome: Eric asked whether LightRAG exposes a setting for auto-indexing "on upload" to address timeout issues. Conclusion: no such flag exists; LightRAG's `/documents/upload` endpoint already indexes asynchronously by design. AspireAI uses scan-based handoff (stages markdown, triggers `/documents/scan`). Documented concurrency control is `MAX_PARALLEL_INSERT` (counts parallel files in a batch). Decision: set `MAX_PARALLEL_INSERT=1` in AppHost to serialize file indexing and match existing `MAX_ASYNC=1` constraint against Ollama. Reduces avoidable contention. Validation: Jarvis 18 pytest passed, Jeff dotnet build + AppHost health check ✅. No contradictions detected (both agents converge on same tuning knob). Inbox cleared. Orchestration logs: `20260421T171255Z-jarvis.md`, `20260421T171255Z-jeff.md`. Session log: `.squad/log/20260421T171255Z-lightrag-setting.md`.
+
+## LightRAG File Indexing Concurrency Should Be Serialized When AspireAI Runs Constrained Ollama — Jarvis — 2026-04-21
+
+**Context:**
+AspireAI stages markdown into LightRAG's shared `INPUT_DIR` and explicitly triggers `POST /documents/scan` rather than using the LightRAG upload endpoint directly. Recent uploads were reaching `Index timeout failure` during LightRAG indexing.
+
+**Decision:**
+Use LightRAG's documented file-level indexing concurrency setting, `MAX_PARALLEL_INSERT`, as the relevant control and set it to `1` in runtime configuration.
+
+**Why:**
+LightRAG documentation describes `MAX_PARALLEL_INSERT` as the number of parallel files processed in one batch during indexing. There is no separate boolean "index on upload" flag for the `INPUT_DIR` + `/documents/scan` flow. AspireAI already sets `MAX_ASYNC=1`, so matching `MAX_PARALLEL_INSERT=1` keeps ingestion serialized and reduces avoidable contention against the same constrained Ollama backend.
+
+**Impact:**
+- Upload/text endpoints in LightRAG still index asynchronously by design
+- Our scan-based handoff remains unchanged semantically
+- File-level LightRAG indexing now runs one document at a time, reducing timeout pressure in this deployment profile
+
+**Owner:** Jarvis — Python / Data Dev
+
+---
+
+## AppHost Should Serialize LightRAG File Indexing for the Current Scan-Based Handoff — Jeff — 2026-04-21
+
+**Context:**
+Eric asked whether LightRAG exposes a setting that makes documents index automatically on upload. In AspireAI, AppHost wires a LightRAG container, but the product does not call LightRAG's `/documents/upload` API. Instead, the Python pipeline stages markdown into the shared `INPUT_DIR` and then explicitly calls `POST /documents/scan`.
+
+**Decision:**
+Do **not** add a fictional "index on upload" AppHost flag. Treat upload-time indexing as LightRAG endpoint behavior, not configuration. For AspireAI's real scan-based handoff, use the documented concurrency knob `MAX_PARALLEL_INSERT=1`.
+
+**Why:**
+LightRAG documentation shows that `/documents/upload` already indexes in background by design, while scan-based ingestion depends on an explicit `/documents/scan` trigger. The relevant documented environment knob for this flow is `MAX_PARALLEL_INSERT`, described as the number of parallel files processed in one batch. Because AspireAI already constrains `MAX_ASYNC=1` against Ollama, matching `MAX_PARALLEL_INSERT=1` reduces avoidable indexing contention.
+
+**Impact:**
+- AppHost configuration stays honest to LightRAG's documented behavior
+- AspireAI keeps the existing markdown staging + scan integration path
+- LightRAG indexing now runs one file at a time in this deployment profile, reducing timeout pressure without inventing a non-existent setting
+
+**Owner:** Jeff — .NET Dev
+
+## Close Desktop Slide-Out Navigation from Layout on Route Change — Jeff, Buster — 2026-04-24
+
+**Context:**
+The desktop Web shell was keeping the sidebar open after clicking a nav item and navigating to a new route, making the navigation UX feel broken.
+
+**Decision:**
+Treat sidebar dismissal as layout-owned behavior. Subscribe `MainLayout` to `NavigationManager.LocationChanged` and close the sidebar whenever the route changes. Keep `NavMenu.razor` declarative; do not add per-link close handlers.
+
+**Why:**
+- The layout already owns `_sidebarOpen`, the backdrop, and the hamburger toggle button
+- Route-change-driven dismissal covers all internal navigation uniformly, not just one specific link
+- Avoids scattered duplicate handlers
+- Easy to test (bUnit for logic, Playwright for full orchestration)
+
+**Implementation:**
+- `MainLayout.razor`: Subscribe in `OnInitializedAsync()`, set `_sidebarOpen = false` on every location change, unsubscribe via `IDisposable`
+- Test coverage: `MainLayoutTests.ClosesSidebar_WhenLocationChanges` (unit), `BasicAspireAppHostTests.DesktopSidebarClosesAfterNavigationSelection` (live browser)
+
+**Validation:**
+- `dotnet build --nologo` ✅
+- Unit test: `ClosesSidebar_WhenLocationChanges` ✅
+- Live browser regression: `DesktopSidebarClosesAfterNavigationSelection` ✅
+
+**Owner:** Jeff — .NET Dev, Blazor
+
+## Sidebar-Close Browser Regressions Must Wait for Nav Target Viewport Settle — Buster — 2026-04-24
+
+**Context:**
+Buster added a live browser regression test (`DesktopSidebarClosesAfterNavigationSelection`) to validate Jeff's sidebar-close fix. The first test run failed with "Element is outside viewport" when trying to click the `Chat` link, even though the product code was correct. Root cause: The drawer animation was still settling; Playwright tried to click before the target slid fully into view.
+
+**Decision:**
+- Keep the product fix as-is; do **not** reject Jeff's implementation
+- Treat post-open viewport settling as a **test responsibility**, not a product code issue
+- In Playwright shell tests, wait for the nav target to finish sliding into viewport before clicking it (use `WaitForNavigationTargetWithinViewportAsync(element)`)
+
+**Why:**
+- Browser animations are real and expected; they are not bugs
+- Explicit waits prevent false negatives that masquerade as product regressions
+- Preserves a real-user interaction test (user clicks + navigation happens) without falling back to brittle JavaScript workarounds
+
+**Implementation:**
+- Added explicit `WaitForNavigationTargetWithinViewportAsync()` in `BasicAspireAppHostTests` before clicking nav targets in drawer-dependent tests
+- This becomes a **reusable pattern** for all future drawer/slide-out regression tests
+
+**Validation:**
+- `dotnet test .\src\AspireApp.WebTest\AspireApp.WebTest.csproj --no-build --filter "FullyQualifiedName~BasicAspireAppHostTests.DesktopSidebarClosesAfterNavigationSelection"` ✅
+
+**Owner:** Buster — QA/Test Lead

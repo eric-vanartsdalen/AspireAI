@@ -74,6 +74,14 @@ namespace AspireApp.Web.Data
         [Column("total_pages")]
         public int? TotalPages { get; set; }
 
+        /// <summary>
+        /// LightRAG indexing readiness: 'not_requested' | 'queued' | 'indexing' | 'ready' | 'failed' | 'timed_out'
+        /// </summary>
+        [Required]
+        [Column("indexing_status")]
+        [MaxLength(20)]
+        public string IndexingStatus { get; set; } = "not_requested";
+
         // ==================== Neo4j Integration (Future) ====================
         
         [Column("neo4j_document_node_id")]

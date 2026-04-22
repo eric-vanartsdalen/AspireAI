@@ -537,6 +537,38 @@ public sealed class ChatCritiqueModeTests
         }, TimeSpan.FromSeconds(5));
     }
 
+    [Fact]
+    public async Task GatewayTimeout_ShowsFriendlyConversationStatus()
+    {
+        var chatClient = new RecordingBrainChatClient
+        {
+            ExceptionToThrow = new BrainChatException(
+                "The BRAIN gateway timed out before a response was ready. Please try again in a moment.",
+                StatusCodes.Status504GatewayTimeout,
+                "BRAIN chat timed out")
+        };
+        using var testContext = CreateTestContext(brainChatClient: chatClient);
+
+        var cut = testContext.Render<Chat>();
+
+        await cut.InvokeAsync(async () =>
+        {
+            var input = cut.Find("[data-testid='chat-message-input']");
+            input.Input("What changed after the upload?");
+
+            var button = cut.Find("[data-testid='chat-send']");
+            await button.ClickAsync(new Microsoft.AspNetCore.Components.Web.MouseEventArgs());
+        });
+
+        cut.WaitForAssertion(() =>
+        {
+            Assert.Contains(
+                "timed out before a response was ready",
+                cut.Markup,
+                StringComparison.OrdinalIgnoreCase);
+        }, TimeSpan.FromSeconds(5));
+    }
+
     // Helper: Create test context with required services
     private static Bunit.BunitContext CreateTestContext(
         IChatConversationService? conversationService = null,
